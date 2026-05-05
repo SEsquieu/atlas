@@ -195,6 +195,28 @@ MVP can use a simple local file or SQLite store.
 
 Atlas has two primary loops that interact through shared session state.
 
+### 7.0 Felt Latency Principle
+
+The physical loop should optimize for *felt* latency as much as raw latency. A live Android/OpenClaw bridge measurement on 2026-05-05 returned:
+
+```text
+total=7358ms capture=3861ms stage=15ms analysis=3482ms
+```
+
+That is already viable when the voice/user loop does not wait in silence. The intended user experience is:
+
+```text
+user asks
+  → Atlas acknowledges immediately by speech
+  → perception refresh runs in parallel
+  → session state updates silently
+  → Atlas speaks only if the answer/change is useful
+```
+
+Most perception refreshes should not become user-visible speech. A seven-second background analysis that confirms nothing important changed is still valuable context for the next turn. The significance gate decides whether the result deserves interruption.
+
+Atlas should preserve adapter timing telemetry as observation metadata when available, but Core should not depend on OpenClaw-specific timing fields. Timing is runtime/adapter telemetry used for regression tracking and product tuning.
+
 ### 7.1 Heartbeat / Perception Loop
 
 Purpose: keep the agent physically situated.

@@ -16,14 +16,30 @@ export type AndroidBridgeCaptureResult = {
   file?: string;
   filename?: string;
   mediaRef?: string;
+  sourceTempPath?: string;
+  workspaceImagePath?: string;
+  workspaceLatestPath?: string;
   summary?: string;
   description?: string;
+  analysisText?: string;
+  analysisState?: string;
+  analysisMode?: string;
   analysis?: unknown;
   visionSummary?: string;
   node?: string;
   facing?: string;
   capturedAt?: string;
+  timings?: AndroidBridgeTimings;
+  details?: AndroidBridgeCaptureResult;
   [key: string]: unknown;
+};
+
+export type AndroidBridgeTimings = {
+  totalMs?: number;
+  captureMs?: number;
+  stageMs?: number;
+  analysisMs?: number;
+  [key: string]: number | undefined;
 };
 
 export class AndroidBridgeCaptureError extends Error {
@@ -57,21 +73,35 @@ export function normalizeAndroidBridgeCaptureResult(
     throw new AndroidBridgeCaptureError('Android bridge returned an invalid capture result.');
   }
 
-  const mediaRef = firstString(result.mediaRef, result.imagePath, result.mediaPath, result.path, result.file, result.filename);
-  const capturedAt = firstString(result.capturedAt) ?? options.fallbackCapturedAt ?? new Date().toISOString();
-  const summary = firstString(result.summary, result.visionSummary, result.description) ?? extractAnalysisSummary(result.analysis);
-  const confidence = extractAnalysisConfidence(result.analysis);
+  const details = extractBridgeDetails(result);
+  const mediaRef = firstString(
+    details.mediaRef,
+    details.workspaceImagePath,
+    details.imagePath,
+    details.mediaPath,
+    details.path,
+    details.file,
+    details.filename,
+    details.workspaceLatestPath
+  );
+  const capturedAt = firstString(details.capturedAt) ?? options.fallbackCapturedAt ?? new Date().toISOString();
+  const summary =
+    firstString(details.summary, details.visionSummary, details.description, details.analysisText) ??
+    extractAnalysisSummary(details.analysis) ??
+    extractContentSummary(result.content);
+  const confidence = extractAnalysisConfidence(details.analysis);
   const analysis = summary
     ? createBridgeAnalysis({
         observationIdSeed: mediaRef ?? `${options.deviceId}:${capturedAt}`,
         producedBy: options.producedBy ?? 'openclaw/android-camera-bridge',
         summary,
         confidence,
-        data: result.analysis
+        data: details.analysis
       })
     : undefined;
 
   const observationId = stableObservationId(mediaRef, capturedAt);
+  const timings = normalizeBridgeTimings(details.timings);
 
   return {
     id: observationId,
@@ -81,8 +111,14 @@ export function normalizeAndroidBridgeCaptureResult(
     mediaRef,
     data: {
       bridge: {
-        node: result.node,
-        facing: result.facing
+        node: details.node,
+        facing: details.facing,
+        sourceTempPath: details.sourceTempPath,
+        workspaceImagePath: details.workspaceImagePath,
+        workspaceLatestPath: details.workspaceLatestPath,
+        analysisMode: details.analysisMode,
+        analysisState: details.analysisState,
+        timings
       }
     },
     quality: {
@@ -91,6 +127,14 @@ export function normalizeAndroidBridgeCaptureResult(
     summary,
     analyses: analysis ? [{ ...analysis, observationId }] : undefined
   };
+}
+
+function extractBridgeDetails(result: AndroidBridgeCaptureResult): AndroidBridgeCaptureResult {
+  const nested = result.details;
+  if (nested && typeof nested === 'object') {
+    return { ...result, ...nested };
+  }
+  return result;
 }
 
 function createBridgeAnalysis(input: {
@@ -121,6 +165,31 @@ function extractAnalysisSummary(analysis: unknown): string | undefined {
   if (typeof analysis !== 'object' || analysis === null) return undefined;
   const record = analysis as Record<string, unknown>;
   return firstString(record.summary, record.description, record.text, record.caption, record.result);
+}
+
+function extractContentSummary(content: unknown): string | undefined {
+  if (!Array.isArray(content)) return undefined;
+  const text = content
+    .map((entry) => {
+      if (typeof entry === 'string') return entry;
+      if (typeof entry === 'object' && entry !== null && typeof (entry as Record<string, unknown>).text === 'string') {
+        return (entry as Record<string, string>).text;
+      }
+      return undefined;
+    })
+    .filter((entry): entry is string => Boolean(entry))
+    .join('\n');
+  const match = text.match(/Vision summary:\s*(.+)$/im);
+  return match?.[1]?.trim() || undefined;
+}
+
+function normalizeBridgeTimings(value: unknown): AndroidBridgeTimings | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const timings: AndroidBridgeTimings = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw === 'number' && Number.isFinite(raw)) timings[key] = raw;
+  }
+  return Object.keys(timings).length > 0 ? timings : undefined;
 }
 
 function extractAnalysisConfidence(analysis: unknown): number | undefined {

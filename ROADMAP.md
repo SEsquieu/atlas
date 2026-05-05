@@ -1,6 +1,6 @@
 # Atlas Roadmap
 
-Status: Phase 1 core session skeleton closed; Phase 2 Android adapter MVP started.
+Status: Phase 1 core session skeleton closed; Phase 2 Android adapter MVP is now focused on live Android/OpenClaw latency and observation telemetry.
 
 ## Current Position
 
@@ -13,6 +13,20 @@ Atlas has a name, build doc, repo skeleton, and initial package boundaries:
 - `@atlas/test-harness`
 
 The next work is to turn the skeleton into a real, testable MVP using OpenClaw upstream and an Android phone downstream.
+
+## Live Latency Finding — 2026-05-05
+
+The Android/OpenClaw path is no longer speculative. A live bridge run on `Galaxy S22 Ultra` using `analysisMode=openclaw` and `openai-codex/gpt-5.5` returned usable perception in roughly seven seconds:
+
+```text
+total=7358ms capture=3861ms stage=15ms analysis=3482ms
+```
+
+Product implication: Atlas should optimize for *felt latency*, not only raw latency. The user loop can acknowledge immediately by speech while capture/analysis runs in parallel; the heartbeat/perception loop can silently refresh context and only speak when the significance gate finds something worth interrupting for.
+
+Engineering implication: capture latency likely includes OpenClaw CLI/helper/gateway/node overhead, so a native Atlas runtime or persistent device connection should be able to reduce it. Analysis latency is usable now, and should be hidden or amortized through background perception, prewarming, and significance gating.
+
+See `docs/latency-notes.md` for the measurement notes and optimization tracks.
 
 ## Phase 0 — Design Lock
 
@@ -91,6 +105,13 @@ Done:
 - Normalized Android bridge capture errors.
 - Bridge-provided image analysis maps to `ObservationAnalysis` rather than becoming an OpenClaw-specific assumption.
 
+In progress / next:
+
+- Preserve bridge timing telemetry (`totalMs`, `captureMs`, `stageMs`, `analysisMs`) as observation metadata.
+- Add a repeatable Android/OpenClaw latency harness that can compare bridge/plugin path vs future native runtime path.
+- Add a live adapter seam where OpenClaw tool results can be injected without making Atlas Core depend on OpenClaw.
+- Use measurements to decide when to keep using the bridge, when to bypass CLI/helper overhead, and when to move toward a native Atlas Android runtime.
+
 Deliverables:
 
 - Adapter wrapper around existing Android Camera Bridge.
@@ -98,12 +119,14 @@ Deliverables:
 - Bridge-provided image analysis maps to `ObservationAnalysis` rather than becoming an OpenClaw-specific assumption.
 - Media refs, timestamps, device ID, and summary/quality fields populated where available.
 - Error handling for no paired device, capture failure, stale file, or analysis failure.
+- Timing telemetry persisted in the observation `data` payload when available.
 
 Pass criteria:
 
 - Atlas can trigger a phone snapshot.
 - The captured image becomes an `Observation` in session state.
 - The audit log shows the capture request and result.
+- Live runs expose capture/stage/analysis/total timings for regression tracking.
 
 ## Phase 3 — Perception State + Freshness Policy
 
