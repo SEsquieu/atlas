@@ -73,7 +73,15 @@ Pass criteria:
 
 ## Phase 2 — Android Device Adapter MVP
 
+Status: started.
+
 Goal: normalize Android phone captures into Atlas observations.
+
+Done:
+
+- Android bridge result normalizer.
+- Injected bridge wrapper adapter shape.
+- Bridge-provided image analysis maps to `ObservationAnalysis` rather than becoming an OpenClaw-specific assumption.
 
 Deliverables:
 
