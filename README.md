@@ -68,3 +68,10 @@ npm --workspace @atlas/test-harness run demo
 npm --workspace @atlas/test-harness run demo:android-bridge
 npm --workspace @atlas/test-harness run inspect -- demo-session
 ```
+
+Useful CLI commands after building:
+
+```bash
+node packages/atlas-cli/dist/index.js sessions list
+node packages/atlas-cli/dist/index.js session inspect demo-session
+```
