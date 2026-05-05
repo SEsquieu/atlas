@@ -28,6 +28,12 @@ Engineering implication: capture latency likely includes OpenClaw CLI/helper/gat
 
 See `docs/latency-notes.md` for the measurement notes and optimization tracks.
 
+## Visual Freshness Policy — 2026-05-05
+
+Atlas now treats visual context as decaying state. Reuse depends on context age, confidence, stability, inferred motion state, and question use case. The first policy returns `reuse`, `background-refresh`, or `refresh`, with much shorter reuse windows for walking/navigation/confirmation and mandatory refresh for high-risk visual questions.
+
+See `docs/visual-freshness-policy.md` for the initial matrix and examples.
+
 ## Phase 0 — Design Lock
 
 Status: complete.
@@ -132,6 +138,15 @@ Pass criteria:
 
 Goal: make context quality first-class.
 
+Status: started.
+
+Done:
+
+- Visual context intent classifier.
+- Visual use-case classifier (`descriptive`, `confirmation`, `navigation`, `high-risk`).
+- Motion-aware visual freshness scoring.
+- User turn planning now carries the freshness assessment and distinguishes reuse/background-refresh/refresh.
+
 Deliverables:
 
 - Latest visual context tracking.
@@ -139,6 +154,7 @@ Deliverables:
 - Stability/confidence model.
 - Simple stale/unstable/insufficient policy.
 - Prompt intent classifier for visual-context-dependent questions.
+- Motion-aware visual context decay policy.
 
 Pass criteria:
 

@@ -200,6 +200,7 @@ export function contextStatusFromSession(session: AtlasSessionState): ContextSta
     ageMs,
     confidence: session.perception.confidence,
     stability: session.perception.stability,
+    motionState: session.perception.motionState,
     relevant: Boolean(session.perception.latestImageId),
     note: session.perception.notes?.join(' ')
   };

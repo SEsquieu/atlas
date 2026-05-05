@@ -217,6 +217,36 @@ Most perception refreshes should not become user-visible speech. A seven-second 
 
 Atlas should preserve adapter timing telemetry as observation metadata when available, but Core should not depend on OpenClaw-specific timing fields. Timing is runtime/adapter telemetry used for regression tracking and product tuning.
 
+### 7.0.1 Visual Context Half-Life
+
+Visual context decays. Atlas should not treat the most recent image as equally useful forever. Reuse should depend on:
+
+- age of the last observation
+- confidence and stability
+- inferred motion state
+- question risk/use case
+- relevance to the current task
+
+Initial motion states:
+
+```ts
+type MotionState =
+  | 'stationary'
+  | 'handheld-stable'
+  | 'turning'
+  | 'walking'
+  | 'vehicle'
+  | 'unknown';
+```
+
+Initial visual use cases:
+
+```ts
+type VisualContextUseCase = 'descriptive' | 'confirmation' | 'navigation' | 'high-risk';
+```
+
+Atlas can reuse stable stationary context for longer descriptive questions, should refresh quickly while walking or navigating, and should always refresh before high-risk visual confirmations. See `docs/visual-freshness-policy.md` for the first policy matrix.
+
 ### 7.1 Heartbeat / Perception Loop
 
 Purpose: keep the agent physically situated.

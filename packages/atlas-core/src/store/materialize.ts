@@ -65,6 +65,7 @@ function applyObservationCaptured(state: AtlasSessionState, event: AuditEvent): 
         confidence: observation.quality?.confidence ?? observation.analyses?.find((analysis) => typeof analysis.confidence === 'number')?.confidence ?? state.perception.confidence,
         freshnessMs,
         stability: observation.quality?.motion === true ? 'transitioning' : observation.quality?.motion === false ? 'stable' : state.perception.stability,
+        motionState: observation.quality?.motion === true ? 'turning' : observation.quality?.motion === false ? 'stationary' : state.perception.motionState,
         blurScore: observation.quality?.blurScore ?? state.perception.blurScore,
         motionDetected: observation.quality?.motion ?? state.perception.motionDetected
       }

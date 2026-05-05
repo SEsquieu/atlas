@@ -29,6 +29,7 @@ export function createSessionState(input: CreateSessionInput): AtlasSessionState
       confidence: 0,
       freshnessMs: UNKNOWN_FRESHNESS_MS,
       stability: 'unknown',
+      motionState: 'unknown',
       notes: ['No observations captured yet.']
     },
     recentObservations: [],

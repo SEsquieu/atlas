@@ -1,6 +1,7 @@
 export type SessionStatus = 'idle' | 'active' | 'paused' | 'done' | 'error';
 export type SessionMode = 'manual' | 'assisted' | 'ambient';
 export type ContextStability = 'stable' | 'transitioning' | 'unknown';
+export type MotionState = 'stationary' | 'handheld-stable' | 'turning' | 'walking' | 'vehicle' | 'unknown';
 
 export type DeviceCapability =
   | 'camera.capture'
@@ -59,6 +60,7 @@ export type ContextStatus = {
   ageMs?: number;
   confidence?: number;
   stability?: ContextStability;
+  motionState?: MotionState;
   relevant?: boolean;
   note?: string;
 };
@@ -71,6 +73,7 @@ export type PerceptionState = {
   confidence: number;
   freshnessMs: number;
   stability: ContextStability;
+  motionState?: MotionState;
   sceneDeltaFromPrevious?: number;
   blurScore?: number;
   motionDetected?: boolean;
