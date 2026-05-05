@@ -5,6 +5,7 @@ import {
   FileSessionStore,
   createFakeCameraDevice,
   createFakeProvider,
+  createFakeVisualAnalyzer,
   createSessionState,
   inspectSession
 } from '@atlas/core';
@@ -38,7 +39,8 @@ const runner = new AtlasRunner({
   provider: createFakeProvider({
     responseText: 'Fresh visual context captured and available.'
   }),
-  devices: [createFakeCameraDevice({ imageSummary: 'A fake but current physical view.' })]
+  devices: [createFakeCameraDevice({ includeSummary: false })],
+  analyzers: [createFakeVisualAnalyzer({ summary: 'A fake but current physical view.', confidence: 0.9 })]
 });
 
 const heartbeat = await runner.runHeartbeatTick({ sessionId: session.sessionId });

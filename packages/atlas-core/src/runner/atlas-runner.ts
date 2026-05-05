@@ -4,10 +4,12 @@ import type {
   ContextStatus,
   DeviceAdapter,
   NormalizedAgentResult,
-  Observation
+  Observation,
+  PerceptionAnalyzerAdapter
 } from '../types.js';
 import { planHeartbeatTick, type HeartbeatDecision } from '../loops/heartbeat.js';
 import { buildUserSessionTurn, planUserTurn } from '../loops/user-loop.js';
+import { analyzeObservationWithPipeline } from '../perception/analysis.js';
 import { CORE_PHYSICAL_TOOLS } from '../tools/registry.js';
 import type { AuditEvent } from '../audit/event-log.js';
 import { applySessionEvent } from '../store/materialize.js';
@@ -17,6 +19,7 @@ export type AtlasRunnerOptions = {
   store: SessionStore;
   provider: AgentProviderAdapter;
   devices: DeviceAdapter[];
+  analyzers?: PerceptionAnalyzerAdapter[];
 };
 
 export type RunUserTurnInput = {
@@ -48,11 +51,13 @@ export class AtlasRunner {
   private readonly store: SessionStore;
   private readonly provider: AgentProviderAdapter;
   private readonly devices: DeviceAdapter[];
+  private readonly analyzers: PerceptionAnalyzerAdapter[];
 
   constructor(options: AtlasRunnerOptions) {
     this.store = options.store;
     this.provider = options.provider;
     this.devices = options.devices;
+    this.analyzers = options.analyzers ?? [];
   }
 
   async runHeartbeatTick(input: RunHeartbeatTickInput): Promise<RunHeartbeatTickResult> {
@@ -164,11 +169,21 @@ export class AtlasRunner {
       data: { toolName: 'capture_current_view', reason, deviceId: device.id }
     });
 
-    const observation = await device.captureImage({ reason, quality: 'medium' });
+    const rawObservation = await device.captureImage({ reason, quality: 'medium' });
+    const observation = await analyzeObservationWithPipeline(rawObservation, {
+      analyzers: this.analyzers,
+      reason,
+      kinds: ['visual-summary', 'quality']
+    });
 
     await this.store.appendEvent(session.sessionId, {
       type: 'tool.completed',
-      data: { toolName: 'capture_current_view', resultRef: observation.mediaRef, observationId: observation.id }
+      data: {
+        toolName: 'capture_current_view',
+        resultRef: observation.mediaRef,
+        observationId: observation.id,
+        analysisCount: observation.analyses?.length ?? 0
+      }
     });
 
     return observation;

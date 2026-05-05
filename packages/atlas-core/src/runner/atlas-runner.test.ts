@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { AtlasRunner } from './atlas-runner.js';
 import { createSessionState } from '../session/index.js';
 import { FileSessionStore } from '../store/file-session-store.js';
-import { createFakeCameraDevice, createFakeProvider } from '../testing/fakes.js';
+import { createFakeCameraDevice, createFakeProvider, createFakeVisualAnalyzer } from '../testing/fakes.js';
 
 test('runUserTurn refreshes stale/missing visual context before provider call', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-runner-'));
@@ -30,7 +30,8 @@ test('runUserTurn refreshes stale/missing visual context before provider call', 
     let providerSawObservationCount = -1;
     const runner = new AtlasRunner({
       store,
-      devices: [createFakeCameraDevice()],
+      devices: [createFakeCameraDevice({ includeSummary: false })],
+      analyzers: [createFakeVisualAnalyzer({ summary: 'Analyzer sees a current image.', confidence: 0.91 })],
       provider: createFakeProvider({
         onTurn: (turn) => {
           providerSawObservationCount = turn.observations.length;
@@ -52,6 +53,8 @@ test('runUserTurn refreshes stale/missing visual context before provider call', 
     assert.equal(providerSawObservationCount, 1);
     assert.equal(result.session.recentObservations.length, 1);
     assert.equal(Boolean(result.session.perception.latestImageId), true);
+    assert.equal(result.session.perception.summary, 'Analyzer sees a current image.');
+    assert.equal(result.session.recentObservations[0]?.analyses?.length, 1);
 
     const events = await store.loadEvents(session.sessionId);
     assert.deepEqual(

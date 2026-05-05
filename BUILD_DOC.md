@@ -145,7 +145,22 @@ Future implementations may include:
 - robot or drone
 - sensor bundles
 
-### 6.3 Provider Adapters
+### 6.3 Perception Analyzer Adapters
+
+Perception analyzer adapters turn raw observations into analysis artifacts such as visual summaries, OCR, object detections, quality signals, scene-change estimates, or transcripts.
+
+Analyzer adapters are separate from device adapters and provider adapters. This prevents Atlas from assuming that image analysis must come from the device bridge or the upstream agent runtime.
+
+The first Android/OpenClaw path may use the existing Android Camera Bridge as both transport/capture and optional visual analyzer, but Atlas should model those as separate capabilities.
+
+Supported final shapes:
+
+- device/bridge-analyzed image: capture returns media plus analyses
+- Atlas-configured analyzer: Atlas calls Ollama/OpenClaw media/OCR/custom CV before provider reasoning
+- provider-native vision: provider receives media refs and performs semantic interpretation during reasoning
+- no analyzer: provider receives raw observation metadata only
+
+### 6.4 Provider Adapters
 
 Provider adapters map normalized Atlas turns to upstream runtime calls.
 
@@ -159,7 +174,7 @@ Future implementations:
 - LangGraph-style runtime
 - native Atlas runtime
 
-### 6.4 Session Store
+### 6.5 Session Store
 
 Stores:
 

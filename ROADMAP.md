@@ -48,6 +48,7 @@ Done:
 - Core `AtlasRunner` for user turns.
 - Core `AtlasRunner` heartbeat tick path.
 - Fake provider/device adapters for harness/tests.
+- Fake perception analyzer adapter and analyzer pipeline.
 - Session inspection helper and harness inspect command.
 
 Remaining:
@@ -78,6 +79,7 @@ Deliverables:
 
 - Adapter wrapper around existing Android Camera Bridge.
 - `captureImage()` returns normalized `Observation`.
+- Bridge-provided image analysis maps to `ObservationAnalysis` rather than becoming an OpenClaw-specific assumption.
 - Media refs, timestamps, device ID, and summary/quality fields populated where available.
 - Error handling for no paired device, capture failure, stale file, or analysis failure.
 

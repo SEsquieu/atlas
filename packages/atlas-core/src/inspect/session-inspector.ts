@@ -33,6 +33,7 @@ export type SessionInspection = {
       deviceId: string;
       mediaRef?: string;
       summary?: string;
+      analysisCount: number;
     };
   };
   events: {
@@ -88,7 +89,8 @@ export function summarizeSession(state: AtlasSessionState, events: AuditEvent[],
             capturedAt: latestObservation.capturedAt,
             deviceId: latestObservation.deviceId,
             mediaRef: latestObservation.mediaRef,
-            summary: latestObservation.summary
+            summary: latestObservation.summary,
+            analysisCount: latestObservation.analyses?.length ?? 0
           }
         : undefined
     },

@@ -13,6 +13,28 @@ export type DeviceCapability =
 
 export type ObservationType = 'image' | 'audio' | 'location' | 'ocr' | 'sensor' | 'composite';
 
+export type ObservationAnalysisKind =
+  | 'visual-summary'
+  | 'ocr'
+  | 'object-detection'
+  | 'scene-change'
+  | 'quality'
+  | 'location-summary'
+  | 'audio-transcript'
+  | 'custom';
+
+export type ObservationAnalysis = {
+  id: string;
+  observationId: string;
+  kind: ObservationAnalysisKind;
+  producedBy: string;
+  createdAt: string;
+  confidence?: number;
+  summary?: string;
+  data?: unknown;
+  tags?: string[];
+};
+
 export type Observation = {
   id: string;
   type: ObservationType;
@@ -29,6 +51,7 @@ export type Observation = {
   };
   summary?: string;
   tags?: string[];
+  analyses?: ObservationAnalysis[];
 };
 
 export type ContextStatus = {
@@ -175,6 +198,11 @@ export type SpeakOptions = {
   interrupt?: boolean;
 };
 
+export type AnalyzeObservationOptions = {
+  reason?: string;
+  kinds?: ObservationAnalysisKind[];
+};
+
 export interface DeviceAdapter {
   id: string;
   name: string;
@@ -182,4 +210,10 @@ export interface DeviceAdapter {
   captureImage?(options?: CaptureImageOptions): Promise<Observation>;
   getLocation?(options?: LocationOptions): Promise<Observation>;
   speak?(text: string, options?: SpeakOptions): Promise<void>;
+}
+
+export interface PerceptionAnalyzerAdapter {
+  id: string;
+  name: string;
+  analyze(observation: Observation, options?: AnalyzeObservationOptions): Promise<ObservationAnalysis[]>;
 }
