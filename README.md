@@ -51,3 +51,12 @@ atlas/
 Read [`BUILD_DOC.md`](./BUILD_DOC.md) first. It is the current source of truth for architecture and MVP scope.
 
 Then read [`ROADMAP.md`](./ROADMAP.md) for the implementation sequence.
+
+## Development Workflow
+
+Before committing Atlas changes, run:
+
+```bash
+npm run build
+npm test
+```
