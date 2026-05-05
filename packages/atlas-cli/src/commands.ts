@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { FileSessionStore, inspectSession } from '@atlas/core';
+import { FileSessionStore, createSessionState, inspectSession, type DeviceBinding, type DeviceCapability } from '@atlas/core';
 
 export type CliResult = {
   exitCode: number;
@@ -36,12 +36,75 @@ async function runSessionsCommand(args: string[], options: CliOptions): Promise<
 
 async function runSessionCommand(args: string[], options: CliOptions): Promise<CliResult> {
   const [subcommand, sessionId, ...rest] = args;
-  if (subcommand !== 'inspect' || !sessionId) return fail('Usage: atlas session inspect <sessionId> [--store <path>]', 1);
 
-  const store = createStore(rest, options);
+  if (subcommand === 'create' && sessionId) return createSessionCommand(sessionId, rest, options);
+  if (subcommand === 'inspect' && sessionId) return inspectSessionCommand(sessionId, rest, options);
+
+  return fail('Usage: atlas session create <sessionId> [options]\n       atlas session inspect <sessionId> [--store <path>]', 1);
+}
+
+async function createSessionCommand(sessionId: string, args: string[], options: CliOptions): Promise<CliResult> {
+  const store = createStore(args, options);
+  const existing = await store.loadState(sessionId);
+  if (existing) return fail(`Session already exists: ${sessionId}`, 1);
+
+  const providerAdapter = readFlagValue(args, '--provider') ?? '@atlas/core/testing';
+  const providerId = readFlagValue(args, '--provider-id') ?? providerAdapter;
+  const devices = readRepeatedFlagValues(args, '--device').map(parseDeviceBinding);
+  const now = readFlagValue(args, '--now');
+
+  const session = createSessionState({
+    sessionId,
+    name: readFlagValue(args, '--name'),
+    goal: readFlagValue(args, '--goal'),
+    now,
+    provider: {
+      id: providerId,
+      adapter: providerAdapter
+    },
+    devices
+  });
+
+  await store.create(session);
+  await store.appendEvent(session.sessionId, {
+    type: 'session.created',
+    at: session.createdAt,
+    data: {
+      source: 'atlas-cli',
+      provider: session.provider,
+      deviceCount: session.devices.length
+    }
+  });
+
+  return ok(JSON.stringify({ sessionId: session.sessionId, created: true, statePath: 'state.json' }, null, 2));
+}
+
+async function inspectSessionCommand(sessionId: string, args: string[], options: CliOptions): Promise<CliResult> {
+  const store = createStore(args, options);
   const inspection = await inspectSession(store, sessionId);
   if (!inspection) return fail(`Session not found: ${sessionId}`, 1);
   return ok(JSON.stringify(inspection, null, 2));
+}
+
+function parseDeviceBinding(value: string): DeviceBinding {
+  const [id, adapter, capabilitiesText] = value.split(':');
+  if (!id || !adapter) {
+    throw new Error(`Invalid --device value: ${value}. Expected id:adapter:capability,capability`);
+  }
+
+  return {
+    id,
+    adapter,
+    capabilities: parseCapabilities(capabilitiesText)
+  };
+}
+
+function parseCapabilities(value: string | undefined): DeviceCapability[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((capability) => capability.trim())
+    .filter(Boolean) as DeviceCapability[];
 }
 
 function createStore(args: string[], options: CliOptions): FileSessionStore {
@@ -61,6 +124,14 @@ function readFlagValue(args: string[], flag: string): string | undefined {
   return args[index + 1];
 }
 
+function readRepeatedFlagValues(args: string[], flag: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === flag && args[index + 1]) values.push(args[index + 1]!);
+  }
+  return values;
+}
+
 function ok(stdout: string): CliResult {
   return { exitCode: 0, stdout };
 }
@@ -70,5 +141,5 @@ function fail(stderr: string, exitCode: number): CliResult {
 }
 
 function helpText(): string {
-  return `Atlas CLI\n\nUsage:\n  atlas sessions list [--store <path>]\n  atlas session inspect <sessionId> [--store <path>]\n  atlas help\n\nEnvironment:\n  ATLAS_STORE  Override default .atlas-cache/sessions store path`;
+  return `Atlas CLI\n\nUsage:\n  atlas sessions list [--store <path>]\n  atlas session create <sessionId> [--name <name>] [--goal <goal>] [--provider <adapter>] [--provider-id <id>] [--device <id:adapter:capability,capability>] [--store <path>]\n  atlas session inspect <sessionId> [--store <path>]\n  atlas help\n\nEnvironment:\n  ATLAS_STORE  Override default .atlas-cache/sessions store path`;
 }

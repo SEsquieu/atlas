@@ -13,6 +13,58 @@ test('resolveStoreRoot uses explicit --store before environment/default', () => 
   assert.equal(resolveStoreRoot([], { cwd, env: {} }), join(cwd, '.atlas-cache/sessions'));
 });
 
+test('session create writes a file-backed session', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-cli-create-'));
+  try {
+    const storeRoot = join(root, 'sessions');
+    const created = await runAtlasCli(
+      [
+        'session',
+        'create',
+        'created-session',
+        '--name',
+        'Created Session',
+        '--goal',
+        'Created from CLI.',
+        '--provider',
+        '@atlas/core/testing',
+        '--device',
+        'fake-camera:@atlas/core/testing:camera.capture',
+        '--store',
+        storeRoot
+      ],
+      { cwd: root, env: {} }
+    );
+
+    assert.equal(created.exitCode, 0);
+    assert.equal(JSON.parse(created.stdout ?? '{}').sessionId, 'created-session');
+
+    const inspect = await runAtlasCli(['session', 'inspect', 'created-session', '--store', storeRoot], { cwd: root, env: {} });
+    const inspected = JSON.parse(inspect.stdout ?? '{}');
+    assert.equal(inspected.name, 'Created Session');
+    assert.equal(inspected.goal, 'Created from CLI.');
+    assert.equal(inspected.devices[0].id, 'fake-camera');
+    assert.equal(inspected.events.byType['session.created'], 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('session create refuses to overwrite existing sessions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-cli-create-existing-'));
+  try {
+    const storeRoot = join(root, 'sessions');
+    const first = await runAtlasCli(['session', 'create', 'same-session', '--store', storeRoot], { cwd: root, env: {} });
+    const second = await runAtlasCli(['session', 'create', 'same-session', '--store', storeRoot], { cwd: root, env: {} });
+
+    assert.equal(first.exitCode, 0);
+    assert.equal(second.exitCode, 1);
+    assert.match(second.stderr ?? '', /already exists/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('sessions list and session inspect read file-backed store', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-cli-'));
   try {

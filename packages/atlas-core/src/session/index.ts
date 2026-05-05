@@ -1,5 +1,7 @@
 import type { AtlasSessionState, DeviceBinding, ProviderBinding, SessionPermissions } from '../types.js';
 
+export const UNKNOWN_FRESHNESS_MS = Number.MAX_SAFE_INTEGER;
+
 export type CreateSessionInput = {
   sessionId: string;
   name?: string;
@@ -25,7 +27,7 @@ export function createSessionState(input: CreateSessionInput): AtlasSessionState
     devices: input.devices ?? [],
     perception: {
       confidence: 0,
-      freshnessMs: Number.POSITIVE_INFINITY,
+      freshnessMs: UNKNOWN_FRESHNESS_MS,
       stability: 'unknown',
       notes: ['No observations captured yet.']
     },

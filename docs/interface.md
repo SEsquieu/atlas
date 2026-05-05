@@ -28,6 +28,7 @@ The first CLI package is `@atlas/cli`.
 After building:
 
 ```bash
+node packages/atlas-cli/dist/index.js session create <sessionId>
 node packages/atlas-cli/dist/index.js sessions list
 node packages/atlas-cli/dist/index.js session inspect <sessionId>
 ```
@@ -47,7 +48,7 @@ ATLAS_STORE=<path> node packages/atlas-cli/dist/index.js sessions list
 
 ## Design Intent
 
-The CLI is not the living-agent product by itself. It is the control surface used to inspect, debug, script, and eventually manage the background runner.
+The CLI is not the living-agent product by itself. It is the control surface used to create, inspect, debug, script, and eventually manage the background runner.
 
 The long-term interactive shape is expected to be:
 

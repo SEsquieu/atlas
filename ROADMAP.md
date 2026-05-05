@@ -50,13 +50,13 @@ Done:
 - Fake provider/device adapters for harness/tests.
 - Fake perception analyzer adapter and analyzer pipeline.
 - Session inspection helper and harness inspect command.
-- Initial `@atlas/cli` control surface for session listing/inspection.
+- Initial `@atlas/cli` control surface for session create/list/inspection.
 
 Remaining:
 
 - Cleaner replay/materialization semantics.
 - More scenario fixtures.
-- CLI create/ask/heartbeat commands.
+- CLI ask/heartbeat commands.
 
 Deliverables:
 
