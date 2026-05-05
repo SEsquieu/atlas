@@ -73,6 +73,7 @@ Useful CLI commands after building:
 
 ```bash
 node packages/atlas-cli/dist/index.js session create demo-session --name "Demo" --goal "Try Atlas"
+node packages/atlas-cli/dist/index.js session start demo-session
 node packages/atlas-cli/dist/index.js sessions list
 node packages/atlas-cli/dist/index.js session inspect demo-session
 ```

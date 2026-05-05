@@ -65,6 +65,56 @@ test('session create refuses to overwrite existing sessions', async () => {
   }
 });
 
+test('session lifecycle commands update status and event log', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-cli-lifecycle-'));
+  try {
+    const storeRoot = join(root, 'sessions');
+    const created = await runAtlasCli(['session', 'create', 'life-session', '--store', storeRoot], { cwd: root, env: {} });
+    assert.equal(created.exitCode, 0);
+
+    const started = await runAtlasCli(['session', 'start', 'life-session', '--reason', 'begin test', '--store', storeRoot], { cwd: root, env: {} });
+    assert.equal(started.exitCode, 0);
+    assert.equal(JSON.parse(started.stdout ?? '{}').status, 'active');
+
+    const paused = await runAtlasCli(['session', 'pause', 'life-session', '--store', storeRoot], { cwd: root, env: {} });
+    assert.equal(paused.exitCode, 0);
+    assert.equal(JSON.parse(paused.stdout ?? '{}').status, 'paused');
+
+    const resumed = await runAtlasCli(['session', 'resume', 'life-session', '--store', storeRoot], { cwd: root, env: {} });
+    assert.equal(resumed.exitCode, 0);
+    assert.equal(JSON.parse(resumed.stdout ?? '{}').status, 'active');
+
+    const ended = await runAtlasCli(['session', 'end', 'life-session', '--store', storeRoot], { cwd: root, env: {} });
+    assert.equal(ended.exitCode, 0);
+    assert.equal(JSON.parse(ended.stdout ?? '{}').status, 'done');
+
+    const inspect = await runAtlasCli(['session', 'inspect', 'life-session', '--store', storeRoot], { cwd: root, env: {} });
+    const inspected = JSON.parse(inspect.stdout ?? '{}');
+    assert.equal(inspected.status, 'done');
+    assert.equal(inspected.events.byType['session.started'], 1);
+    assert.equal(inspected.events.byType['session.paused'], 1);
+    assert.equal(inspected.events.byType['session.resumed'], 1);
+    assert.equal(inspected.events.byType['session.ended'], 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('session lifecycle command is idempotent when already in target status', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-cli-lifecycle-idempotent-'));
+  try {
+    const storeRoot = join(root, 'sessions');
+    await runAtlasCli(['session', 'create', 'active-session', '--store', storeRoot], { cwd: root, env: {} });
+    const first = await runAtlasCli(['session', 'start', 'active-session', '--store', storeRoot], { cwd: root, env: {} });
+    const second = await runAtlasCli(['session', 'start', 'active-session', '--store', storeRoot], { cwd: root, env: {} });
+
+    assert.equal(JSON.parse(first.stdout ?? '{}').changed, true);
+    assert.equal(JSON.parse(second.stdout ?? '{}').changed, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('sessions list and session inspect read file-backed store', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-cli-'));
   try {

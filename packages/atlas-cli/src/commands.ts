@@ -1,5 +1,13 @@
 import { resolve } from 'node:path';
-import { FileSessionStore, createSessionState, inspectSession, type DeviceBinding, type DeviceCapability } from '@atlas/core';
+import {
+  FileSessionStore,
+  applySessionEvent,
+  createSessionState,
+  inspectSession,
+  type DeviceBinding,
+  type DeviceCapability,
+  type SessionStatus
+} from '@atlas/core';
 
 export type CliResult = {
   exitCode: number;
@@ -39,8 +47,12 @@ async function runSessionCommand(args: string[], options: CliOptions): Promise<C
 
   if (subcommand === 'create' && sessionId) return createSessionCommand(sessionId, rest, options);
   if (subcommand === 'inspect' && sessionId) return inspectSessionCommand(sessionId, rest, options);
+  if (subcommand === 'start' && sessionId) return lifecycleSessionCommand(sessionId, 'session.started', 'active', rest, options);
+  if (subcommand === 'pause' && sessionId) return lifecycleSessionCommand(sessionId, 'session.paused', 'paused', rest, options);
+  if (subcommand === 'resume' && sessionId) return lifecycleSessionCommand(sessionId, 'session.resumed', 'active', rest, options);
+  if ((subcommand === 'end' || subcommand === 'done') && sessionId) return lifecycleSessionCommand(sessionId, 'session.ended', 'done', rest, options);
 
-  return fail('Usage: atlas session create <sessionId> [options]\n       atlas session inspect <sessionId> [--store <path>]', 1);
+  return fail('Usage: atlas session create <sessionId> [options]\n       atlas session inspect <sessionId> [--store <path>]\n       atlas session start|pause|resume|end <sessionId> [--reason <reason>] [--store <path>]', 1);
 }
 
 async function createSessionCommand(sessionId: string, args: string[], options: CliOptions): Promise<CliResult> {
@@ -84,6 +96,31 @@ async function inspectSessionCommand(sessionId: string, args: string[], options:
   const inspection = await inspectSession(store, sessionId);
   if (!inspection) return fail(`Session not found: ${sessionId}`, 1);
   return ok(JSON.stringify(inspection, null, 2));
+}
+
+async function lifecycleSessionCommand(
+  sessionId: string,
+  eventType: 'session.started' | 'session.paused' | 'session.resumed' | 'session.ended',
+  targetStatus: SessionStatus,
+  args: string[],
+  options: CliOptions
+): Promise<CliResult> {
+  const store = createStore(args, options);
+  const state = await store.loadState(sessionId);
+  if (!state) return fail(`Session not found: ${sessionId}`, 1);
+  if (state.status === targetStatus) return ok(JSON.stringify({ sessionId, status: state.status, changed: false }, null, 2));
+
+  const event = await store.appendEvent(sessionId, {
+    type: eventType,
+    data: {
+      source: 'atlas-cli',
+      reason: readFlagValue(args, '--reason')
+    }
+  });
+  const nextState = applySessionEvent(state, event);
+  await store.saveState(nextState);
+
+  return ok(JSON.stringify({ sessionId, status: nextState.status, changed: true, event: event.type }, null, 2));
 }
 
 function parseDeviceBinding(value: string): DeviceBinding {
@@ -141,5 +178,5 @@ function fail(stderr: string, exitCode: number): CliResult {
 }
 
 function helpText(): string {
-  return `Atlas CLI\n\nUsage:\n  atlas sessions list [--store <path>]\n  atlas session create <sessionId> [--name <name>] [--goal <goal>] [--provider <adapter>] [--provider-id <id>] [--device <id:adapter:capability,capability>] [--store <path>]\n  atlas session inspect <sessionId> [--store <path>]\n  atlas help\n\nEnvironment:\n  ATLAS_STORE  Override default .atlas-cache/sessions store path`;
+  return `Atlas CLI\n\nUsage:\n  atlas sessions list [--store <path>]\n  atlas session create <sessionId> [--name <name>] [--goal <goal>] [--provider <adapter>] [--provider-id <id>] [--device <id:adapter:capability,capability>] [--store <path>]\n  atlas session inspect <sessionId> [--store <path>]\n  atlas session start <sessionId> [--reason <reason>] [--store <path>]\n  atlas session pause <sessionId> [--reason <reason>] [--store <path>]\n  atlas session resume <sessionId> [--reason <reason>] [--store <path>]\n  atlas session end <sessionId> [--reason <reason>] [--store <path>]\n  atlas help\n\nEnvironment:\n  ATLAS_STORE  Override default .atlas-cache/sessions store path`;
 }

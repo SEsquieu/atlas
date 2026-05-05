@@ -50,7 +50,7 @@ Done:
 - Fake provider/device adapters for harness/tests.
 - Fake perception analyzer adapter and analyzer pipeline.
 - Session inspection helper and harness inspect command.
-- Initial `@atlas/cli` control surface for session create/list/inspection.
+- Initial `@atlas/cli` control surface for session create/list/inspection and lifecycle start/pause/resume/end.
 
 Remaining:
 

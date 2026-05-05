@@ -29,6 +29,10 @@ After building:
 
 ```bash
 node packages/atlas-cli/dist/index.js session create <sessionId>
+node packages/atlas-cli/dist/index.js session start <sessionId>
+node packages/atlas-cli/dist/index.js session pause <sessionId>
+node packages/atlas-cli/dist/index.js session resume <sessionId>
+node packages/atlas-cli/dist/index.js session end <sessionId>
 node packages/atlas-cli/dist/index.js sessions list
 node packages/atlas-cli/dist/index.js session inspect <sessionId>
 ```
