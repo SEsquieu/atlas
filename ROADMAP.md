@@ -48,10 +48,10 @@ Done:
 - Core `AtlasRunner` for user turns.
 - Core `AtlasRunner` heartbeat tick path.
 - Fake provider/device adapters for harness/tests.
+- Session inspection helper and harness inspect command.
 
 Remaining:
 
-- Session inspection command/output.
 - Cleaner replay/materialization semantics.
 - More scenario fixtures.
 

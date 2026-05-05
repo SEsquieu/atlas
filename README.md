@@ -60,3 +60,10 @@ Before committing Atlas changes, run:
 npm run build
 npm test
 ```
+
+Useful harness commands:
+
+```bash
+npm --workspace @atlas/test-harness run demo
+npm --workspace @atlas/test-harness run inspect -- demo-session
+```

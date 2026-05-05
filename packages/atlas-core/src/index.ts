@@ -8,3 +8,4 @@ export * from './audit/event-log.js';
 export * from './store/index.js';
 export * from './runner/index.js';
 export * from './testing/index.js';
+export * from './inspect/index.js';
