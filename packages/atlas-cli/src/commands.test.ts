@@ -71,6 +71,48 @@ test('session create refuses to overwrite existing sessions', async () => {
   }
 });
 
+test('session ask and heartbeat run through the built-in fake adapter registry', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-cli-runner-'));
+  try {
+    const storeRoot = join(root, 'sessions');
+    const created = await runAtlasCli(
+      [
+        'session',
+        'create',
+        'runner-session',
+        '--device',
+        'fake-camera:@atlas/core/testing:camera.capture',
+        '--store',
+        storeRoot
+      ],
+      { cwd: root, env: {} }
+    );
+    assert.equal(created.exitCode, 0);
+
+    const started = await runAtlasCli(['session', 'start', 'runner-session', '--store', storeRoot], { cwd: root, env: {} });
+    assert.equal(started.exitCode, 0);
+
+    const heartbeat = await runAtlasCli(['session', 'heartbeat', 'runner-session', '--store', storeRoot], { cwd: root, env: {} });
+    assert.equal(heartbeat.exitCode, 0);
+    assert.equal(JSON.parse(heartbeat.stdout ?? '{}').decision.shouldCapture, true);
+
+    const ask = await runAtlasCli(
+      ['session', 'ask', 'runner-session', '--text', 'What am I looking at?', '--store', storeRoot],
+      { cwd: root, env: {} }
+    );
+    assert.equal(ask.exitCode, 0);
+    assert.match(JSON.parse(ask.stdout ?? '{}').responseText, /observation/);
+
+    const inspect = await runAtlasCli(['session', 'inspect', 'runner-session', '--store', storeRoot], { cwd: root, env: {} });
+    const inspected = JSON.parse(inspect.stdout ?? '{}');
+    assert.equal(inspected.events.byType['heartbeat.tick'], 1);
+    assert.equal(inspected.events.byType['user.utterance'], 1);
+    assert.equal(inspected.observations.count, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('session lifecycle commands update status and event log', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-cli-lifecycle-'));
   try {

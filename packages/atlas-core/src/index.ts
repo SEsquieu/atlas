@@ -10,3 +10,4 @@ export * from './runner/index.js';
 export * from './testing/index.js';
 export * from './inspect/index.js';
 export * from './perception/index.js';
+export * from './adapters/index.js';

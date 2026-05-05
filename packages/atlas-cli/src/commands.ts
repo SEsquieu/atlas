@@ -1,8 +1,13 @@
 import { resolve } from 'node:path';
 import {
+  AtlasRunner,
   FileSessionStore,
   applySessionEvent,
+  createFakeCameraDevice,
+  createFakeProvider,
+  createFakeVisualAnalyzer,
   createSessionState,
+  createStaticAdapterRegistry,
   inspectSession,
   type DeviceBinding,
   type DeviceCapability,
@@ -48,12 +53,14 @@ async function runSessionCommand(args: string[], options: CliOptions): Promise<C
 
   if (subcommand === 'create' && sessionId) return createSessionCommand(sessionId, rest, options);
   if (subcommand === 'inspect' && sessionId) return inspectSessionCommand(sessionId, rest, options);
+  if (subcommand === 'ask' && sessionId) return askSessionCommand(sessionId, rest, options);
+  if (subcommand === 'heartbeat' && sessionId) return heartbeatSessionCommand(sessionId, rest, options);
   if (subcommand === 'start' && sessionId) return lifecycleSessionCommand(sessionId, 'session.started', 'active', rest, options);
   if (subcommand === 'pause' && sessionId) return lifecycleSessionCommand(sessionId, 'session.paused', 'paused', rest, options);
   if (subcommand === 'resume' && sessionId) return lifecycleSessionCommand(sessionId, 'session.resumed', 'active', rest, options);
   if ((subcommand === 'end' || subcommand === 'done') && sessionId) return lifecycleSessionCommand(sessionId, 'session.ended', 'done', rest, options);
 
-  return fail('Usage: atlas session create <sessionId> [options]\n       atlas session inspect <sessionId> [--store <path>]\n       atlas session start|pause|resume|end <sessionId> [--reason <reason>] [--store <path>]', 1);
+  return fail('Usage: atlas session create <sessionId> [options]\n       atlas session inspect <sessionId> [--store <path>]\n       atlas session ask <sessionId> --text <text> [--store <path>]\n       atlas session heartbeat <sessionId> [--store <path>]\n       atlas session start|pause|resume|end <sessionId> [--reason <reason>] [--store <path>]', 1);
 }
 
 async function createSessionCommand(sessionId: string, args: string[], options: CliOptions): Promise<CliResult> {
@@ -97,6 +104,72 @@ async function inspectSessionCommand(sessionId: string, args: string[], options:
   const inspection = await inspectSession(store, sessionId);
   if (!inspection) return fail(`Session not found: ${sessionId}`, 1);
   return ok(JSON.stringify(inspection, null, 2));
+}
+
+async function askSessionCommand(sessionId: string, args: string[], options: CliOptions): Promise<CliResult> {
+  const text = readFlagValue(args, '--text');
+  if (!text) return fail('Usage: atlas session ask <sessionId> --text <text> [--store <path>]', 1);
+
+  const store = createStore(args, options);
+  const runnerResult = await createCliRunner(sessionId, store);
+  if ('error' in runnerResult) return fail(runnerResult.error, 1);
+
+  const result = await runnerResult.runner.runUserTurn({ sessionId, text });
+  return ok(
+    JSON.stringify(
+      {
+        sessionId,
+        responseText: result.providerResult.responseText,
+        plan: result.plan,
+        refreshedObservationId: result.refreshedObservation?.id,
+        status: result.session.status
+      },
+      null,
+      2
+    )
+  );
+}
+
+async function heartbeatSessionCommand(sessionId: string, args: string[], options: CliOptions): Promise<CliResult> {
+  const store = createStore(args, options);
+  const runnerResult = await createCliRunner(sessionId, store);
+  if ('error' in runnerResult) return fail(runnerResult.error, 1);
+
+  const result = await runnerResult.runner.runHeartbeatTick({ sessionId });
+  return ok(
+    JSON.stringify(
+      {
+        sessionId,
+        decision: result.decision,
+        observationId: result.observation?.id,
+        status: result.session.status
+      },
+      null,
+      2
+    )
+  );
+}
+
+async function createCliRunner(sessionId: string, store: FileSessionStore): Promise<{ runner: AtlasRunner } | { error: string }> {
+  const state = await store.loadState(sessionId);
+  if (!state) return { error: `Session not found: ${sessionId}` };
+
+  const registry = createStaticAdapterRegistry({
+    providers: [createFakeProvider(), createFakeProvider({ id: '@atlas/core/testing', name: '@atlas/core/testing' })],
+    devices: [createFakeCameraDevice({ id: state.devices[0]?.id ?? 'fake-camera', includeSummary: false })],
+    analyzers: [createFakeVisualAnalyzer({ summary: 'CLI fake visual analyzer summary.', confidence: 0.9 })]
+  });
+  const provider = registry.resolveProvider(state.provider);
+  if (!provider) return { error: `Provider adapter not available: ${state.provider.adapter}` };
+
+  return {
+    runner: new AtlasRunner({
+      store,
+      provider,
+      devices: registry.resolveDevices(state.devices),
+      analyzers: registry.resolveAnalyzers?.()
+    })
+  };
 }
 
 async function lifecycleSessionCommand(
@@ -179,5 +252,5 @@ function fail(stderr: string, exitCode: number): CliResult {
 }
 
 function helpText(): string {
-  return `Atlas CLI\n\nUsage:\n  atlas shrug\n  atlas sessions list [--store <path>]\n  atlas session create <sessionId> [--name <name>] [--goal <goal>] [--provider <adapter>] [--provider-id <id>] [--device <id:adapter:capability,capability>] [--store <path>]\n  atlas session inspect <sessionId> [--store <path>]\n  atlas session start <sessionId> [--reason <reason>] [--store <path>]\n  atlas session pause <sessionId> [--reason <reason>] [--store <path>]\n  atlas session resume <sessionId> [--reason <reason>] [--store <path>]\n  atlas session end <sessionId> [--reason <reason>] [--store <path>]\n  atlas help\n\nEnvironment:\n  ATLAS_STORE  Override default .atlas-cache/sessions store path`;
+  return `Atlas CLI\n\nUsage:\n  atlas shrug\n  atlas sessions list [--store <path>]\n  atlas session create <sessionId> [--name <name>] [--goal <goal>] [--provider <adapter>] [--provider-id <id>] [--device <id:adapter:capability,capability>] [--store <path>]\n  atlas session inspect <sessionId> [--store <path>]\n  atlas session ask <sessionId> --text <text> [--store <path>]\n  atlas session heartbeat <sessionId> [--store <path>]\n  atlas session start <sessionId> [--reason <reason>] [--store <path>]\n  atlas session pause <sessionId> [--reason <reason>] [--store <path>]\n  atlas session resume <sessionId> [--reason <reason>] [--store <path>]\n  atlas session end <sessionId> [--reason <reason>] [--store <path>]\n  atlas help\n\nEnvironment:\n  ATLAS_STORE  Override default .atlas-cache/sessions store path`;
 }
