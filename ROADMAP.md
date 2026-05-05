@@ -1,6 +1,6 @@
 # Atlas Roadmap
 
-Status: Phase 0 locked; Phase 1 core runner/store underway.
+Status: Phase 1 core session skeleton closed; Phase 2 Android adapter MVP started.
 
 ## Current Position
 
@@ -35,7 +35,7 @@ Locked decisions:
 
 ## Phase 1 — Core Session Skeleton
 
-Status: underway.
+Status: complete.
 
 Goal: make Atlas able to create, persist, inspect, and update physical sessions.
 
@@ -53,12 +53,14 @@ Done:
 - Session inspection helper and harness inspect command.
 - Initial `@atlas/cli` control surface for session create/list/inspection, lifecycle start/pause/resume/end, heartbeat tick, fake-adapter ask, and config inspection.
 - Initial `@atlas/config` package for JSON config loading and configured-session materialization.
+- Explicit event cursor/checkpoint semantics for materialized state replay.
+- Inspection rematerializes from stored state plus pending events and reports checkpoint coverage.
+- Scenario fixtures for stale/transitional place-check refresh and provider swap behavior.
+- CLI ask/heartbeat can use config-selected fake provider/device/analyzer bindings via `--config`.
 
 Remaining:
 
-- Cleaner replay/materialization semantics.
-- More scenario fixtures.
-- Wire CLI ask/heartbeat to config-selected adapter registries instead of built-in fake registry.
+- None for Phase 1. Future replay/storage hardening belongs to post-MVP store work.
 
 Deliverables:
 

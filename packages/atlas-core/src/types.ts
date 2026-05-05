@@ -109,6 +109,10 @@ export type AtlasSessionState = {
   status: SessionStatus;
   createdAt: string;
   updatedAt: string;
+  eventCursor?: {
+    lastEventId?: string;
+    lastEventAt?: string;
+  };
   goal?: string;
   mode: SessionMode;
   provider: ProviderBinding;

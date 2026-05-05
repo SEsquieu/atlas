@@ -36,8 +36,8 @@ node packages/atlas-cli/dist/index.js session start <sessionId>
 node packages/atlas-cli/dist/index.js session pause <sessionId>
 node packages/atlas-cli/dist/index.js session resume <sessionId>
 node packages/atlas-cli/dist/index.js session end <sessionId>
-node packages/atlas-cli/dist/index.js session heartbeat <sessionId>
-node packages/atlas-cli/dist/index.js session ask <sessionId> --text "What am I looking at?"
+node packages/atlas-cli/dist/index.js session heartbeat <sessionId> [--config atlas.config.json]
+node packages/atlas-cli/dist/index.js session ask <sessionId> --text "What am I looking at?" [--config atlas.config.json]
 node packages/atlas-cli/dist/index.js config inspect
 node packages/atlas-cli/dist/index.js sessions list
 node packages/atlas-cli/dist/index.js session inspect <sessionId>

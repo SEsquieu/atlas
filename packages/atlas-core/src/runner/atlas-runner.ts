@@ -11,8 +11,7 @@ import { planHeartbeatTick, type HeartbeatDecision } from '../loops/heartbeat.js
 import { buildUserSessionTurn, planUserTurn } from '../loops/user-loop.js';
 import { analyzeObservationWithPipeline } from '../perception/analysis.js';
 import { CORE_PHYSICAL_TOOLS } from '../tools/registry.js';
-import type { AuditEvent } from '../audit/event-log.js';
-import { applySessionEvent } from '../store/materialize.js';
+import { materializeSessionCheckpoint } from '../store/materialize.js';
 import type { SessionStore } from '../store/types.js';
 
 export type AtlasRunnerOptions = {
@@ -64,13 +63,14 @@ export class AtlasRunner {
     const record = await this.store.load(input.sessionId);
     if (!record) throw new Error(`Session not found: ${input.sessionId}`);
 
-    let session = materializeNewerEvents(record.state, record.events);
+    let session = materializeSessionCheckpoint(record.state, record.events);
     const decision = planHeartbeatTick(session, input.now ?? Date.now());
 
-    await this.store.appendEvent(session.sessionId, {
+    const heartbeatEvent = await this.store.appendEvent(session.sessionId, {
       type: 'heartbeat.tick',
       data: { decision }
     });
+    session = materializeSessionCheckpoint(session, [heartbeatEvent]);
 
     let observation: Observation | undefined;
     if (decision.shouldCapture) {
@@ -79,7 +79,7 @@ export class AtlasRunner {
         type: 'observation.captured',
         data: { observation, reason: decision.reason, source: 'heartbeat' }
       });
-      session = materializeNewerEvents(session, [captureEvent]);
+      session = materializeSessionCheckpoint(session, [captureEvent]);
       await this.store.saveState(session);
     } else {
       await this.store.saveState(session);
@@ -92,14 +92,15 @@ export class AtlasRunner {
     const record = await this.store.load(input.sessionId);
     if (!record) throw new Error(`Session not found: ${input.sessionId}`);
 
-    let session = materializeNewerEvents(record.state, record.events);
+    let session = materializeSessionCheckpoint(record.state, record.events);
     const visualStatus = contextStatusFromSession(session);
     const plan = planUserTurn(input.text, visualStatus);
 
-    await this.store.appendEvent(session.sessionId, {
+    const utteranceEvent = await this.store.appendEvent(session.sessionId, {
       type: 'user.utterance',
       data: { text: input.text, mode: input.mode ?? 'text', plan }
     });
+    session = materializeSessionCheckpoint(session, [utteranceEvent]);
 
     let refreshedObservation: Observation | undefined;
     if (plan.shouldRefreshVisualContext) {
@@ -108,7 +109,7 @@ export class AtlasRunner {
         type: 'observation.captured',
         data: { observation: refreshedObservation, reason: plan.reason }
       });
-      session = materializeNewerEvents(session, [captureEvent]);
+      session = materializeSessionCheckpoint(session, [captureEvent]);
       await this.store.saveState(session);
     }
 
@@ -143,7 +144,7 @@ export class AtlasRunner {
 
     const latestRecord = await this.store.load(session.sessionId);
     if (!latestRecord) throw new Error(`Session disappeared while running turn: ${session.sessionId}`);
-    const latestSession = materializeNewerEvents(latestRecord.state, latestRecord.events);
+    const latestSession = materializeSessionCheckpoint(latestRecord.state, latestRecord.events);
     await this.store.saveState(latestSession);
 
     return {
@@ -188,13 +189,6 @@ export class AtlasRunner {
 
     return observation;
   }
-}
-
-function materializeNewerEvents(session: AtlasSessionState, events: AuditEvent[]): AtlasSessionState {
-  const updatedAtMs = Date.parse(session.updatedAt);
-  return events
-    .filter((event) => Date.parse(event.at) > updatedAtMs)
-    .reduce((state, event) => applySessionEvent(state, event), session);
 }
 
 export function contextStatusFromSession(session: AtlasSessionState): ContextStatus {

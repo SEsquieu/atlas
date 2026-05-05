@@ -1,6 +1,7 @@
 import type { AuditEvent } from '../audit/event-log.js';
 import type { AtlasSessionState } from '../types.js';
 import type { SessionStore } from '../store/types.js';
+import { materializeSessionCheckpoint } from '../store/materialize.js';
 
 export type SessionInspection = {
   sessionId: string;
@@ -39,6 +40,11 @@ export type SessionInspection = {
   events: {
     count: number;
     byType: Record<string, number>;
+    checkpoint?: {
+      lastEventId?: string;
+      lastEventAt?: string;
+      materializedThroughLatestEvent: boolean;
+    };
     recent: Array<{
       id: string;
       type: string;
@@ -52,7 +58,7 @@ export async function inspectSession(store: SessionStore, sessionId: string): Pr
   const record = await store.load(sessionId);
   if (!record) return undefined;
 
-  return summarizeSession(record.state, record.events);
+  return summarizeSession(materializeSessionCheckpoint(record.state, record.events), record.events);
 }
 
 export function summarizeSession(state: AtlasSessionState, events: AuditEvent[], recentEventLimit = 12): SessionInspection {
@@ -97,6 +103,7 @@ export function summarizeSession(state: AtlasSessionState, events: AuditEvent[],
     events: {
       count: events.length,
       byType: countEventsByType(events),
+      checkpoint: summarizeCheckpoint(state, events),
       recent: events.slice(-recentEventLimit).map((event) => ({
         id: event.id,
         type: event.type,
@@ -104,6 +111,15 @@ export function summarizeSession(state: AtlasSessionState, events: AuditEvent[],
         summary: summarizeEvent(event)
       }))
     }
+  };
+}
+
+function summarizeCheckpoint(state: AtlasSessionState, events: AuditEvent[]): SessionInspection['events']['checkpoint'] {
+  const latestEvent = events.at(-1);
+  return {
+    lastEventId: state.eventCursor?.lastEventId,
+    lastEventAt: state.eventCursor?.lastEventAt,
+    materializedThroughLatestEvent: !latestEvent || state.eventCursor?.lastEventId === latestEvent.id
   };
 }
 

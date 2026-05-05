@@ -155,6 +155,50 @@ test('session ask and heartbeat run through the built-in fake adapter registry',
   }
 });
 
+test('session ask and heartbeat can resolve fake adapters selected by config', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-cli-config-runner-'));
+  try {
+    const storeRoot = join(root, 'sessions');
+    const configPath = join(root, 'atlas.config.json');
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        sessions: {
+          'configured-runner': {
+            provider: { id: 'config-provider', adapter: '@atlas/core/testing' },
+            devices: [{ id: 'config-camera', adapter: '@atlas/core/testing', capabilities: ['camera.capture'] }],
+            analyzers: ['config-analyzer']
+          }
+        }
+      }),
+      'utf8'
+    );
+
+    await runAtlasCli(['session', 'create', 'configured-runner', '--store', storeRoot], { cwd: root, env: {} });
+    await runAtlasCli(['session', 'start', 'configured-runner', '--store', storeRoot], { cwd: root, env: {} });
+
+    const heartbeat = await runAtlasCli(
+      ['session', 'heartbeat', 'configured-runner', '--store', storeRoot, '--config', configPath],
+      { cwd: root, env: {} }
+    );
+    assert.equal(heartbeat.exitCode, 0);
+
+    const ask = await runAtlasCli(
+      ['session', 'ask', 'configured-runner', '--text', 'Am I in the right place?', '--store', storeRoot, '--config', configPath],
+      { cwd: root, env: {} }
+    );
+    assert.equal(ask.exitCode, 0);
+
+    const inspect = await runAtlasCli(['session', 'inspect', 'configured-runner', '--store', storeRoot], { cwd: root, env: {} });
+    const inspected = JSON.parse(inspect.stdout ?? '{}');
+    assert.equal(inspected.observations.latest.deviceId, 'config-camera');
+    assert.equal(inspected.perception.summary, 'CLI fake visual analyzer summary.');
+    assert.equal(inspected.events.checkpoint.materializedThroughLatestEvent, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('session lifecycle commands update status and event log', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-cli-lifecycle-'));
   try {
