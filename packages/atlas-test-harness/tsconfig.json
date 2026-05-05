@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "composite": true
+  },
+  "references": [
+    { "path": "../atlas-core" },
+    { "path": "../atlas-device-android" },
+    { "path": "../atlas-provider-openclaw" }
+  ],
+  "include": ["src/**/*.ts"]
+}

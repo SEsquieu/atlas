@@ -1,0 +1,93 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import { AtlasRunner } from './atlas-runner.js';
+import { createSessionState } from '../session/index.js';
+import { FileSessionStore } from '../store/file-session-store.js';
+import { createFakeCameraDevice, createFakeProvider } from '../testing/fakes.js';
+
+test('runHeartbeatTick captures context silently when active context is missing or unstable', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const session = createSessionState({
+      sessionId: 'heartbeat-session',
+      provider: { id: 'fake-provider', adapter: '@atlas/core/testing' },
+      devices: [
+        {
+          id: 'fake-camera',
+          adapter: '@atlas/core/testing',
+          capabilities: ['camera.capture']
+        }
+      ]
+    });
+
+    await store.create(session);
+    await store.appendEvent(session.sessionId, { type: 'session.started' });
+
+    const runner = new AtlasRunner({
+      store,
+      devices: [createFakeCameraDevice()],
+      provider: createFakeProvider()
+    });
+
+    const result = await runner.runHeartbeatTick({ sessionId: session.sessionId });
+
+    assert.equal(result.decision.shouldCapture, true);
+    assert.ok(result.observation);
+    assert.equal(result.session.recentObservations.length, 1);
+    assert.equal(Boolean(result.session.perception.latestImageId), true);
+
+    const events = await store.loadEvents(session.sessionId);
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ['session.started', 'heartbeat.tick', 'tool.requested', 'tool.completed', 'observation.captured']
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('runHeartbeatTick stays quiet when context is fresh and stable', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-quiet-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const now = new Date().toISOString();
+    const session = createSessionState({
+      sessionId: 'quiet-session',
+      now,
+      provider: { id: 'fake-provider', adapter: '@atlas/core/testing' }
+    });
+
+    await store.create({
+      ...session,
+      status: 'active',
+      perception: {
+        ...session.perception,
+        latestObservationAt: now,
+        latestImageId: 'fresh-image',
+        confidence: 0.9,
+        freshnessMs: 100,
+        stability: 'stable'
+      }
+    });
+
+    const runner = new AtlasRunner({
+      store,
+      devices: [createFakeCameraDevice()],
+      provider: createFakeProvider()
+    });
+
+    const result = await runner.runHeartbeatTick({ sessionId: session.sessionId });
+
+    assert.equal(result.decision.shouldCapture, false);
+    assert.equal(result.observation, undefined);
+
+    const events = await store.loadEvents(session.sessionId);
+    assert.deepEqual(events.map((event) => event.type), ['heartbeat.tick']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
