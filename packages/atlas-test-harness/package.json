@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/index.js",
     "demo": "node dist/demo.js",
+    "demo:android-bridge": "node dist/android-bridge-demo.js",
     "inspect": "node dist/inspect.js"
   },
   "dependencies": {

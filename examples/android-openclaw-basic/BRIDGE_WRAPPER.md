@@ -33,6 +33,16 @@ The bridge can provide image analysis today, but Atlas models that output as `Ob
 
 Atlas does **not** import OpenClaw tools directly. The OpenClaw-specific caller is injected at the edge.
 
+## Current Fake Harness
+
+A fake Android bridge integration can be exercised with:
+
+```bash
+npm --workspace @atlas/test-harness run demo:android-bridge
+```
+
+This validates the injected bridge boundary without requiring OpenClaw tool access inside the package.
+
 ## Future Integration Harness
 
 A real OpenClaw runtime harness should inject the bridge function roughly like:

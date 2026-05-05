@@ -81,6 +81,8 @@ Done:
 
 - Android bridge result normalizer.
 - Injected bridge wrapper adapter shape.
+- Fake Android bridge harness scenario.
+- Normalized Android bridge capture errors.
 - Bridge-provided image analysis maps to `ObservationAnalysis` rather than becoming an OpenClaw-specific assumption.
 
 Deliverables:

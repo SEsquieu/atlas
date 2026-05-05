@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createAndroidBridgeDeviceAdapter, normalizeAndroidBridgeCaptureResult } from './index.js';
+import { AndroidBridgeCaptureError, createAndroidBridgeDeviceAdapter, normalizeAndroidBridgeCaptureResult } from './index.js';
 
 test('normalizeAndroidBridgeCaptureResult maps bridge media and summary into observation analysis', () => {
   const observation = normalizeAndroidBridgeCaptureResult(
@@ -23,6 +23,13 @@ test('normalizeAndroidBridgeCaptureResult maps bridge media and summary into obs
   assert.equal(observation.analyses?.length, 1);
   assert.equal(observation.analyses?.[0]?.kind, 'visual-summary');
   assert.equal(observation.analyses?.[0]?.producedBy, 'openclaw/android-camera-bridge');
+});
+
+test('normalizeAndroidBridgeCaptureResult rejects invalid bridge results', () => {
+  assert.throws(
+    () => normalizeAndroidBridgeCaptureResult(undefined as never, { deviceId: 'android-test' }),
+    AndroidBridgeCaptureError
+  );
 });
 
 test('createAndroidBridgeDeviceAdapter delegates capture to injected bridge function', async () => {
@@ -49,4 +56,15 @@ test('createAndroidBridgeDeviceAdapter delegates capture to injected bridge func
   assert.equal(observation?.mediaRef, 'fake://android.jpg');
   assert.equal(observation?.summary, 'Injected bridge summary.');
   assert.equal(observation?.analyses?.length, 1);
+});
+
+test('createAndroidBridgeDeviceAdapter normalizes injected bridge failures', async () => {
+  const adapter = createAndroidBridgeDeviceAdapter({
+    captureWithBridge: async () => {
+      throw new Error('camera unavailable');
+    }
+  });
+
+  assert.ok(adapter.captureImage);
+  await assert.rejects(() => adapter.captureImage!({ reason: 'test failure' }), AndroidBridgeCaptureError);
 });

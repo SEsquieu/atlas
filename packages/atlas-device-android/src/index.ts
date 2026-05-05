@@ -1,6 +1,7 @@
 import type { CaptureImageOptions, DeviceAdapter, DeviceCapability, Observation } from '@atlas/core';
 import {
   normalizeAndroidBridgeCaptureResult,
+  normalizeAndroidBridgeError,
   type AndroidBridgeCaptureOptions,
   type AndroidBridgeCaptureResult
 } from './bridge-result.js';
@@ -42,20 +43,24 @@ export function createAndroidBridgeDeviceAdapter(options: AndroidBridgeDeviceAda
     id: deviceId,
     name: options.name ?? 'Android Bridge Device',
     captureImage: async (captureOptions) => {
-      const result = await options.captureWithBridge({
-        ...captureOptions,
-        facing: options.facing ?? 'back',
-        analyze: options.analyze ?? true,
-        analysisMode: options.analysisMode ?? 'ollama'
-      });
+      try {
+        const result = await options.captureWithBridge({
+          ...captureOptions,
+          facing: options.facing ?? 'back',
+          analyze: options.analyze ?? true,
+          analysisMode: options.analysisMode ?? 'ollama'
+        });
 
-      return normalizeAndroidBridgeCaptureResult(result, {
-        deviceId,
-        producedBy: 'openclaw/android-camera-bridge'
-      });
+        return normalizeAndroidBridgeCaptureResult(result, {
+          deviceId,
+          producedBy: 'openclaw/android-camera-bridge'
+        });
+      } catch (error) {
+        throw normalizeAndroidBridgeError(error);
+      }
     }
   });
 }
 
-export { normalizeAndroidBridgeCaptureResult } from './bridge-result.js';
+export { AndroidBridgeCaptureError, normalizeAndroidBridgeCaptureResult, normalizeAndroidBridgeError } from './bridge-result.js';
 export type { AndroidBridgeCaptureOptions, AndroidBridgeCaptureResult } from './bridge-result.js';

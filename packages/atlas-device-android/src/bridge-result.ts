@@ -26,16 +26,37 @@ export type AndroidBridgeCaptureResult = {
   [key: string]: unknown;
 };
 
+export class AndroidBridgeCaptureError extends Error {
+  readonly cause?: unknown;
+
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = 'AndroidBridgeCaptureError';
+    this.cause = options?.cause;
+  }
+}
+
 export type NormalizeAndroidBridgeResultOptions = {
   deviceId: string;
   producedBy?: string;
   fallbackCapturedAt?: string;
 };
 
+export function normalizeAndroidBridgeError(error: unknown): AndroidBridgeCaptureError {
+  if (error instanceof AndroidBridgeCaptureError) return error;
+  if (error instanceof Error) return new AndroidBridgeCaptureError(error.message, { cause: error });
+  if (typeof error === 'string') return new AndroidBridgeCaptureError(error);
+  return new AndroidBridgeCaptureError('Android bridge capture failed.', { cause: error });
+}
+
 export function normalizeAndroidBridgeCaptureResult(
   result: AndroidBridgeCaptureResult,
   options: NormalizeAndroidBridgeResultOptions
 ): Observation {
+  if (typeof result !== 'object' || result === null) {
+    throw new AndroidBridgeCaptureError('Android bridge returned an invalid capture result.');
+  }
+
   const mediaRef = firstString(result.mediaRef, result.imagePath, result.mediaPath, result.path, result.file, result.filename);
   const capturedAt = firstString(result.capturedAt) ?? options.fallbackCapturedAt ?? new Date().toISOString();
   const summary = firstString(result.summary, result.visionSummary, result.description) ?? extractAnalysisSummary(result.analysis);

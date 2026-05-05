@@ -65,5 +65,6 @@ Useful harness commands:
 
 ```bash
 npm --workspace @atlas/test-harness run demo
+npm --workspace @atlas/test-harness run demo:android-bridge
 npm --workspace @atlas/test-harness run inspect -- demo-session
 ```
