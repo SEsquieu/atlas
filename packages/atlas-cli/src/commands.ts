@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { loadAtlasConfig, resolveAtlasConfigPath, sessionStatesFromConfig } from '@atlas/config';
 import {
   AtlasRunner,
   FileSessionStore,
@@ -33,10 +34,43 @@ export async function runAtlasCli(argv: string[], options: CliOptions = {}): Pro
   }
 
   if (command === 'shrug') return ok('¯\\_(ツ)_/¯');
+  if (command === 'config') return runConfigCommand(args, options);
   if (command === 'sessions') return runSessionsCommand(args, options);
   if (command === 'session') return runSessionCommand(args, options);
 
   return fail(`Unknown command: ${command}\n\n${helpText()}`, 1);
+}
+
+async function runConfigCommand(args: string[], options: CliOptions): Promise<CliResult> {
+  const [subcommand, ...rest] = args;
+  if (subcommand !== 'inspect') return fail('Usage: atlas config inspect [--config <path>]', 1);
+
+  const configPath = readFlagValue(rest, '--config');
+  try {
+    const config = await loadAtlasConfig({ cwd: options.cwd, path: configPath });
+    const sessions = sessionStatesFromConfig(config).map((session) => ({
+      sessionId: session.sessionId,
+      name: session.name,
+      goal: session.goal,
+      mode: session.mode,
+      provider: session.provider,
+      devices: session.devices
+    }));
+
+    return ok(
+      JSON.stringify(
+        {
+          configPath: resolveAtlasConfigPath({ cwd: options.cwd, path: configPath }),
+          storePath: config.store?.path,
+          sessions
+        },
+        null,
+        2
+      )
+    );
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : String(error), 1);
+  }
 }
 
 async function runSessionsCommand(args: string[], options: CliOptions): Promise<CliResult> {
@@ -252,5 +286,5 @@ function fail(stderr: string, exitCode: number): CliResult {
 }
 
 function helpText(): string {
-  return `Atlas CLI\n\nUsage:\n  atlas shrug\n  atlas sessions list [--store <path>]\n  atlas session create <sessionId> [--name <name>] [--goal <goal>] [--provider <adapter>] [--provider-id <id>] [--device <id:adapter:capability,capability>] [--store <path>]\n  atlas session inspect <sessionId> [--store <path>]\n  atlas session ask <sessionId> --text <text> [--store <path>]\n  atlas session heartbeat <sessionId> [--store <path>]\n  atlas session start <sessionId> [--reason <reason>] [--store <path>]\n  atlas session pause <sessionId> [--reason <reason>] [--store <path>]\n  atlas session resume <sessionId> [--reason <reason>] [--store <path>]\n  atlas session end <sessionId> [--reason <reason>] [--store <path>]\n  atlas help\n\nEnvironment:\n  ATLAS_STORE  Override default .atlas-cache/sessions store path`;
+  return `Atlas CLI\n\nUsage:\n  atlas shrug\n  atlas sessions list [--store <path>]\n  atlas session create <sessionId> [--name <name>] [--goal <goal>] [--provider <adapter>] [--provider-id <id>] [--device <id:adapter:capability,capability>] [--store <path>]\n  atlas session inspect <sessionId> [--store <path>]\n  atlas session ask <sessionId> --text <text> [--store <path>]\n  atlas session heartbeat <sessionId> [--store <path>]\n  atlas session start <sessionId> [--reason <reason>] [--store <path>]\n  atlas session pause <sessionId> [--reason <reason>] [--store <path>]\n  atlas session resume <sessionId> [--reason <reason>] [--store <path>]\n  atlas session end <sessionId> [--reason <reason>] [--store <path>]\n  atlas config inspect [--config <path>]\n  atlas help\n\nEnvironment:\n  ATLAS_STORE  Override default .atlas-cache/sessions store path`;
 }

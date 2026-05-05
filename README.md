@@ -39,6 +39,7 @@ atlas/
   docs/
   packages/
     atlas-core/
+    atlas-config/
     atlas-device-android/
     atlas-provider-openclaw/
     atlas-test-harness/
@@ -76,6 +77,7 @@ node packages/atlas-cli/dist/index.js session create demo-session --name "Demo" 
 node packages/atlas-cli/dist/index.js session start demo-session
 node packages/atlas-cli/dist/index.js session heartbeat demo-session
 node packages/atlas-cli/dist/index.js session ask demo-session --text "What am I looking at?"
+node packages/atlas-cli/dist/index.js config inspect
 node packages/atlas-cli/dist/index.js sessions list
 node packages/atlas-cli/dist/index.js session inspect demo-session
 ```

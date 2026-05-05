@@ -6,8 +6,7 @@
     "composite": true
   },
   "references": [
-    { "path": "../atlas-core" },
-    { "path": "../atlas-config" }
+    { "path": "../atlas-core" }
   ],
   "include": ["src/**/*.ts"]
 }

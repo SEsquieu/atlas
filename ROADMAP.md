@@ -7,6 +7,7 @@ Status: Phase 0 locked; Phase 1 core runner/store underway.
 Atlas has a name, build doc, repo skeleton, and initial package boundaries:
 
 - `@atlas/core`
+- `@atlas/config`
 - `@atlas/device-android`
 - `@atlas/provider-openclaw`
 - `@atlas/test-harness`
@@ -50,13 +51,14 @@ Done:
 - Fake provider/device adapters for harness/tests.
 - Fake perception analyzer adapter and analyzer pipeline.
 - Session inspection helper and harness inspect command.
-- Initial `@atlas/cli` control surface for session create/list/inspection, lifecycle start/pause/resume/end, heartbeat tick, and fake-adapter ask.
+- Initial `@atlas/cli` control surface for session create/list/inspection, lifecycle start/pause/resume/end, heartbeat tick, fake-adapter ask, and config inspection.
+- Initial `@atlas/config` package for JSON config loading and configured-session materialization.
 
 Remaining:
 
 - Cleaner replay/materialization semantics.
 - More scenario fixtures.
-- Real adapter resolution from config instead of built-in fake registry for CLI ask/heartbeat.
+- Wire CLI ask/heartbeat to config-selected adapter registries instead of built-in fake registry.
 
 Deliverables:
 

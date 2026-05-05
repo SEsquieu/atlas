@@ -11,11 +11,14 @@ Atlas is a physical-session runtime with multiple front doors, not just a CLI or
 @atlas/cli
   control/debug/admin surface
 
+@atlas/config
+  config schema and loader for sessions/store/runtime defaults
+
 atlas daemon / runner
   future long-lived background loop process
 
 atlas.config.*
-  future repo/session config
+  repo/session config consumed by CLI now and daemon later
 
 hooks/events
   future integration surface for apps/runtimes
@@ -35,6 +38,7 @@ node packages/atlas-cli/dist/index.js session resume <sessionId>
 node packages/atlas-cli/dist/index.js session end <sessionId>
 node packages/atlas-cli/dist/index.js session heartbeat <sessionId>
 node packages/atlas-cli/dist/index.js session ask <sessionId> --text "What am I looking at?"
+node packages/atlas-cli/dist/index.js config inspect
 node packages/atlas-cli/dist/index.js sessions list
 node packages/atlas-cli/dist/index.js session inspect <sessionId>
 ```

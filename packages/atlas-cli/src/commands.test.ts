@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -17,6 +17,48 @@ test('resolveStoreRoot uses explicit --store before environment/default', () => 
   assert.equal(resolveStoreRoot(['--store', 'custom-store'], { cwd, env: { ATLAS_STORE: 'env-store' } }), join(cwd, 'custom-store'));
   assert.equal(resolveStoreRoot([], { cwd, env: { ATLAS_STORE: 'env-store' } }), join(cwd, 'env-store'));
   assert.equal(resolveStoreRoot([], { cwd, env: {} }), join(cwd, '.atlas-cache/sessions'));
+});
+
+test('config inspect reads atlas config and summarizes configured sessions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-cli-config-'));
+  try {
+    await writeFile(
+      join(root, 'atlas.config.json'),
+      JSON.stringify({
+        store: { path: '.atlas-cache/sessions' },
+        sessions: {
+          garage: {
+            name: 'Garage Helper',
+            goal: 'Find the right wrench.',
+            mode: 'ambient',
+            provider: { id: '@atlas/core/testing', adapter: '@atlas/core/testing' },
+            devices: [{ id: 'fake-camera', adapter: '@atlas/core/testing', capabilities: ['camera.capture'] }]
+          }
+        }
+      }),
+      'utf8'
+    );
+
+    const result = await runAtlasCli(['config', 'inspect'], { cwd: root, env: {} });
+    assert.equal(result.exitCode, 0);
+    const inspected = JSON.parse(result.stdout ?? '{}');
+    assert.equal(inspected.storePath, '.atlas-cache/sessions');
+    assert.equal(inspected.sessions[0].sessionId, 'garage');
+    assert.equal(inspected.sessions[0].devices[0].id, 'fake-camera');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('config inspect returns non-zero when config is missing', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-cli-config-missing-'));
+  try {
+    const result = await runAtlasCli(['config', 'inspect'], { cwd: root, env: {} });
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr ?? '', /atlas\.config\.json/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('session create writes a file-backed session', async () => {
