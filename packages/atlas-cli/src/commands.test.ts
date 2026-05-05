@@ -6,6 +6,12 @@ import { test } from 'node:test';
 import { FileSessionStore, createSessionState } from '@atlas/core';
 import { resolveStoreRoot, runAtlasCli } from './commands.js';
 
+test('shrug returns the correct sacred glyph', async () => {
+  const result = await runAtlasCli(['shrug']);
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, '¯\\_(ツ)_/¯');
+});
+
 test('resolveStoreRoot uses explicit --store before environment/default', () => {
   const cwd = resolve('tmp/root');
   assert.equal(resolveStoreRoot(['--store', 'custom-store'], { cwd, env: { ATLAS_STORE: 'env-store' } }), join(cwd, 'custom-store'));
