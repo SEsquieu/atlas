@@ -41,12 +41,43 @@ function summarizeLatestObservation(turn) {
   const observations = Array.isArray(turn?.observations) ? turn.observations : [];
   const latest = observations.at(-1);
   const summary = latestObservationSummary(latest);
+  const contextPrefix = visualContextPrefix(turn?.contextStatus?.visual, latest);
   return {
     turnId: turn?.turnId,
     responseText: summary
-      ? `I’m seeing: ${summary}`
-      : 'I do not have a usable visual summary yet.'
+      ? `${contextPrefix}I’m seeing: ${summary}`
+      : `${contextPrefix}I do not have a usable visual summary yet.`
   };
+}
+
+function visualContextPrefix(visual, observation) {
+  const health = visual?.refreshHealth;
+  if (!health || (health.status !== 'degraded' && health.status !== 'unavailable')) return '';
+
+  const ageText = formatDuration(visual.ageMs ?? ageFromObservation(observation));
+  const analysisText = formatDuration(health.analysisLatencyMs ?? visual.analysisLatencyMs);
+  const pieces = [
+    health.status === 'unavailable' ? 'Vision refresh is currently unavailable' : 'Vision is running slowly',
+    ageText ? `this is based on a stable capture from ${ageText} ago` : 'this is based on the last stable capture',
+    analysisText ? `analysis took ${analysisText}` : undefined
+  ].filter(Boolean);
+
+  return `${pieces.join(', ')}. `;
+}
+
+function ageFromObservation(observation) {
+  const observedAt = observation?.telemetry?.observedAt ?? observation?.capturedAt;
+  if (typeof observedAt !== 'string') return undefined;
+  const observedMs = Date.parse(observedAt);
+  if (!Number.isFinite(observedMs)) return undefined;
+  return Math.max(0, Date.now() - observedMs);
+}
+
+function formatDuration(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  if (value < 1000) return `${Math.round(value)}ms`;
+  if (value < 60_000) return `${Math.round(value / 1000)}s`;
+  return `${Math.round(value / 60_000)}m`;
 }
 
 function latestObservationSummary(observation) {
