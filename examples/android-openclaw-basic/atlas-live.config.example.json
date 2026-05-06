@@ -28,6 +28,8 @@
             "args": ["examples/android-openclaw-basic/bridge-wrapper.mjs"],
             "timeoutMs": 90000,
             "analysisMode": "openclaw",
+            "maxWidth": 1024,
+            "quality": 0.7,
             "env": {
               "ATLAS_ANDROID_BRIDGE_NODE": "Galaxy S22 Ultra",
               "ATLAS_ANDROID_BRIDGE_IMAGES_DIR": ".atlas-cache/images",

@@ -24,6 +24,9 @@ export type AndroidBridgeCommandDeviceAdapterOptions = AndroidBridgeCommandOptio
   facing?: 'back' | 'front';
   analyze?: boolean;
   analysisMode?: 'ollama' | 'openclaw' | 'none' | string;
+  maxWidth?: number;
+  quality?: 'low' | 'medium' | 'high' | number;
+  delayMs?: number;
 };
 
 export function createAndroidBridgeCommandDeviceAdapter(options: AndroidBridgeCommandDeviceAdapterOptions): DeviceAdapter {
@@ -36,11 +39,15 @@ export function createAndroidBridgeCommandDeviceAdapter(options: AndroidBridgeCo
     capabilities: async () => capabilities,
     captureImage: async (captureOptions) => {
       try {
+        const requestedOptions = captureOptions as AndroidBridgeCaptureOptions | undefined;
         const result = await runAndroidBridgeCommand(options, {
-          ...captureOptions,
+          ...requestedOptions,
           facing: options.facing ?? 'back',
           analyze: options.analyze ?? true,
-          analysisMode: options.analysisMode ?? 'ollama'
+          analysisMode: options.analysisMode ?? 'ollama',
+          maxWidth: requestedOptions?.maxWidth ?? options.maxWidth,
+          quality: requestedOptions?.quality ?? options.quality,
+          delayMs: requestedOptions?.delayMs ?? options.delayMs
         });
         return normalizeAndroidBridgeCaptureResult(result, {
           deviceId,

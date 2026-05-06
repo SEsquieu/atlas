@@ -1,12 +1,13 @@
 import type { CaptureImageOptions, Observation, ObservationAnalysis } from '@atlas/core';
 
-export type AndroidBridgeCaptureOptions = CaptureImageOptions & {
+export type AndroidBridgeCaptureOptions = Omit<CaptureImageOptions, 'quality'> & {
   facing?: 'back' | 'front';
   analyze?: boolean;
   analysisMode?: 'ollama' | 'openclaw' | 'none' | string;
   prompt?: string;
   maxWidth?: number;
-  quality?: 'low' | 'medium' | 'high';
+  quality?: 'low' | 'medium' | 'high' | number;
+  delayMs?: number;
 };
 
 export type AndroidBridgeCaptureResult = {
