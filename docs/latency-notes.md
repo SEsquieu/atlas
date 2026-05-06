@@ -42,6 +42,8 @@ A 5-8 second raw perception loop is viable when Atlas decouples perception from 
 - Significance gate can suppress speech when the scene is unchanged or unimportant.
 - Provider calls can be reserved for user-dependent questions or meaningful scene changes.
 
+The first cheap significance gate compares consecutive observations using summary-token delta, explicit scene-change scores when present, motion/quality changes, confidence drops, and simple actionable/safety cues. It records `none`, `low`, `meaningful`, or `actionable`; only `meaningful`/`actionable` are eligible for provider review, and only `actionable` may pass the future proactive speech hard gate.
+
 ## Optimization tracks
 
 ### Capture-side optimizations

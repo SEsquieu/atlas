@@ -22,8 +22,16 @@ Initial testing target:
 
 4. **Heartbeat silence**
    - Run heartbeat ticks in an unchanged scene.
-   - Expected: state updates silently; no babbling; no unnecessary provider calls.
+   - Expected: state updates silently; significance is `none` or `low`; no babbling; no unnecessary provider calls.
 
-5. **Adapter independence**
+5. **Meaningful ambient change**
+   - Run a heartbeat after the scene meaningfully changes.
+   - Expected: Atlas records `perception.significance` as `meaningful` and marks the observation eligible for provider review without proactive speech.
+
+6. **Actionable ambient change**
+   - Run a heartbeat that detects a safety/action cue.
+   - Expected: Atlas records `perception.significance` as `actionable`; this is the only v0 level that may pass the future proactive notification hard gate.
+
+7. **Adapter independence**
    - Run the same normalized turn through the OpenClaw adapter and a fake adapter.
    - Expected: Atlas Core behavior remains unchanged.

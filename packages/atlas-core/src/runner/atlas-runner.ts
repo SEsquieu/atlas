@@ -10,6 +10,7 @@ import type {
 import { planHeartbeatTick, type HeartbeatDecision } from '../loops/heartbeat.js';
 import { buildUserSessionTurn, planUserTurn } from '../loops/user-loop.js';
 import { analyzeObservationWithPipeline } from '../perception/analysis.js';
+import { assessObservationSignificance, type SceneSignificanceDecision } from '../perception/significance.js';
 import { CORE_PHYSICAL_TOOLS } from '../tools/registry.js';
 import { materializeSessionCheckpoint } from '../store/materialize.js';
 import type { SessionStore } from '../store/types.js';
@@ -44,6 +45,7 @@ export type RunHeartbeatTickResult = {
   session: AtlasSessionState;
   decision: HeartbeatDecision;
   observation?: Observation;
+  significance?: SceneSignificanceDecision;
 };
 
 export class AtlasRunner {
@@ -73,19 +75,33 @@ export class AtlasRunner {
     session = materializeSessionCheckpoint(session, [heartbeatEvent]);
 
     let observation: Observation | undefined;
+    let significance: SceneSignificanceDecision | undefined;
     if (decision.shouldCapture) {
+      const previousObservation = session.recentObservations.at(-1);
       observation = await this.captureCurrentView(session, decision.reason);
       const captureEvent = await this.store.appendEvent(session.sessionId, {
         type: 'observation.captured',
         data: { observation, reason: decision.reason, source: 'heartbeat' }
       });
       session = materializeSessionCheckpoint(session, [captureEvent]);
+
+      significance = assessObservationSignificance({ previous: previousObservation, current: observation });
+      const significanceEvent = await this.store.appendEvent(session.sessionId, {
+        type: 'perception.significance',
+        data: {
+          observationId: observation.id,
+          previousObservationId: previousObservation?.id,
+          decision: significance,
+          source: 'heartbeat'
+        }
+      });
+      session = materializeSessionCheckpoint(session, [significanceEvent]);
       await this.store.saveState(session);
     } else {
       await this.store.saveState(session);
     }
 
-    return { session, decision, observation };
+    return { session, decision, observation, significance };
   }
 
   async runUserTurn(input: RunUserTurnInput): Promise<RunUserTurnResult> {

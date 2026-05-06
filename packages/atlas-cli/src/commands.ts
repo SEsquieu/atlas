@@ -204,6 +204,7 @@ async function heartbeatSessionCommand(sessionId: string, args: string[], option
           sessionId,
           decision: result.decision,
           observationId: result.observation?.id,
+          significance: result.significance,
           status: result.session.status
         },
         null,

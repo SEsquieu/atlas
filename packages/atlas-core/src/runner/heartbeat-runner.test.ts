@@ -40,14 +40,71 @@ test('runHeartbeatTick captures context silently when active context is missing 
     assert.equal(result.decision.cadence.mode, 'active-task');
     assert.equal(result.decision.cadence.nextDelayMs, 30_000);
     assert.ok(result.observation);
+    assert.equal(result.significance?.level, 'low');
+    assert.equal(result.significance?.shouldCallProvider, false);
     assert.equal(result.session.recentObservations.length, 1);
     assert.equal(Boolean(result.session.perception.latestImageId), true);
 
     const events = await store.loadEvents(session.sessionId);
     assert.deepEqual(
       events.map((event) => event.type),
-      ['session.started', 'heartbeat.tick', 'tool.requested', 'tool.completed', 'observation.captured']
+      ['session.started', 'heartbeat.tick', 'tool.requested', 'tool.completed', 'observation.captured', 'perception.significance']
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('runHeartbeatTick records meaningful significance when heartbeat capture changes the scene', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-significance-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const nowMs = Date.now();
+    const previousObservation = {
+      id: 'previous-desk',
+      type: 'image' as const,
+      capturedAt: new Date(nowMs - 90_000).toISOString(),
+      deviceId: 'fake-camera',
+      summary: 'A quiet desk with a laptop and coffee mug.',
+      quality: { confidence: 0.9, motion: false }
+    };
+    const session = createSessionState({
+      sessionId: 'significance-session',
+      now: new Date(nowMs - 90_000).toISOString(),
+      provider: { id: 'fake-provider', adapter: '@atlas/core/testing' }
+    });
+
+    await store.create({
+      ...session,
+      status: 'active',
+      recentObservations: [previousObservation],
+      perception: {
+        ...session.perception,
+        latestObservationAt: previousObservation.capturedAt,
+        latestImageId: previousObservation.id,
+        summary: previousObservation.summary,
+        confidence: 0.9,
+        freshnessMs: 90_000,
+        stability: 'stable',
+        motionState: 'stationary'
+      }
+    });
+
+    const runner = new AtlasRunner({
+      store,
+      devices: [createFakeCameraDevice({ imageSummary: 'A grocery aisle with shelves of cereal and a hanging price sign.' })],
+      provider: createFakeProvider()
+    });
+
+    const result = await runner.runHeartbeatTick({ sessionId: session.sessionId, now: nowMs });
+
+    assert.equal(result.decision.shouldCapture, true);
+    assert.equal(result.significance?.level, 'meaningful');
+    assert.equal(result.significance?.shouldCallProvider, true);
+    assert.equal(result.significance?.shouldNotifyUser, false);
+
+    const events = await store.loadEvents(session.sessionId);
+    assert.equal(events.at(-1)?.type, 'perception.significance');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

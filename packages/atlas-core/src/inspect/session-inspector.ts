@@ -249,6 +249,16 @@ function summarizeEvent(event: AuditEvent): string | undefined {
     const cadence = decision?.cadence;
     return cadence?.mode ? `heartbeat tick (${cadence.mode}, next=${cadence.nextDelayMs ?? '?'}ms)` : 'heartbeat tick';
   }
+  if (event.type === 'perception.significance') {
+    const decision = data.decision as { level?: string; score?: number; shouldCallProvider?: boolean } | undefined;
+    return decision?.level
+      ? `significance=${decision.level} score=${formatScore(decision.score)} provider=${decision.shouldCallProvider === true}`
+      : 'significance assessed';
+  }
 
   return undefined;
+}
+
+function formatScore(score: number | undefined): string {
+  return typeof score === 'number' && Number.isFinite(score) ? score.toFixed(2) : '?';
 }
