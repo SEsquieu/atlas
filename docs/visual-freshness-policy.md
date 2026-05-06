@@ -66,9 +66,9 @@ motionState: 'stationary' | 'handheld-stable' | 'turning' | 'walking' | 'vehicle
 
 Even rough IMU-derived activity recognition is enough to tune visual decay better than wall-clock age alone.
 
-## Future dynamic cadence output
+## Dynamic cadence output
 
-Freshness assessment should eventually pair with a heartbeat cadence decision:
+Heartbeat planning now pairs freshness assessment with a cadence decision:
 
 ```ts
 type HeartbeatCadenceMode =
@@ -79,4 +79,4 @@ type HeartbeatCadenceMode =
   | 'high-risk';
 ```
 
-The cadence decision should explain why the next heartbeat is slower or faster, so session inspection can show whether Atlas is conserving resources, tracking a live task, or reacting to unstable context.
+The cadence decision explains why the next heartbeat should be slower or faster, so CLI output and session inspection can show whether Atlas is conserving resources, tracking a live task, or reacting to unstable context. The first hook maps idle/non-observable sessions to `idle`, stale/missing-but-otherwise-steady context to `active-task`, fresh high-confidence stable context to `stable-scene`, moving/transitioning/low-confidence context to `unstable-scene`, and explicit high-risk relevance to `high-risk`.

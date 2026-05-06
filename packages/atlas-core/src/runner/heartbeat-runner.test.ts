@@ -7,6 +7,7 @@ import { AtlasRunner } from './atlas-runner.js';
 import { createSessionState } from '../session/index.js';
 import { FileSessionStore } from '../store/file-session-store.js';
 import { createFakeCameraDevice, createFakeProvider } from '../testing/fakes.js';
+import { planHeartbeatTick } from '../loops/heartbeat.js';
 
 test('runHeartbeatTick captures context silently when active context is missing or unstable', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-'));
@@ -36,6 +37,8 @@ test('runHeartbeatTick captures context silently when active context is missing 
     const result = await runner.runHeartbeatTick({ sessionId: session.sessionId });
 
     assert.equal(result.decision.shouldCapture, true);
+    assert.equal(result.decision.cadence.mode, 'active-task');
+    assert.equal(result.decision.cadence.nextDelayMs, 30_000);
     assert.ok(result.observation);
     assert.equal(result.session.recentObservations.length, 1);
     assert.equal(Boolean(result.session.perception.latestImageId), true);
@@ -91,6 +94,7 @@ test('runHeartbeatTick defers stale stable context when refresh health is degrad
     const result = await runner.runHeartbeatTick({ sessionId: session.sessionId });
 
     assert.equal(result.decision.shouldCapture, false);
+    assert.equal(result.decision.cadence.mode, 'stable-scene');
     assert.match(result.decision.reason, /deferring capture/);
     assert.equal(result.observation, undefined);
   } finally {
@@ -131,11 +135,56 @@ test('runHeartbeatTick refreshes when latest observation age is stale even if st
     const result = await runner.runHeartbeatTick({ sessionId: session.sessionId, now: nowMs });
 
     assert.equal(result.decision.shouldCapture, true);
+    assert.equal(result.decision.cadence.mode, 'active-task');
     assert.match(result.decision.reason, /stale/);
     assert.ok(result.observation);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('planHeartbeatTick exposes dynamic cadence modes and clamps configured delays', () => {
+  const base = createSessionState({
+    sessionId: 'cadence-session',
+    provider: { id: 'fake-provider', adapter: '@atlas/core/testing' }
+  });
+
+  const idle = planHeartbeatTick(base);
+  assert.equal(idle.cadence.mode, 'idle');
+  assert.equal(idle.cadence.nextDelayMs, 300_000);
+
+  const highRisk = planHeartbeatTick(
+    {
+      ...base,
+      status: 'active',
+      perception: {
+        ...base.perception,
+        latestObservationAt: new Date().toISOString(),
+        latestImageId: 'risk-image',
+        confidence: 0.95,
+        stability: 'stable',
+        relevance: { 'high-risk': 0.9 }
+      }
+    },
+    Date.now(),
+    { cadence: { 'high-risk': 1_000 }, minDelayMs: 2_000 }
+  );
+  assert.equal(highRisk.cadence.mode, 'high-risk');
+  assert.equal(highRisk.cadence.nextDelayMs, 2_000);
+
+  const moving = planHeartbeatTick({
+    ...base,
+    status: 'active',
+    perception: {
+      ...base.perception,
+      latestObservationAt: new Date().toISOString(),
+      latestImageId: 'moving-image',
+      confidence: 0.8,
+      stability: 'stable',
+      motionState: 'walking'
+    }
+  });
+  assert.equal(moving.cadence.mode, 'unstable-scene');
 });
 
 test('runHeartbeatTick stays quiet when context is fresh and stable', async () => {
@@ -171,6 +220,8 @@ test('runHeartbeatTick stays quiet when context is fresh and stable', async () =
     const result = await runner.runHeartbeatTick({ sessionId: session.sessionId });
 
     assert.equal(result.decision.shouldCapture, false);
+    assert.equal(result.decision.cadence.mode, 'stable-scene');
+    assert.equal(result.decision.cadence.nextDelayMs, 60_000);
     assert.equal(result.observation, undefined);
 
     const events = await store.loadEvents(session.sessionId);

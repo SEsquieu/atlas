@@ -179,6 +179,7 @@ Done:
 - Visual use-case classifier (`descriptive`, `confirmation`, `navigation`, `high-risk`).
 - Motion-aware visual freshness scoring.
 - User turn planning now carries the freshness assessment and distinguishes reuse/background-refresh/refresh.
+- Heartbeat planning now emits a dynamic cadence decision (`idle`, `stable-scene`, `active-task`, `unstable-scene`, `high-risk`) with a suggested next delay and reason.
 
 Deliverables:
 
@@ -188,7 +189,7 @@ Deliverables:
 - Simple stale/unstable/insufficient policy.
 - Prompt intent classifier for visual-context-dependent questions.
 - Motion-aware visual context decay policy.
-- Dynamic heartbeat cadence decision hook based on idle/active/stable/unstable/high-risk state.
+- Dynamic heartbeat cadence decision hook based on idle/active/stable/unstable/high-risk state. ✅ initial hook landed
 
 Pass criteria:
 
@@ -242,11 +243,12 @@ Goal: give Atlas ambient physical awareness without babbling or provider spam.
 Current slice:
 
 - `npm run demo:ambient-android -- "What am I looking at?"` runs a live heartbeat refresh before the user ask, proving the intended shape: Atlas can pay capture/analysis cost ambiently, then answer from fresh cached visual context without refreshing during the explicit prompt.
+- Heartbeat decisions include a dynamic cadence suggestion so a future ambient runner can schedule the next tick without hard-coding one interval.
 
 Deliverables:
 
 - Configurable heartbeat cadence.
-- Dynamic cadence policy hook: idle/stable slows down; unstable/moving/active/high-risk speeds up within limits.
+- Dynamic cadence policy hook: idle/stable slows down; unstable/moving/active/high-risk speeds up within limits. ✅ initial hook landed
 - Capture/update context on heartbeat.
 - Cheap significance gate.
 - Silent-by-default behavior.

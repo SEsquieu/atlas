@@ -244,7 +244,11 @@ function summarizeEvent(event: AuditEvent): string | undefined {
   }
   if (event.type === 'provider.requested' && typeof data.provider === 'string') return `provider=${data.provider}`;
   if (event.type === 'provider.responded' && typeof data.provider === 'string') return `provider=${data.provider}`;
-  if (event.type === 'heartbeat.tick') return 'heartbeat tick';
+  if (event.type === 'heartbeat.tick') {
+    const decision = data.decision as { cadence?: { mode?: string; nextDelayMs?: number }; reason?: string } | undefined;
+    const cadence = decision?.cadence;
+    return cadence?.mode ? `heartbeat tick (${cadence.mode}, next=${cadence.nextDelayMs ?? '?'}ms)` : 'heartbeat tick';
+  }
 
   return undefined;
 }
