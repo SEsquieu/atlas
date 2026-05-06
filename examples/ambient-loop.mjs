@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const cliPath = path.join(repoRoot, 'packages', 'atlas-cli', 'dist', 'index.js');
+const workerPath = path.join(repoRoot, 'examples', 'android-openclaw-basic', 'openclaw-image-worker.mjs');
 const args = parseArgs(process.argv.slice(2));
 const sessionId = args.session ?? process.env.ATLAS_AMBIENT_SESSION_ID ?? 'ambient-loop-fake';
 const storeRoot = args.store ?? process.env.ATLAS_STORE ?? path.join(os.tmpdir(), `atlas-ambient-loop-${Date.now()}`);
@@ -18,6 +19,7 @@ const jsonlPath = args.jsonl ?? path.join(logDir, 'ambient-loop.jsonl');
 const markdownPath = args.markdown ?? path.join(logDir, 'ambient-loop.md');
 
 let stopped = false;
+let imageWorker;
 process.on('SIGINT', () => {
   stopped = true;
   console.log('\nStopping ambient loop after current tick...');
@@ -33,6 +35,16 @@ try {
   console.log(`Markdown: ${markdownPath}`);
   if (args.config) console.log(`Config: ${args.config}`);
   else console.log('Config: none (uses built-in fake adapters; no phone camera)');
+
+  const shouldUseImageWorker = await shouldStartImageWorker(args);
+  if (shouldUseImageWorker) {
+    imageWorker = await startImageWorker();
+    process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL = imageWorker.url;
+    process.env.ATLAS_OPENCLAW_IMAGE_WORKER_URL = imageWorker.url;
+    console.log(`OpenClaw image worker: ${imageWorker.url}`);
+  } else if (currentImageWorkerUrl()) {
+    console.log(`OpenClaw image worker: ${currentImageWorkerUrl()}`);
+  }
   console.log('');
 
   await mkdir(logDir, { recursive: true });
@@ -61,6 +73,8 @@ try {
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
+} finally {
+  imageWorker?.stop();
 }
 
 async function ensureSession() {
@@ -115,6 +129,109 @@ function buildEntry({ tick, wallMs, heartbeat, inspection }) {
 async function appendLoopLogs(entry) {
   await appendFile(jsonlPath, `${JSON.stringify(entry)}\n`, 'utf8');
   await appendFile(markdownPath, formatMarkdownEntry(entry), 'utf8');
+}
+
+async function shouldStartImageWorker(parsedArgs) {
+  if (parsedArgs.imageWorker === 'false') return false;
+  if (currentImageWorkerUrl()) return false;
+  if (parsedArgs.imageWorker === 'true') return true;
+  if (process.env.ATLAS_AMBIENT_LOOP_USE_IMAGE_WORKER === 'false') return false;
+  if (!parsedArgs.config) return false;
+  return await configUsesOpenClawImageBridge(parsedArgs.config);
+}
+
+function currentImageWorkerUrl() {
+  return process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL ?? process.env.ATLAS_OPENCLAW_IMAGE_WORKER_URL;
+}
+
+async function configUsesOpenClawImageBridge(configPath) {
+  try {
+    const absolute = path.resolve(repoRoot, configPath);
+    const config = JSON.parse(await readFile(absolute, 'utf8'));
+    const sessions = typeof config?.sessions === 'object' && config.sessions !== null ? Object.values(config.sessions) : [];
+    return sessions.some((session) => {
+      const devices = Array.isArray(session?.devices) ? session.devices : [];
+      return devices.some((device) => {
+        const deviceConfig = device?.config ?? {};
+        const commandArgs = Array.isArray(deviceConfig.args) ? deviceConfig.args.join(' ') : '';
+        return device?.adapter === '@atlas/device-android/bridge-command'
+          && deviceConfig.analysisMode === 'openclaw'
+          && commandArgs.includes('bridge-wrapper.mjs');
+      });
+    });
+  } catch {
+    return false;
+  }
+}
+
+async function startImageWorker() {
+  const workerEnv = {
+    ...process.env,
+    ATLAS_OPENCLAW_IMAGE_WORKER_MODEL: process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_MODEL ?? 'openai-codex/gpt-5.5',
+    ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM: process.env.ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM ?? '1'
+  };
+  const child = spawn(process.execPath, [workerPath], { cwd: repoRoot, env: workerEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const timeoutMs = Number(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_START_TIMEOUT_MS ?? 120000);
+  const { url } = await waitForWorkerReady(child, timeoutMs);
+  return { url, stop: () => stopChild(child) };
+}
+
+async function waitForWorkerReady(child, timeoutMs) {
+  return await new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    const timeout = setTimeout(() => {
+      stopChild(child);
+      reject(new Error(`OpenClaw image worker did not become ready after ${timeoutMs}ms.${stderr ? ` stderr: ${stderr.trim()}` : ''}`));
+    }, timeoutMs);
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.stdout.off('data', onStdout);
+      child.stderr.off('data', onStderr);
+      child.off('error', onError);
+      child.off('exit', onExit);
+    };
+    const onStdout = (chunk) => {
+      stdout += chunk;
+      for (const line of stdout.split(/\r?\n/)) {
+        if (!line.trim().startsWith('{')) continue;
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed.kind === 'atlas.openclaw-image-worker.ready' && parsed.url) {
+            cleanup();
+            resolve(parsed);
+            return;
+          }
+        } catch {
+          // Keep waiting for a JSON ready line.
+        }
+      }
+    };
+    const onStderr = (chunk) => {
+      stderr += chunk;
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onExit = (code) => {
+      cleanup();
+      reject(new Error(`OpenClaw image worker exited before ready with code ${code}.${stderr ? ` stderr: ${stderr.trim()}` : ''}`));
+    };
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', onStdout);
+    child.stderr.on('data', onStderr);
+    child.on('error', onError);
+    child.on('exit', onExit);
+  });
+}
+
+function stopChild(child) {
+  if (!child || child.killed) return;
+  child.kill();
 }
 
 function formatMarkdownEntry(entry) {
@@ -189,6 +306,7 @@ function parseArgs(raw) {
     else if (arg === '--max-sleep-ms') parsed.maxSleepMs = readPositiveInteger(raw[++index], '--max-sleep-ms');
     else if (arg === '--jsonl') parsed.jsonl = raw[++index];
     else if (arg === '--markdown') parsed.markdown = raw[++index];
+    else if (arg === '--image-worker') parsed.imageWorker = readImageWorkerMode(raw[++index]);
     else if (arg === '--help' || arg === '-h') {
       console.log(helpText());
       process.exit(0);
@@ -203,6 +321,11 @@ function readPositiveInteger(value, flag) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`${flag} must be a positive integer`);
   return parsed;
+}
+
+function readImageWorkerMode(value) {
+  if (value === 'auto' || value === 'true' || value === 'false') return value;
+  throw new Error('--image-worker must be one of: auto, true, false');
 }
 
 function sleep(ms) {
@@ -224,5 +347,5 @@ function formatMs(value) {
 }
 
 function helpText() {
-  return `Atlas ambient loop runner\n\nUsage:\n  node examples/ambient-loop.mjs [--ticks 3] [--wait] [--max-sleep-ms 5000]\n                                 [--session id] [--store path] [--config path]\n                                 [--jsonl path] [--markdown path]\n\nDefault mode uses built-in fake adapters and does not invoke the phone camera. Passing a live Android config will invoke whatever device adapter that config selects.`;
+  return `Atlas ambient loop runner\n\nUsage:\n  node examples/ambient-loop.mjs [--ticks 3] [--wait] [--max-sleep-ms 5000]\n                                 [--session id] [--store path] [--config path]\n                                 [--jsonl path] [--markdown path]\n                                 [--image-worker auto|true|false]\n\nDefault mode uses built-in fake adapters and does not invoke the phone camera. Passing a live Android config will invoke whatever device adapter that config selects. With --image-worker auto, OpenClaw image worker starts automatically for the Android/OpenClaw bridge config.`;
 }

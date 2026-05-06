@@ -65,7 +65,9 @@ For a fake-safe ambient loop journal that does **not** invoke the phone camera u
 npm run demo:ambient-loop -- --ticks 3
 ```
 
-The runner writes both `ambient-loop.jsonl` and `ambient-loop.md` under the session store directory. Each tick records cadence, capture/no-capture, latest summary, significance level/score, and timing so a test loop can be read without digging through raw `events.jsonl`. Add `--wait` to sleep between ticks using the cadence decision, or pass `--config examples/android-openclaw-basic/atlas-live.config.example.json` only when you intentionally want the live Android device path.
+The runner writes both `ambient-loop.jsonl` and `ambient-loop.md` under the session store directory. Each tick records cadence, freshness age/stale window, capture/no-capture, latest summary, significance level/score, and timing so a test loop can be read without digging through raw `events.jsonl`. Add `--wait` to sleep between ticks using the cadence decision, or pass `--config examples/android-openclaw-basic/atlas-live.config.example.json` only when you intentionally want the live Android device path.
+
+When the live Android/OpenClaw bridge config is used, the ambient loop runner auto-starts and prewarms `openclaw-image-worker.mjs` unless `ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL` / `ATLAS_OPENCLAW_IMAGE_WORKER_URL` is already set or `--image-worker false` is passed. This avoids the cold OpenClaw image-analysis timeout footgun in live loop tests.
 
 To benchmark OpenClaw image-analysis latency against a saved image without Android/camera capture in the loop:
 

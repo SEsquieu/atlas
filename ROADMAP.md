@@ -248,6 +248,7 @@ Current slice:
 - Heartbeat decisions include a dynamic cadence suggestion so a future ambient runner can schedule the next tick without hard-coding one interval.
 - Heartbeat captures now run a cheap significance gate that compares the new observation with the previous one and records `none`, `low`, `meaningful`, or `actionable` significance.
 - `npm run demo:ambient-loop -- --ticks 3` runs a fake-safe multi-tick ambient loop and writes skim-friendly `ambient-loop.jsonl` / `ambient-loop.md` summaries for test review.
+- The ambient loop runner auto-starts the warm OpenClaw image worker for the live Android/OpenClaw bridge config, preventing cold image-analysis timeouts during live loop tests.
 
 Deliverables:
 
