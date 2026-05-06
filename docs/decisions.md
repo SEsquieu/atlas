@@ -39,3 +39,14 @@ Atlas should preserve the architectural shape for richer situated memory without
 - **Budgeted sidecars:** future parallel inference sidecars may enrich context, but each must have a reason, budget, destination, and permission to be ignored.
 
 See `docs/context-memory-and-sidecars.md` for the detailed shape and MVP/deferred split.
+
+## 2026-05-06 — Command-backed live harness seam
+
+For the first live MVP harness, Atlas will support command-backed adapters selected from config:
+
+- `@atlas/device-android/bridge-command`
+- `@atlas/provider-openclaw/command`
+
+The command seam is intentionally an edge integration path. It lets the CLI call local OpenClaw/Android wrappers without importing OpenClaw runtime/tool APIs into `@atlas/core`.
+
+This is not the final daemon/runtime shape. It is a low-friction bridge for proving the loop, gathering latency/timing data, and keeping provider/device boundaries honest before building a persistent native runtime.

@@ -98,6 +98,41 @@ test('session create writes a file-backed session', async () => {
   }
 });
 
+test('session create can materialize a configured session', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-cli-create-configured-'));
+  try {
+    const storeRoot = join(root, 'sessions');
+    const configPath = join(root, 'atlas.config.json');
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        sessions: {
+          configured: {
+            name: 'Configured Session',
+            goal: 'Create from atlas.config.json.',
+            mode: 'assisted',
+            provider: { id: 'configured-provider', adapter: '@atlas/core/testing' },
+            devices: [{ id: 'configured-camera', adapter: '@atlas/core/testing', capabilities: ['camera.capture'] }]
+          }
+        }
+      }),
+      'utf8'
+    );
+
+    const created = await runAtlasCli(['session', 'create', 'configured', '--config', configPath, '--store', storeRoot], { cwd: root, env: {} });
+    assert.equal(created.exitCode, 0);
+    assert.equal(JSON.parse(created.stdout ?? '{}').fromConfig, true);
+
+    const inspect = await runAtlasCli(['session', 'inspect', 'configured', '--store', storeRoot], { cwd: root, env: {} });
+    const inspected = JSON.parse(inspect.stdout ?? '{}');
+    assert.equal(inspected.name, 'Configured Session');
+    assert.equal(inspected.provider, '@atlas/core/testing');
+    assert.equal(inspected.devices[0].id, 'configured-camera');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('session create refuses to overwrite existing sessions', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-cli-create-existing-'));
   try {
@@ -194,6 +229,87 @@ test('session ask and heartbeat can resolve fake adapters selected by config', a
     assert.equal(inspected.observations.latest.deviceId, 'config-camera');
     assert.equal(inspected.perception.summary, 'CLI fake visual analyzer summary.');
     assert.equal(inspected.events.checkpoint.materializedThroughLatestEvent, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('session ask can resolve command-backed OpenClaw and Android bridge adapters from config', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-cli-command-runner-'));
+  try {
+    const storeRoot = join(root, 'sessions');
+    const bridgeScript = join(root, 'bridge.mjs');
+    const providerScript = join(root, 'provider.mjs');
+    const configPath = join(root, 'atlas.config.json');
+
+    await writeFile(
+      bridgeScript,
+      `const options = JSON.parse(process.env.ATLAS_ANDROID_BRIDGE_OPTIONS ?? '{}');\n` +
+        `console.log(JSON.stringify({\n` +
+        `  mediaRef: 'command://android/current-view.jpg',\n` +
+        `  summary: 'Command bridge saw a live-ish scene for ' + (options.reason ?? 'unknown'),\n` +
+        `  analysis: { confidence: 0.88, mode: options.analysisMode },\n` +
+        `  node: 'command-android-node',\n` +
+        `  facing: options.facing,\n` +
+        `  capturedAt: new Date().toISOString(),\n` +
+        `  timings: { totalMs: 12, captureMs: 7, stageMs: 2, analysisMs: 3 }\n` +
+        `}));\n`,
+      'utf8'
+    );
+    await writeFile(
+      providerScript,
+      `const turn = JSON.parse(process.env.ATLAS_PROVIDER_TURN ?? '{}');\n` +
+        `console.log(JSON.stringify({ turnId: turn.turnId, responseText: 'Command provider received ' + (turn.observations?.length ?? 0) + ' observation(s).' }));\n`,
+      'utf8'
+    );
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        sessions: {
+          'command-runner': {
+            provider: {
+              id: 'command-provider',
+              adapter: '@atlas/provider-openclaw/command',
+              config: {
+                command: process.execPath,
+                args: [providerScript],
+                timeoutMs: 5000
+              }
+            },
+            devices: [
+              {
+                id: 'command-android',
+                adapter: '@atlas/device-android/bridge-command',
+                capabilities: ['camera.capture'],
+                config: {
+                  command: process.execPath,
+                  args: [bridgeScript],
+                  analysisMode: 'openclaw',
+                  timeoutMs: 5000
+                }
+              }
+            ],
+            analyzers: []
+          }
+        }
+      }),
+      'utf8'
+    );
+
+    await runAtlasCli(['session', 'create', 'command-runner', '--store', storeRoot], { cwd: root, env: {} });
+    await runAtlasCli(['session', 'start', 'command-runner', '--store', storeRoot], { cwd: root, env: {} });
+
+    const ask = await runAtlasCli(
+      ['session', 'ask', 'command-runner', '--text', 'What am I looking at?', '--store', storeRoot, '--config', configPath],
+      { cwd: root, env: {} }
+    );
+    assert.equal(ask.exitCode, 0);
+    assert.match(JSON.parse(ask.stdout ?? '{}').responseText, /1 observation/);
+
+    const inspect = await runAtlasCli(['session', 'inspect', 'command-runner', '--store', storeRoot], { cwd: root, env: {} });
+    const inspected = JSON.parse(inspect.stdout ?? '{}');
+    assert.equal(inspected.observations.latest.deviceId, 'command-android');
+    assert.equal(inspected.perception.summary.startsWith('Command bridge saw a live-ish scene'), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import {
   loadAtlasConfig,
   resolveAtlasConfigPath,
+  sessionStateFromConfig,
   sessionStatesFromConfig,
   type AtlasConfig,
   type AtlasSessionConfig
@@ -9,6 +10,7 @@ import {
 import {
   AtlasRunner,
   FileSessionStore,
+  type AgentProviderAdapter,
   applySessionEvent,
   createFakeCameraDevice,
   createFakeProvider,
@@ -16,10 +18,14 @@ import {
   createSessionState,
   createStaticAdapterRegistry,
   inspectSession,
+  type DeviceAdapter,
   type DeviceBinding,
   type DeviceCapability,
+  type ProviderBinding,
   type SessionStatus
 } from '@atlas/core';
+import { createAndroidBridgeCommandDeviceAdapter } from '@atlas/device-android';
+import { createOpenClawCommandProviderAdapter } from '@atlas/provider-openclaw';
 
 export type CliResult = {
   exitCode: number;
@@ -100,7 +106,7 @@ async function runSessionCommand(args: string[], options: CliOptions): Promise<C
   if (subcommand === 'resume' && sessionId) return lifecycleSessionCommand(sessionId, 'session.resumed', 'active', rest, options);
   if ((subcommand === 'end' || subcommand === 'done') && sessionId) return lifecycleSessionCommand(sessionId, 'session.ended', 'done', rest, options);
 
-  return fail('Usage: atlas session create <sessionId> [options]\n       atlas session inspect <sessionId> [--store <path>]\n       atlas session ask <sessionId> --text <text> [--store <path>] [--config <path>]\n       atlas session heartbeat <sessionId> [--store <path>] [--config <path>]\n       atlas session start|pause|resume|end <sessionId> [--reason <reason>] [--store <path>]', 1);
+  return fail('Usage: atlas session create <sessionId> [options] [--config <path>]\n       atlas session inspect <sessionId> [--store <path>]\n       atlas session ask <sessionId> --text <text> [--store <path>] [--config <path>]\n       atlas session heartbeat <sessionId> [--store <path>] [--config <path>]\n       atlas session start|pause|resume|end <sessionId> [--reason <reason>] [--store <path>]', 1);
 }
 
 async function createSessionCommand(sessionId: string, args: string[], options: CliOptions): Promise<CliResult> {
@@ -108,22 +114,29 @@ async function createSessionCommand(sessionId: string, args: string[], options: 
   const existing = await store.loadState(sessionId);
   if (existing) return fail(`Session already exists: ${sessionId}`, 1);
 
+  const config = await loadOptionalConfig(args, options);
+  if ('error' in config) return fail(config.error, 1);
+  const configuredSession = config.config?.sessions?.[sessionId];
+  if (config.config && !configuredSession) return fail(`Session not found in config: ${sessionId}`, 1);
+
   const providerAdapter = readFlagValue(args, '--provider') ?? '@atlas/core/testing';
   const providerId = readFlagValue(args, '--provider-id') ?? providerAdapter;
   const devices = readRepeatedFlagValues(args, '--device').map(parseDeviceBinding);
   const now = readFlagValue(args, '--now');
 
-  const session = createSessionState({
-    sessionId,
-    name: readFlagValue(args, '--name'),
-    goal: readFlagValue(args, '--goal'),
-    now,
-    provider: {
-      id: providerId,
-      adapter: providerAdapter
-    },
-    devices
-  });
+  const session = configuredSession
+    ? sessionStateFromConfig({ sessionId, config: configuredSession, now })
+    : createSessionState({
+        sessionId,
+        name: readFlagValue(args, '--name'),
+        goal: readFlagValue(args, '--goal'),
+        now,
+        provider: {
+          id: providerId,
+          adapter: providerAdapter
+        },
+        devices
+      });
 
   await store.create(session);
   await store.appendEvent(session.sessionId, {
@@ -136,7 +149,7 @@ async function createSessionCommand(sessionId: string, args: string[], options: 
     }
   });
 
-  return ok(JSON.stringify({ sessionId: session.sessionId, created: true, statePath: 'state.json' }, null, 2));
+  return ok(JSON.stringify({ sessionId: session.sessionId, created: true, statePath: 'state.json', fromConfig: Boolean(configuredSession) }, null, 2));
 }
 
 async function inspectSessionCommand(sessionId: string, args: string[], options: CliOptions): Promise<CliResult> {
@@ -218,21 +231,111 @@ async function createCliRunner(sessionId: string, store: FileSessionStore, confi
 function createCliAdapterRegistry(sessionConfig: Pick<AtlasSessionConfig, 'provider' | 'devices' | 'analyzers'>) {
   const providerId = sessionConfig.provider?.id ?? '@atlas/core/testing';
   const providerAdapter = sessionConfig.provider?.adapter ?? '@atlas/core/testing';
-  const devices = sessionConfig.devices?.length
-    ? sessionConfig.devices.map((device) => createFakeCameraDevice({ id: device.id, name: device.name ?? device.adapter, includeSummary: false }))
+  const devices: DeviceAdapter[] = sessionConfig.devices?.length
+    ? sessionConfig.devices.map(createDeviceFromBinding)
     : [createFakeCameraDevice({ includeSummary: false })];
   const analyzers = sessionConfig.analyzers?.length
     ? sessionConfig.analyzers.map((id) => createFakeVisualAnalyzer({ id, name: id, summary: 'CLI fake visual analyzer summary.', confidence: 0.9 }))
     : [createFakeVisualAnalyzer({ summary: 'CLI fake visual analyzer summary.', confidence: 0.9 })];
+  const provider = createProviderFromBinding(sessionConfig.provider ?? { id: providerId, adapter: providerAdapter });
 
   return createStaticAdapterRegistry({
     providers: [
-      createFakeProvider({ id: providerId, name: providerAdapter }),
+      provider,
       createFakeProvider({ id: '@atlas/core/testing', name: '@atlas/core/testing' })
     ],
     devices,
     analyzers
   });
+}
+
+function createProviderFromBinding(binding: ProviderBinding): AgentProviderAdapter {
+  if (binding.adapter === '@atlas/provider-openclaw/command') {
+    const config = readObjectConfig(binding.config, binding.adapter);
+    return createOpenClawCommandProviderAdapter({
+      id: binding.id,
+      name: readOptionalString(config, 'name') ?? binding.adapter,
+      command: readRequiredString(config, 'command', binding.adapter),
+      args: readOptionalStringArray(config, 'args'),
+      cwd: readOptionalString(config, 'cwd'),
+      timeoutMs: readOptionalNumber(config, 'timeoutMs'),
+      env: readOptionalStringRecord(config, 'env'),
+      inputMode: readOptionalInputMode(config, 'inputMode')
+    });
+  }
+
+  return createFakeProvider({ id: binding.id, name: binding.adapter });
+}
+
+function createDeviceFromBinding(binding: DeviceBinding): DeviceAdapter {
+  if (binding.adapter === '@atlas/device-android/bridge-command') {
+    const config = readObjectConfig(binding.config, binding.adapter);
+    return createAndroidBridgeCommandDeviceAdapter({
+      id: binding.id,
+      name: binding.name ?? readOptionalString(config, 'name') ?? binding.adapter,
+      command: readRequiredString(config, 'command', binding.adapter),
+      args: readOptionalStringArray(config, 'args'),
+      cwd: readOptionalString(config, 'cwd'),
+      timeoutMs: readOptionalNumber(config, 'timeoutMs'),
+      env: readOptionalStringRecord(config, 'env'),
+      inputMode: readOptionalInputMode(config, 'inputMode'),
+      facing: readOptionalFacing(config, 'facing'),
+      analyze: readOptionalBoolean(config, 'analyze'),
+      analysisMode: readOptionalString(config, 'analysisMode')
+    });
+  }
+
+  return createFakeCameraDevice({ id: binding.id, name: binding.name ?? binding.adapter, includeSummary: false });
+}
+
+function readObjectConfig(config: Record<string, unknown> | undefined, adapter: string): Record<string, unknown> {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    throw new Error(`Adapter ${adapter} requires an object config.`);
+  }
+  return config;
+}
+
+function readRequiredString(config: Record<string, unknown>, key: string, adapter: string): string {
+  const value = readOptionalString(config, key);
+  if (!value) throw new Error(`Adapter ${adapter} requires config.${key}.`);
+  return value;
+}
+
+function readOptionalString(config: Record<string, unknown>, key: string): string | undefined {
+  const value = config[key];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function readOptionalNumber(config: Record<string, unknown>, key: string): number | undefined {
+  const value = config[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function readOptionalBoolean(config: Record<string, unknown>, key: string): boolean | undefined {
+  const value = config[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function readOptionalStringArray(config: Record<string, unknown>, key: string): string[] | undefined {
+  const value = config[key];
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((entry): entry is string => typeof entry === 'string');
+}
+
+function readOptionalStringRecord(config: Record<string, unknown>, key: string): Record<string, string> | undefined {
+  const value = config[key];
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+}
+
+function readOptionalInputMode(config: Record<string, unknown>, key: string): 'env' | 'stdin' | undefined {
+  const value = config[key];
+  return value === 'env' || value === 'stdin' ? value : undefined;
+}
+
+function readOptionalFacing(config: Record<string, unknown>, key: string): 'back' | 'front' | undefined {
+  const value = config[key];
+  return value === 'back' || value === 'front' ? value : undefined;
 }
 
 async function loadOptionalConfig(args: string[], options: CliOptions): Promise<{ config?: AtlasConfig } | { error: string }> {
@@ -325,5 +428,5 @@ function fail(stderr: string, exitCode: number): CliResult {
 }
 
 function helpText(): string {
-  return `Atlas CLI\n\nUsage:\n  atlas shrug\n  atlas sessions list [--store <path>]\n  atlas session create <sessionId> [--name <name>] [--goal <goal>] [--provider <adapter>] [--provider-id <id>] [--device <id:adapter:capability,capability>] [--store <path>]\n  atlas session inspect <sessionId> [--store <path>]\n  atlas session ask <sessionId> --text <text> [--store <path>] [--config <path>]\n  atlas session heartbeat <sessionId> [--store <path>] [--config <path>]\n  atlas session start <sessionId> [--reason <reason>] [--store <path>]\n  atlas session pause <sessionId> [--reason <reason>] [--store <path>]\n  atlas session resume <sessionId> [--reason <reason>] [--store <path>]\n  atlas session end <sessionId> [--reason <reason>] [--store <path>]\n  atlas config inspect [--config <path>]\n  atlas help\n\nEnvironment:\n  ATLAS_STORE  Override default .atlas-cache/sessions store path`;
+  return `Atlas CLI\n\nUsage:\n  atlas shrug\n  atlas sessions list [--store <path>]\n  atlas session create <sessionId> [--name <name>] [--goal <goal>] [--provider <adapter>] [--provider-id <id>] [--device <id:adapter:capability,capability>] [--store <path>] [--config <path>]\n  atlas session inspect <sessionId> [--store <path>]\n  atlas session ask <sessionId> --text <text> [--store <path>] [--config <path>]\n  atlas session heartbeat <sessionId> [--store <path>] [--config <path>]\n  atlas session start <sessionId> [--reason <reason>] [--store <path>]\n  atlas session pause <sessionId> [--reason <reason>] [--store <path>]\n  atlas session resume <sessionId> [--reason <reason>] [--store <path>]\n  atlas session end <sessionId> [--reason <reason>] [--store <path>]\n  atlas config inspect [--config <path>]\n  atlas help\n\nEnvironment:\n  ATLAS_STORE  Override default .atlas-cache/sessions store path`;
 }

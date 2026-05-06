@@ -64,3 +64,5 @@ export function createAndroidBridgeDeviceAdapter(options: AndroidBridgeDeviceAda
 
 export { AndroidBridgeCaptureError, normalizeAndroidBridgeCaptureResult, normalizeAndroidBridgeError } from './bridge-result.js';
 export type { AndroidBridgeCaptureOptions, AndroidBridgeCaptureResult } from './bridge-result.js';
+export { createAndroidBridgeCommandDeviceAdapter, runAndroidBridgeCommand } from './command-bridge.js';
+export type { AndroidBridgeCommandDeviceAdapterOptions, AndroidBridgeCommandOptions } from './command-bridge.js';

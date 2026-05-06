@@ -43,7 +43,7 @@ npm --workspace @atlas/test-harness run demo:android-bridge
 
 This validates the injected bridge boundary without requiring OpenClaw tool access inside the package.
 
-## Future Integration Harness
+## Injected Integration Harness
 
 A real OpenClaw runtime harness should inject the bridge function roughly like:
 
@@ -54,3 +54,44 @@ createAndroidBridgeDeviceAdapter({
 ```
 
 That keeps Atlas packages reusable outside OpenClaw.
+
+## Command-backed CLI Seam
+
+The Atlas CLI can also use a command-backed Android bridge device:
+
+```json
+{
+  "sessions": {
+    "live-android": {
+      "devices": [
+        {
+          "id": "android-live",
+          "adapter": "@atlas/device-android/bridge-command",
+          "capabilities": ["camera.capture"],
+          "config": {
+            "command": "node",
+            "args": ["examples/android-openclaw-basic/bridge-wrapper.mjs"],
+            "analysisMode": "ollama",
+            "timeoutMs": 60000
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+The wrapper command receives capture options as JSON in `ATLAS_ANDROID_BRIDGE_OPTIONS` by default and must print bridge-result JSON to stdout.
+
+This repo includes a concrete wrapper at `examples/android-openclaw-basic/bridge-wrapper.mjs` plus a full session config at `examples/android-openclaw-basic/atlas-live.config.example.json`.
+
+`bridge-wrapper.mjs`:
+
+- reads `ATLAS_ANDROID_BRIDGE_OPTIONS`
+- calls `openclaw nodes camera snap`
+- parses `MEDIA:` output or falls back to the OpenClaw temp image directory
+- stages the selected image into `.atlas-cache/images`
+- optionally runs Ollama visual analysis
+- prints bridge-result JSON to stdout
+
+This is the first live-harness seam: the command can call OpenClaw however the local install supports, while Atlas still sees only normalized device output.

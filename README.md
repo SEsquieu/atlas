@@ -83,3 +83,10 @@ node packages/atlas-cli/dist/index.js config inspect
 node packages/atlas-cli/dist/index.js sessions list
 node packages/atlas-cli/dist/index.js session inspect demo-session
 ```
+
+Config-selected command adapters are available for live harness work:
+
+- `@atlas/device-android/bridge-command`
+- `@atlas/provider-openclaw/command`
+
+See [`docs/adapter-contracts.md`](./docs/adapter-contracts.md) for the command JSON contracts.

@@ -53,6 +53,18 @@ Deferred until after a solid MVP:
 - external spillover delegation
 - budgeted inference sidecar scheduler
 
+## Live Command Adapter Seam — 2026-05-06
+
+Atlas now has a config-selected command seam for live local harnesses while keeping Core provider/device independent:
+
+- `@atlas/device-android/bridge-command` runs a wrapper command and normalizes Android bridge JSON into `Observation`.
+- `@atlas/provider-openclaw/command` runs a wrapper command and normalizes JSON/plain-text output into `NormalizedAgentResult`.
+- `examples/android-openclaw-basic/bridge-wrapper.mjs` calls `openclaw nodes camera snap`, stages image files, optionally runs Ollama visual analysis, and emits bridge-result JSON.
+- `examples/android-openclaw-basic/provider-wrapper.mjs` maps Atlas turns into `openclaw agent --json` calls.
+- `examples/android-openclaw-basic/atlas-live.config.example.json` wires the first live Android/OpenClaw CLI harness.
+
+Product implication: the next live test can be a real `atlas session ask ... "What am I looking at?"` run without special in-process OpenClaw APIs. This is still a harness seam, not the final daemon/runtime integration.
+
 ## Phase 0 — Design Lock
 
 Status: complete.
@@ -129,12 +141,14 @@ Done:
 - Fake Android bridge harness scenario.
 - Normalized Android bridge capture errors.
 - Bridge-provided image analysis maps to `ObservationAnalysis` rather than becoming an OpenClaw-specific assumption.
+- Bridge timing telemetry (`totalMs`, `captureMs`, `stageMs`, `analysisMs`) is preserved in observation metadata when present.
+- CLI can resolve command-backed Android bridge adapters from config.
+- Runnable Android/OpenClaw bridge wrapper and live config example exist under `examples/android-openclaw-basic/`.
 
 In progress / next:
 
-- Preserve bridge timing telemetry (`totalMs`, `captureMs`, `stageMs`, `analysisMs`) as observation metadata.
 - Add a repeatable Android/OpenClaw latency harness that can compare bridge/plugin path vs future native runtime path.
-- Add a live adapter seam where OpenClaw tool results can be injected without making Atlas Core depend on OpenClaw.
+- Run the command-backed live harness against a paired Android node and record timings.
 - Use measurements to decide when to keep using the bridge, when to bypass CLI/helper overhead, and when to move toward a native Atlas Android runtime.
 
 Deliverables:
@@ -207,7 +221,7 @@ Goal: route normalized Atlas turns through OpenClaw without making Atlas OpenCla
 
 Deliverables:
 
-- Adapter maps `NormalizedSessionTurn` to OpenClaw-compatible input.
+- Adapter maps `NormalizedSessionTurn` to OpenClaw-compatible input. Initial command-backed wrapper exists for CLI harness use.
 - Adapter exposes Atlas tool schemas in OpenClaw-compatible form.
 - Adapter maps OpenClaw response/tool calls back to `NormalizedAgentResult`.
 - Adapter leaves room for structured sideband fields: artifacts, route hints, belief candidates, and tool-call candidates.

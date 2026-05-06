@@ -31,7 +31,7 @@ The first CLI package is `@atlas/cli`.
 After building:
 
 ```bash
-node packages/atlas-cli/dist/index.js session create <sessionId>
+node packages/atlas-cli/dist/index.js session create <sessionId> [--config atlas.config.json]
 node packages/atlas-cli/dist/index.js session start <sessionId>
 node packages/atlas-cli/dist/index.js session pause <sessionId>
 node packages/atlas-cli/dist/index.js session resume <sessionId>
@@ -42,6 +42,13 @@ node packages/atlas-cli/dist/index.js config inspect
 node packages/atlas-cli/dist/index.js sessions list
 node packages/atlas-cli/dist/index.js session inspect <sessionId>
 ```
+
+The CLI can now resolve command-backed edge adapters from config:
+
+- `@atlas/device-android/bridge-command`
+- `@atlas/provider-openclaw/command`
+
+These let live wrappers connect Atlas to OpenClaw/Android without importing OpenClaw-specific tool APIs into Atlas Core. See `docs/adapter-contracts.md` for the command environment contracts.
 
 By default, the CLI reads sessions from:
 

@@ -7,7 +7,9 @@
   },
   "references": [
     { "path": "../atlas-core" },
-    { "path": "../atlas-config" }
+    { "path": "../atlas-config" },
+    { "path": "../atlas-device-android" },
+    { "path": "../atlas-provider-openclaw" }
   ],
   "include": ["src/**/*.ts"]
 }

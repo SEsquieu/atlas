@@ -15,3 +15,6 @@ export function createOpenClawProviderAdapter(options: OpenClawProviderAdapterOp
     step: options.step
   };
 }
+
+export { createOpenClawCommandProviderAdapter, runOpenClawProviderCommand } from './command-provider.js';
+export type { OpenClawCommandProviderOptions } from './command-provider.js';

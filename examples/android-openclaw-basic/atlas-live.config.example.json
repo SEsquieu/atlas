@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "sessions": {
+    "live-android-openclaw": {
+      "name": "Live Android + OpenClaw",
+      "goal": "Use a paired Android phone as Atlas visual context and OpenClaw as the upstream agent.",
+      "mode": "assisted",
+      "provider": {
+        "id": "openclaw-live",
+        "adapter": "@atlas/provider-openclaw/command",
+        "config": {
+          "command": "node",
+          "args": ["examples/android-openclaw-basic/provider-wrapper.mjs"],
+          "timeoutMs": 610000,
+          "env": {
+            "ATLAS_OPENCLAW_AGENT_SESSION_PREFIX": "atlas-live",
+            "ATLAS_OPENCLAW_AGENT_TIMEOUT_SECONDS": "600"
+          }
+        }
+      },
+      "devices": [
+        {
+          "id": "android-live",
+          "adapter": "@atlas/device-android/bridge-command",
+          "capabilities": ["camera.capture"],
+          "config": {
+            "command": "node",
+            "args": ["examples/android-openclaw-basic/bridge-wrapper.mjs"],
+            "timeoutMs": 90000,
+            "analysisMode": "ollama",
+            "env": {
+              "ATLAS_ANDROID_BRIDGE_IMAGES_DIR": ".atlas-cache/images",
+              "ATLAS_ANDROID_BRIDGE_OLLAMA_MODEL": "qwen3.5:4b"
+            }
+          }
+        }
+      ],
+      "analyzers": [],
+      "heartbeat": {
+        "enabled": false,
+        "intervalMs": 30000
+      }
+    }
+  }
+}
