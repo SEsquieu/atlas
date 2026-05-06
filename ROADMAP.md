@@ -34,6 +34,25 @@ Atlas now treats visual context as decaying state. Reuse depends on context age,
 
 See `docs/visual-freshness-policy.md` for the initial matrix and examples.
 
+## Future Architecture Shape — 2026-05-06
+
+Captured the next layer of Atlas architecture in `docs/context-memory-and-sidecars.md`.
+
+MVP-shaping decisions:
+
+- heartbeat cadence should become dynamic rather than fixed
+- freshness decay should use context-aware multipliers
+- physical context, supporting context, and spillover must remain separate
+- provider adapters may emit structured sideband suggestions, but Atlas validates/adopts or rejects them
+- event/session models should leave room for belief candidates, spillover quarantine, and async sidecar results
+
+Deferred until after a solid MVP:
+
+- full weighted-belief memory store
+- truth-state decay engine (`current → stale → historical → archived`)
+- external spillover delegation
+- budgeted inference sidecar scheduler
+
 ## Phase 0 — Design Lock
 
 Status: complete.
@@ -155,6 +174,7 @@ Deliverables:
 - Simple stale/unstable/insufficient policy.
 - Prompt intent classifier for visual-context-dependent questions.
 - Motion-aware visual context decay policy.
+- Dynamic heartbeat cadence decision hook based on idle/active/stable/unstable/high-risk state.
 
 Pass criteria:
 
@@ -190,6 +210,7 @@ Deliverables:
 - Adapter maps `NormalizedSessionTurn` to OpenClaw-compatible input.
 - Adapter exposes Atlas tool schemas in OpenClaw-compatible form.
 - Adapter maps OpenClaw response/tool calls back to `NormalizedAgentResult`.
+- Adapter leaves room for structured sideband fields: artifacts, route hints, belief candidates, and tool-call candidates.
 - Clean failure behavior when OpenClaw is unavailable.
 
 Pass criteria:
@@ -205,6 +226,7 @@ Goal: give Atlas ambient physical awareness without babbling or provider spam.
 Deliverables:
 
 - Configurable heartbeat cadence.
+- Dynamic cadence policy hook: idle/stable slows down; unstable/moving/active/high-risk speeds up within limits.
 - Capture/update context on heartbeat.
 - Cheap significance gate.
 - Silent-by-default behavior.
@@ -267,22 +289,25 @@ Possible directions:
 - More device adapters, e.g. webcam/RTSP/smart glasses.
 - Native Atlas runtime.
 - Richer memory/session replay.
+- Weighted belief memory with truth-state decay.
+- Spillover routing/delegation for side requests.
+- Budgeted inference sidecars for non-blocking context enrichment.
+- Supporting-context artifact store for maps, manuals, floorplans, docs, and OCR results.
 
 ## Immediate Next Step
 
-Implement Phase 1: durable session store and event log.
+Continue Phase 2/5 integration: wire a real OpenClaw/Android config path so CLI `session ask` and `session heartbeat` can use the live bridge/provider path instead of only fake adapters.
 
 Recommended first coding target:
 
 ```text
-atlas/packages/atlas-core/src/store/
-  file-session-store.ts
-  event-log.ts
-  materialize.ts
+atlas/packages/atlas-provider-openclaw/
+atlas/packages/atlas-device-android/
+atlas/examples/android-openclaw-basic/
 ```
 
 The first satisfying demo should be:
 
 ```text
-create session → append events → materialize state → inspect session → run fake user-loop preflight decision
+create session → start session → live Android heartbeat/ask → materialize state → inspect observation/analysis/timing/audit trail
 ```

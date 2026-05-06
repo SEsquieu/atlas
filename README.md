@@ -53,6 +53,8 @@ Read [`BUILD_DOC.md`](./BUILD_DOC.md) first. It is the current source of truth f
 
 Then read [`ROADMAP.md`](./ROADMAP.md) for the implementation sequence.
 
+For the preserved future architecture shape around context lanes, weighted belief memory, spillover quarantine, provider sidebands, and budgeted inference sidecars, read [`docs/context-memory-and-sidecars.md`](./docs/context-memory-and-sidecars.md).
+
 ## Development Workflow
 
 Before committing Atlas changes, run:

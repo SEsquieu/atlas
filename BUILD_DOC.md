@@ -49,6 +49,20 @@ The central product is not “camera access for an LLM.” The central product i
 8. **Inspectable by default**
    - Atlas should maintain an audit trail of observations, actions, tool calls, speech, context updates, and provider decisions.
 
+9. **Context lanes stay separate**
+   - Physical context, supporting context, and spillover must remain distinct.
+   - Spillover must not pollute physical session memory.
+
+10. **Memory is belief over time**
+   - Long-term Atlas memory should evolve toward weighted claims about reality, not raw text blobs.
+   - Claims should carry confidence, freshness, relevance, truth status, decay policy, scope, and provenance.
+
+11. **Providers suggest; Atlas admits**
+   - Provider adapters may return structured suggestions, but Atlas Core decides what becomes physical truth, supporting context, tool execution, or memory.
+
+12. **Background enrichment is budgeted**
+   - Future sidecars may enrich context asynchronously, but they must have a reason, budget, destination, and permission to be ignored.
+
 ## 3. Goals
 
 - Build a modular physical agent session runtime.
@@ -378,6 +392,50 @@ classify intent
 
 The provider may also request fresh context using exposed tools, but deterministic preflight should cover common obvious cases so behavior remains consistent across providers.
 
+## 9.5 Context Lanes and Belief Memory
+
+Atlas session state should distinguish three lanes:
+
+- **Physical context:** observations and perception state generated through Atlas devices/perception loops.
+- **Supporting context:** task-relevant artifacts such as floorplans, manuals, maps, docs, OCR results, shopping lists, or repair procedures.
+- **Spillover:** unrelated assistant requests such as emails, reminders, calendar work, or side conversations.
+
+Core invariant:
+
+> Spillover must not pollute physical session memory.
+
+Provider-generated artifacts can support the active physical task, but they should be admitted through policy. A provider saying “this looks like aisle 12” is a belief candidate, not automatically physical truth.
+
+Future Atlas memory should represent weighted claims about reality over time:
+
+```ts
+type TruthStatus = "current" | "stale" | "historical" | "archived";
+
+type BeliefClaim = {
+  id: string;
+  claim: string;
+  scope: "turn" | "session" | "task" | "user" | "world";
+  source: "device" | "perception-analyzer" | "provider-suggestion" | "user" | "derived";
+  importance: number;
+  confidence: number;
+  freshness: number;
+  relevance: string[];
+  truthStatus: TruthStatus;
+  decayPolicy: string;
+  observedAt: string;
+  evidenceEventIds?: string[];
+  supersededBy?: string;
+};
+```
+
+Truth transitions:
+
+```text
+current → stale → historical → archived
+```
+
+MVP should preserve provenance and avoid collapsing memory into provider-owned text summaries. The full belief store can wait until after the first live loop.
+
 ## 10. Normalized Event Model
 
 ```ts
@@ -392,6 +450,10 @@ type SessionEvent =
   | { type: "user.utterance"; at: string; text: string; mode: "text" | "voice" }
   | { type: "provider.requested"; at: string; provider: string; turnId: string }
   | { type: "provider.responded"; at: string; provider: string; turnId: string }
+  | { type: "spillover.detected"; at: string; sourceTurnId: string; text: string; reason: string }
+  | { type: "spillover.quarantined"; at: string; spilloverId: string; route?: string }
+  | { type: "sidecar.requested"; at: string; sidecarId: string; reason: string; budget: unknown; destination: string }
+  | { type: "sidecar.completed"; at: string; sidecarId: string; resultRef?: string }
   | { type: "tool.requested"; at: string; toolName: string; reason?: string }
   | { type: "tool.completed"; at: string; toolName: string; resultRef?: string }
   | { type: "agent.speech"; at: string; text: string }
@@ -446,7 +508,11 @@ type AtlasSessionState = {
     durable: string[];
     environmentNotes: string[];
     taskProgress: string[];
+    beliefClaims?: BeliefClaim[];
   };
+
+  supportingContext?: SupportingArtifact[];
+  spillover?: SpilloverRequest[];
 
   permissions: SessionPermissions;
   audit: AuditPointer;
@@ -499,7 +565,10 @@ type NormalizedAgentResult = {
   turnId: string;
   responseText?: string;
   toolCalls?: AtlasToolCall[];
-  memoryUpdates?: StateUpdate[];
+  memoryUpdates?: StateUpdate[]; // legacy/simple MVP path
+  artifacts?: SupportingArtifactCandidate[];
+  routeHints?: RouteHint[];
+  beliefCandidates?: BeliefCandidate[];
   sessionUpdates?: StateUpdate[];
   nextLoopHint?: {
     waitMs?: number;
@@ -511,6 +580,25 @@ type NormalizedAgentResult = {
 ```
 
 Rule: provider adapters expose tool schemas to upstream runtimes, but Atlas Core executes the tools.
+
+Provider sideband fields are advisory. Atlas validates and admits them independently. Providers suggest meaning; Atlas owns physical truth.
+
+## 13.5 Spillover Routing and Sidecars
+
+Future user turns may mix physical and non-physical intents:
+
+> “What am I holding? Also remind me to email Sarah.”
+
+Atlas should continue the physical loop for “What am I holding?” while quarantining the reminder request as spillover. A future `SpilloverRequest` can be delegated to a scheduler/provider/assistant path, but it must not enter physical session memory unless explicitly admitted as relevant to the physical task.
+
+Future inference sidecars may run in parallel for scene summarization, hazard detection, path mapping, memory compression, or context enrichment. They must not block the primary response path.
+
+No sidecar runs without:
+
+1. a reason
+2. a token/latency budget
+3. an explicit write destination
+4. permission to be ignored
 
 ## 14. Device Adapter Contract
 

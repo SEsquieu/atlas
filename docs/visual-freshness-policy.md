@@ -4,6 +4,8 @@ Status: first tunable policy, 2026-05-05.
 
 Atlas treats visual context as decaying state, not a permanent fact. A heartbeat capture can be reused for a later user turn only when the physical/session signals say it is still safe enough for the request.
 
+This policy should also feed dynamic heartbeat cadence. Stable, high-confidence context can slow the perception loop; unstable, moving, low-confidence, or high-risk context should speed it up within configured limits.
+
 ## Inputs
 
 The first policy uses:
@@ -53,3 +55,18 @@ motionState: 'stationary' | 'handheld-stable' | 'turning' | 'walking' | 'vehicle
 ```
 
 Even rough IMU-derived activity recognition is enough to tune visual decay better than wall-clock age alone.
+
+## Future dynamic cadence output
+
+Freshness assessment should eventually pair with a heartbeat cadence decision:
+
+```ts
+type HeartbeatCadenceMode =
+  | 'idle'
+  | 'stable-scene'
+  | 'active-task'
+  | 'unstable-scene'
+  | 'high-risk';
+```
+
+The cadence decision should explain why the next heartbeat is slower or faster, so session inspection can show whether Atlas is conserving resources, tracking a live task, or reacting to unstable context.
