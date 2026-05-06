@@ -23,6 +23,7 @@ Initial testing target:
 4. **Heartbeat silence**
    - Run heartbeat ticks in an unchanged scene.
    - Expected: state updates silently; significance is `none` or `low`; no babbling; no unnecessary provider calls.
+   - Fake-safe journal command: `npm run demo:ambient-loop -- --ticks 3` writes `ambient-loop.jsonl` and `ambient-loop.md` under the session store.
 
 5. **Meaningful ambient change**
    - Run a heartbeat after the scene meaningfully changes.

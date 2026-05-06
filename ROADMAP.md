@@ -245,6 +245,7 @@ Current slice:
 - `npm run demo:ambient-android -- "What am I looking at?"` runs a live heartbeat refresh before the user ask, proving the intended shape: Atlas can pay capture/analysis cost ambiently, then answer from fresh cached visual context without refreshing during the explicit prompt.
 - Heartbeat decisions include a dynamic cadence suggestion so a future ambient runner can schedule the next tick without hard-coding one interval.
 - Heartbeat captures now run a cheap significance gate that compares the new observation with the previous one and records `none`, `low`, `meaningful`, or `actionable` significance.
+- `npm run demo:ambient-loop -- --ticks 3` runs a fake-safe multi-tick ambient loop and writes skim-friendly `ambient-loop.jsonl` / `ambient-loop.md` summaries for test review.
 
 Deliverables:
 
@@ -253,6 +254,7 @@ Deliverables:
 - Capture/update context on heartbeat.
 - Cheap significance gate. ✅ v0 landed
 - Silent-by-default behavior.
+- Human-readable ambient loop summary log for test review. ✅ fake-safe runner landed
 - Optional provider call for meaningful scene changes.
 - Hard gate for proactive speech.
 

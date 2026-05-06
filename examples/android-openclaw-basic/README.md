@@ -59,6 +59,14 @@ npm run demo:ambient-android -- "What am I looking at?"
 
 This starts the warm image worker, creates/starts the session, runs `atlas session heartbeat` to capture context silently, then runs the summary fast-path ask. The expected UX target is that the visible ask skips capture and returns from cached context in milliseconds while the refresh cost is paid before the user prompt.
 
+For a fake-safe ambient loop journal that does **not** invoke the phone camera unless you pass a live Android config:
+
+```bash
+npm run demo:ambient-loop -- --ticks 3
+```
+
+The runner writes both `ambient-loop.jsonl` and `ambient-loop.md` under the session store directory. Each tick records cadence, capture/no-capture, latest summary, significance level/score, and timing so a test loop can be read without digging through raw `events.jsonl`. Add `--wait` to sleep between ticks using the cadence decision, or pass `--config examples/android-openclaw-basic/atlas-live.config.example.json` only when you intentionally want the live Android device path.
+
 To benchmark OpenClaw image-analysis latency against a saved image without Android/camera capture in the loop:
 
 ```bash
