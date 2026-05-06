@@ -28,8 +28,13 @@ export type AndroidBridgeCaptureResult = {
   visionSummary?: string;
   node?: string;
   facing?: string;
+  /** Physical sample time, not analysis-completion time. */
   capturedAt?: string;
+  observedAt?: string;
+  /** Time the staged/analyzed observation became available to Atlas. */
+  availableAt?: string;
   timings?: AndroidBridgeTimings;
+  timestamps?: AndroidBridgeTimestamps;
   details?: AndroidBridgeCaptureResult;
   [key: string]: unknown;
 };
@@ -40,6 +45,17 @@ export type AndroidBridgeTimings = {
   stageMs?: number;
   analysisMs?: number;
   [key: string]: number | undefined;
+};
+
+export type AndroidBridgeTimestamps = {
+  startedAt?: string;
+  captureCompletedAt?: string;
+  sourceImageModifiedAt?: string;
+  stagedAt?: string;
+  analysisStartedAt?: string;
+  analysisCompletedAt?: string;
+  availableAt?: string;
+  [key: string]: string | undefined;
 };
 
 export class AndroidBridgeCaptureError extends Error {
@@ -84,7 +100,9 @@ export function normalizeAndroidBridgeCaptureResult(
     details.filename,
     details.workspaceLatestPath
   );
-  const capturedAt = firstString(details.capturedAt) ?? options.fallbackCapturedAt ?? new Date().toISOString();
+  const timestamps = normalizeBridgeTimestamps(details.timestamps);
+  const capturedAt = firstString(details.observedAt, details.capturedAt, timestamps?.sourceImageModifiedAt) ?? options.fallbackCapturedAt ?? new Date().toISOString();
+  const availableAt = firstString(details.availableAt, timestamps?.availableAt, timestamps?.analysisCompletedAt) ?? capturedAt;
   const summary =
     firstString(details.summary, details.visionSummary, details.description, details.analysisText) ??
     extractAnalysisSummary(details.analysis) ??
@@ -109,6 +127,19 @@ export function normalizeAndroidBridgeCaptureResult(
     capturedAt,
     deviceId: options.deviceId,
     mediaRef,
+    telemetry: {
+      observedAt: capturedAt,
+      availableAt,
+      latencyMs: timings
+        ? {
+            total: timings.totalMs,
+            capture: timings.captureMs,
+            stage: timings.stageMs,
+            analysis: timings.analysisMs
+          }
+        : undefined,
+      source: options.producedBy ?? 'openclaw/android-camera-bridge'
+    },
     data: {
       bridge: {
         node: details.node,
@@ -118,7 +149,8 @@ export function normalizeAndroidBridgeCaptureResult(
         workspaceLatestPath: details.workspaceLatestPath,
         analysisMode: details.analysisMode,
         analysisState: details.analysisState,
-        timings
+        timings,
+        timestamps
       }
     },
     quality: {
@@ -190,6 +222,15 @@ function normalizeBridgeTimings(value: unknown): AndroidBridgeTimings | undefine
     if (typeof raw === 'number' && Number.isFinite(raw)) timings[key] = raw;
   }
   return Object.keys(timings).length > 0 ? timings : undefined;
+}
+
+function normalizeBridgeTimestamps(value: unknown): AndroidBridgeTimestamps | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const timestamps: AndroidBridgeTimestamps = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw === 'string' && raw.length > 0) timestamps[key] = raw;
+  }
+  return Object.keys(timestamps).length > 0 ? timestamps : undefined;
 }
 
 function extractAnalysisConfidence(analysis: unknown): number | undefined {

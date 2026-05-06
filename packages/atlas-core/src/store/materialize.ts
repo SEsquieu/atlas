@@ -46,10 +46,13 @@ function applyObservationCaptured(state: AtlasSessionState, event: AuditEvent): 
   if (!observation) return markEventApplied(state, event);
 
   const recentObservations = [...state.recentObservations, observation].slice(-20);
-  const latestObservationAt = observation.capturedAt;
-  const capturedAtMs = Date.parse(observation.capturedAt);
+  const latestObservationAt = observation.telemetry?.observedAt ?? observation.capturedAt;
+  const latestObservationAvailableAt = observation.telemetry?.availableAt ?? event.at;
+  const observedAtMs = Date.parse(latestObservationAt);
   const eventAtMs = Date.parse(event.at);
-  const freshnessMs = Number.isFinite(capturedAtMs) && Number.isFinite(eventAtMs) ? Math.max(0, eventAtMs - capturedAtMs) : 0;
+  const freshnessMs = Number.isFinite(observedAtMs) && Number.isFinite(eventAtMs) ? Math.max(0, eventAtMs - observedAtMs) : 0;
+  const observationLatencyMs = observation.telemetry?.latencyMs?.total ?? durationMs(latestObservationAt, latestObservationAvailableAt);
+  const analysisLatencyMs = observation.telemetry?.latencyMs?.analysis;
 
   return markEventApplied(
     touch(
@@ -59,11 +62,14 @@ function applyObservationCaptured(state: AtlasSessionState, event: AuditEvent): 
       perception: {
         ...state.perception,
         latestObservationAt,
+        latestObservationAvailableAt,
         latestImageId: observation.type === 'image' ? observation.id : state.perception.latestImageId,
         latestLocationAt: observation.type === 'location' ? observation.capturedAt : state.perception.latestLocationAt,
         summary: observation.summary ?? observation.analyses?.find((analysis) => analysis.summary)?.summary ?? state.perception.summary,
         confidence: observation.quality?.confidence ?? observation.analyses?.find((analysis) => typeof analysis.confidence === 'number')?.confidence ?? state.perception.confidence,
         freshnessMs,
+        observationLatencyMs,
+        analysisLatencyMs,
         stability: observation.quality?.motion === true ? 'transitioning' : observation.quality?.motion === false ? 'stable' : state.perception.stability,
         motionState: observation.quality?.motion === true ? 'turning' : observation.quality?.motion === false ? 'stationary' : state.perception.motionState,
         blurScore: observation.quality?.blurScore ?? state.perception.blurScore,
@@ -85,6 +91,14 @@ function applyStateUpdated(state: AtlasSessionState, event: AuditEvent): AtlasSe
     next = setByPath(next, update.path, update.value) as AtlasSessionState;
   }
   return markEventApplied(touch(next, event.at), event);
+}
+
+function durationMs(start: string | undefined, end: string | undefined): number | undefined {
+  if (!start || !end) return undefined;
+  const startMs = Date.parse(start);
+  const endMs = Date.parse(end);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return undefined;
+  return Math.max(0, endMs - startMs);
 }
 
 function touch(state: AtlasSessionState, updatedAt: string): AtlasSessionState {

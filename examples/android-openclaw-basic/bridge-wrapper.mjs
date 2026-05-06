@@ -35,6 +35,7 @@ async function captureWithOpenClaw(options) {
   const captureEndedAt = Date.now();
   const helperMedia = await parseMediaPaths(helper.stdout);
   const selectedSource = await resolveFreshSourceImage({ helperMedia, tempDir, startedAt });
+  const observedAtMs = Number.isFinite(selectedSource.mtimeMs) ? selectedSource.mtimeMs : captureEndedAt;
 
   const staged = stage
     ? await stageImageIntoWorkspace({ sourcePath: selectedSource.normalizedPath, imagesDir, facing, latestFileName })
@@ -46,6 +47,8 @@ async function captureWithOpenClaw(options) {
   const analysisMode = analyze ? requestedMode : 'none';
   let analysisState = analysisMode === 'none' ? 'skipped' : 'not-run';
   let analysisText = '';
+
+  const analysisStartedAt = Date.now();
 
   if (analysisMode === 'ollama') {
     try {
@@ -85,7 +88,9 @@ async function captureWithOpenClaw(options) {
     workspaceImagePath: staged.archivePath,
     workspaceLatestPath: staged.latestPath,
     mediaRef: staged.archivePath,
-    capturedAt: new Date(analysisEndedAt).toISOString(),
+    capturedAt: new Date(observedAtMs).toISOString(),
+    observedAt: new Date(observedAtMs).toISOString(),
+    availableAt: new Date(analysisEndedAt).toISOString(),
     analyzed: analysisMode !== 'none',
     analysisMode,
     analysisState,
@@ -95,7 +100,16 @@ async function captureWithOpenClaw(options) {
       totalMs: analysisEndedAt - startedAt,
       captureMs: captureEndedAt - startedAt,
       stageMs: stageEndedAt - captureEndedAt,
-      analysisMs: analysisEndedAt - stageEndedAt
+      analysisMs: analysisEndedAt - analysisStartedAt
+    },
+    timestamps: {
+      startedAt: new Date(startedAt).toISOString(),
+      captureCompletedAt: new Date(captureEndedAt).toISOString(),
+      sourceImageModifiedAt: new Date(observedAtMs).toISOString(),
+      stagedAt: new Date(stageEndedAt).toISOString(),
+      analysisStartedAt: new Date(analysisStartedAt).toISOString(),
+      analysisCompletedAt: new Date(analysisEndedAt).toISOString(),
+      availableAt: new Date(analysisEndedAt).toISOString()
     }
   };
 }

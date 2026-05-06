@@ -17,11 +17,14 @@ export type SessionInspection = {
   }>;
   perception: {
     latestObservationAt?: string;
+    latestObservationAvailableAt?: string;
     latestImageId?: string;
     latestLocationAt?: string;
     summary?: string;
     confidence: number;
     freshnessMs: number;
+    observationLatencyMs?: number;
+    analysisLatencyMs?: number;
     stability: string;
     notes?: string[];
   };
@@ -34,6 +37,8 @@ export type SessionInspection = {
       deviceId: string;
       mediaRef?: string;
       summary?: string;
+      observedAt?: string;
+      availableAt?: string;
       analysisCount: number;
     };
   };
@@ -89,11 +94,14 @@ export function summarizeSession(state: AtlasSessionState, events: AuditEvent[],
     })),
     perception: {
       latestObservationAt: state.perception.latestObservationAt,
+      latestObservationAvailableAt: state.perception.latestObservationAvailableAt,
       latestImageId: state.perception.latestImageId,
       latestLocationAt: state.perception.latestLocationAt,
       summary: state.perception.summary,
       confidence: state.perception.confidence,
       freshnessMs: state.perception.freshnessMs,
+      observationLatencyMs: state.perception.observationLatencyMs,
+      analysisLatencyMs: state.perception.analysisLatencyMs,
       stability: state.perception.stability,
       notes: state.perception.notes
     },
@@ -107,6 +115,8 @@ export function summarizeSession(state: AtlasSessionState, events: AuditEvent[],
             deviceId: latestObservation.deviceId,
             mediaRef: latestObservation.mediaRef,
             summary: latestObservation.summary,
+            observedAt: latestObservation.telemetry?.observedAt,
+            availableAt: latestObservation.telemetry?.availableAt,
             analysisCount: latestObservation.analyses?.length ?? 0
           }
         : undefined

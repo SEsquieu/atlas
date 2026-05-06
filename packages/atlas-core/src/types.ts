@@ -36,12 +36,30 @@ export type ObservationAnalysis = {
   tags?: string[];
 };
 
+export type ObservationTelemetry = {
+  /** When the physical world was sampled. Defaults to Observation.capturedAt. */
+  observedAt?: string;
+  /** When the observation became available to Atlas after staging/analysis. */
+  availableAt?: string;
+  latencyMs?: {
+    total?: number;
+    capture?: number;
+    stage?: number;
+    analysis?: number;
+    provider?: number;
+    [key: string]: number | undefined;
+  };
+  source?: string;
+  data?: unknown;
+};
+
 export type Observation = {
   id: string;
   type: ObservationType;
   capturedAt: string;
   deviceId: string;
   mediaRef?: string;
+  telemetry?: ObservationTelemetry;
   data?: unknown;
   quality?: {
     confidence?: number;
@@ -62,16 +80,21 @@ export type ContextStatus = {
   stability?: ContextStability;
   motionState?: MotionState;
   relevant?: boolean;
+  latencyMs?: number;
+  analysisLatencyMs?: number;
   note?: string;
 };
 
 export type PerceptionState = {
   latestObservationAt?: string;
+  latestObservationAvailableAt?: string;
   latestImageId?: string;
   latestLocationAt?: string;
   summary?: string;
   confidence: number;
   freshnessMs: number;
+  observationLatencyMs?: number;
+  analysisLatencyMs?: number;
   stability: ContextStability;
   motionState?: MotionState;
   sceneDeltaFromPrevious?: number;

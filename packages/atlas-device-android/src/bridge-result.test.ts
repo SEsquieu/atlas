@@ -37,11 +37,17 @@ test('normalizeAndroidBridgeCaptureResult preserves OpenClaw bridge details and 
         analysisState: 'ok',
         node: 'Galaxy S22 Ultra',
         facing: 'back',
+        capturedAt: '2026-05-05T19:38:11.200Z',
+        availableAt: '2026-05-05T19:38:14.676Z',
         timings: {
           totalMs: 7358,
           captureMs: 3861,
           stageMs: 15,
           analysisMs: 3482
+        },
+        timestamps: {
+          sourceImageModifiedAt: '2026-05-05T19:38:11.200Z',
+          availableAt: '2026-05-05T19:38:14.676Z'
         }
       }
     },
@@ -54,11 +60,24 @@ test('normalizeAndroidBridgeCaptureResult preserves OpenClaw bridge details and 
   const bridgeData = (observation.data as { bridge: Record<string, unknown> }).bridge;
   assert.equal(bridgeData.node, 'Galaxy S22 Ultra');
   assert.equal(bridgeData.analysisMode, 'openclaw');
+  assert.equal(observation.capturedAt, '2026-05-05T19:38:11.200Z');
+  assert.equal(observation.telemetry?.observedAt, '2026-05-05T19:38:11.200Z');
+  assert.equal(observation.telemetry?.availableAt, '2026-05-05T19:38:14.676Z');
+  assert.deepEqual(observation.telemetry?.latencyMs, {
+    total: 7358,
+    capture: 3861,
+    stage: 15,
+    analysis: 3482
+  });
   assert.deepEqual(bridgeData.timings, {
     totalMs: 7358,
     captureMs: 3861,
     stageMs: 15,
     analysisMs: 3482
+  });
+  assert.deepEqual(bridgeData.timestamps, {
+    sourceImageModifiedAt: '2026-05-05T19:38:11.200Z',
+    availableAt: '2026-05-05T19:38:14.676Z'
   });
 });
 

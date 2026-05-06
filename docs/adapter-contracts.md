@@ -108,6 +108,16 @@ Example config fragment:
 
 This keeps OpenClaw-specific bridge invocation at the edge while preserving Atlas Core's provider/device independence.
 
+### Observation timing semantics
+
+Device adapters should distinguish physical sample time from context availability time:
+
+- `Observation.capturedAt` / `Observation.telemetry.observedAt`: when the physical world was sampled.
+- `Observation.telemetry.availableAt`: when the staged/analyzed observation became available to Atlas.
+- `Observation.telemetry.latencyMs`: transport/capture/stage/analysis timing, when known.
+
+Freshness policy should age visual context from observed time, not from analysis completion time. Slow analysis makes the context older when it arrives; it must not reset the freshness vector.
+
 ## Inference Sidecar Contract Shape
 
 Future sidecars may run in parallel to enrich context, but they must not block the primary response path.
