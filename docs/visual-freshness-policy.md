@@ -17,6 +17,7 @@ The first policy uses:
 - motion state (`stationary`, `handheld-stable`, `turning`, `walking`, `vehicle`, `unknown`)
 - user question use case (`descriptive`, `confirmation`, `navigation`, `high-risk`)
 - relevance flag
+- refresh latency / analysis latency health
 
 ## Default maximum ages
 
@@ -37,7 +38,15 @@ The policy returns:
 
 - `reuse`: answer can use current context.
 - `background-refresh`: current context is usable, but decaying; answer may proceed while a refresh is scheduled soon.
+- `degraded-reuse`: context is stale, but the refresh path is degraded; reuse stable context to avoid churn unless the request is high-risk/navigational.
 - `refresh`: capture before answering.
+
+Visual refresh health bands:
+
+- `healthy`: refresh path is within normal loop timing.
+- `slow`: refresh latency is elevated, but still usable.
+- `degraded`: refresh latency is high enough that immediate repeat refreshes can make UX worse.
+- `unavailable`: refresh path is too slow/unavailable for normal cadence.
 
 ## Examples
 
@@ -45,6 +54,7 @@ The policy returns:
 - `Is this the right part?` while walking with a 6s-old image: refresh first.
 - `Am I in the right place?` while navigating: short freshness window.
 - `Which wire should I cut?`: refresh regardless of age.
+- If cloud vision returns after 80s, stable descriptive context may be reused with a degraded-performance hint rather than immediately starting another refresh loop.
 
 ## Future motion source
 

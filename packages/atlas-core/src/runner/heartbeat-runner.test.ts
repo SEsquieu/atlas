@@ -50,6 +50,54 @@ test('runHeartbeatTick captures context silently when active context is missing 
   }
 });
 
+test('runHeartbeatTick defers stale stable context when refresh health is degraded', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-degraded-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const now = new Date().toISOString();
+    const session = createSessionState({
+      sessionId: 'degraded-session',
+      now,
+      provider: { id: 'fake-provider', adapter: '@atlas/core/testing' }
+    });
+
+    await store.create({
+      ...session,
+      status: 'active',
+      perception: {
+        ...session.perception,
+        latestObservationAt: new Date(Date.now() - 90_000).toISOString(),
+        latestImageId: 'slow-image',
+        confidence: 0.9,
+        freshnessMs: 90_000,
+        stability: 'stable',
+        health: {
+          visualRefresh: {
+            status: 'degraded',
+            analysisLatencyMs: 80_000,
+            since: now,
+            reason: 'visual refresh latency is degraded'
+          }
+        }
+      }
+    });
+
+    const runner = new AtlasRunner({
+      store,
+      devices: [createFakeCameraDevice()],
+      provider: createFakeProvider()
+    });
+
+    const result = await runner.runHeartbeatTick({ sessionId: session.sessionId });
+
+    assert.equal(result.decision.shouldCapture, false);
+    assert.match(result.decision.reason, /deferring capture/);
+    assert.equal(result.observation, undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('runHeartbeatTick stays quiet when context is fresh and stable', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-quiet-'));
   try {

@@ -19,9 +19,11 @@ export function planUserTurn(text: string, visual: ContextStatus | undefined): U
     reason: shouldRefreshVisualContext
       ? `user request needs fresh physical context: ${visualFreshness?.reasons.join('; ')}`
       : needsVisualContext
-        ? visualFreshness?.decision === 'background-refresh'
-          ? 'current visual context is usable, but should be refreshed in the background soon'
-          : 'current visual context appears usable'
+        ? visualFreshness?.decision === 'degraded-reuse'
+          ? 'current visual context is stale, but refresh performance is degraded; reuse last stable context to avoid churn'
+          : visualFreshness?.decision === 'background-refresh'
+            ? 'current visual context is usable, but should be refreshed in the background soon'
+            : 'current visual context appears usable'
         : 'user request does not obviously require visual context',
     visualFreshness
   };
@@ -42,7 +44,8 @@ export function buildUserSessionTurn(input: {
     observations: input.observations ?? [],
     availableTools: [],
     instructions: [
-      'If a user request depends on current physical context and the provided context is stale, unstable, or insufficient, request fresh observation before answering.'
+      'If a user request depends on current physical context and the provided context is stale, unstable, or insufficient, request fresh observation before answering.',
+      'If visual refresh health is slow or degraded, avoid repeatedly asking for fresh observations unless the task is high-risk, navigational, or the user explicitly needs current confirmation.'
     ]
   };
 }

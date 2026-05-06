@@ -2,6 +2,16 @@ export type SessionStatus = 'idle' | 'active' | 'paused' | 'done' | 'error';
 export type SessionMode = 'manual' | 'assisted' | 'ambient';
 export type ContextStability = 'stable' | 'transitioning' | 'unknown';
 export type MotionState = 'stationary' | 'handheld-stable' | 'turning' | 'walking' | 'vehicle' | 'unknown';
+export type LatencyHealthStatus = 'healthy' | 'slow' | 'degraded' | 'unavailable';
+
+export type VisualRefreshHealth = {
+  status: LatencyHealthStatus;
+  latencyMs?: number;
+  analysisLatencyMs?: number;
+  since?: string;
+  reason?: string;
+  notifyUser?: boolean;
+};
 
 export type DeviceCapability =
   | 'camera.capture'
@@ -82,6 +92,7 @@ export type ContextStatus = {
   relevant?: boolean;
   latencyMs?: number;
   analysisLatencyMs?: number;
+  refreshHealth?: VisualRefreshHealth;
   note?: string;
 };
 
@@ -100,6 +111,9 @@ export type PerceptionState = {
   sceneDeltaFromPrevious?: number;
   blurScore?: number;
   motionDetected?: boolean;
+  health?: {
+    visualRefresh?: VisualRefreshHealth;
+  };
   relevance?: Record<string, number>;
   notes?: string[];
 };

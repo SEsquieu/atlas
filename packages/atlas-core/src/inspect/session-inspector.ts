@@ -1,5 +1,5 @@
 import type { AuditEvent } from '../audit/event-log.js';
-import type { AtlasSessionState } from '../types.js';
+import type { AtlasSessionState, VisualRefreshHealth } from '../types.js';
 import type { SessionStore } from '../store/types.js';
 import { materializeSessionCheckpoint } from '../store/materialize.js';
 
@@ -25,6 +25,7 @@ export type SessionInspection = {
     freshnessMs: number;
     observationLatencyMs?: number;
     analysisLatencyMs?: number;
+    visualRefreshHealth?: VisualRefreshHealth;
     stability: string;
     notes?: string[];
   };
@@ -102,6 +103,7 @@ export function summarizeSession(state: AtlasSessionState, events: AuditEvent[],
       freshnessMs: state.perception.freshnessMs,
       observationLatencyMs: state.perception.observationLatencyMs,
       analysisLatencyMs: state.perception.analysisLatencyMs,
+      visualRefreshHealth: state.perception.health?.visualRefresh,
       stability: state.perception.stability,
       notes: state.perception.notes
     },

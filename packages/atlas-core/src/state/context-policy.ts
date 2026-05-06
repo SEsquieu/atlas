@@ -1,4 +1,4 @@
-import type { ContextStatus, MotionState } from '../types.js';
+import type { ContextStatus, LatencyHealthStatus, MotionState } from '../types.js';
 
 const VISUAL_INTENT_PATTERNS = [
   /what am i looking at/i,
@@ -18,7 +18,7 @@ const NAVIGATION_PATTERNS = [/where should i go/i, /which (aisle|shelf|direction
 const CONFIRMATION_PATTERNS = [/^\s*(is|are|am|do|does|can)\b/i, /confirm/i, /right one/i, /do i have everything/i];
 
 export type VisualContextUseCase = 'descriptive' | 'confirmation' | 'navigation' | 'high-risk';
-export type VisualFreshnessDecision = 'reuse' | 'background-refresh' | 'refresh';
+export type VisualFreshnessDecision = 'reuse' | 'background-refresh' | 'degraded-reuse' | 'refresh';
 
 export type RefreshPolicy = {
   maxAgeMs: number;
@@ -32,6 +32,8 @@ export type VisualFreshnessAssessment = {
   motionState: MotionState;
   maxUsableAgeMs: number;
   ageMs?: number;
+  latencyHealth: LatencyHealthStatus;
+  latencyMs?: number;
   reasons: string[];
 };
 
@@ -39,6 +41,12 @@ export const DEFAULT_REFRESH_POLICY: RefreshPolicy = {
   maxAgeMs: 15_000,
   minConfidence: 0.65
 };
+
+export const VISUAL_REFRESH_LATENCY_BANDS_MS = {
+  healthy: 10_000,
+  slow: 30_000,
+  degraded: 120_000
+} as const;
 
 const MAX_VISUAL_AGE_MS: Record<MotionState, Record<VisualContextUseCase, number>> = {
   stationary: {
@@ -90,12 +98,22 @@ export function classifyVisualContextUseCase(text: string): VisualContextUseCase
   return 'descriptive';
 }
 
+export function classifyVisualRefreshLatency(latencyMs: number | undefined): LatencyHealthStatus {
+  if (typeof latencyMs !== 'number' || !Number.isFinite(latencyMs)) return 'healthy';
+  if (latencyMs <= VISUAL_REFRESH_LATENCY_BANDS_MS.healthy) return 'healthy';
+  if (latencyMs <= VISUAL_REFRESH_LATENCY_BANDS_MS.slow) return 'slow';
+  if (latencyMs <= VISUAL_REFRESH_LATENCY_BANDS_MS.degraded) return 'degraded';
+  return 'unavailable';
+}
+
 export function evaluateVisualContextFreshness(
   status: ContextStatus | undefined,
   options: { text?: string; useCase?: VisualContextUseCase; policy?: RefreshPolicy } = {}
 ): VisualFreshnessAssessment {
   const useCase = options.useCase ?? classifyVisualContextUseCase(options.text ?? '');
   const motionState = status?.motionState ?? 'unknown';
+  const latencyMs = status?.refreshHealth?.analysisLatencyMs ?? status?.analysisLatencyMs ?? status?.refreshHealth?.latencyMs ?? status?.latencyMs;
+  const latencyHealth = status?.refreshHealth?.status ?? classifyVisualRefreshLatency(latencyMs);
   const maxUsableAgeMs = Math.min(
     MAX_VISUAL_AGE_MS[motionState][useCase],
     options.policy?.maxAgeMs ?? Number.MAX_SAFE_INTEGER
@@ -104,11 +122,11 @@ export function evaluateVisualContextFreshness(
   const reasons: string[] = [];
 
   if (!status?.available) {
-    return { decision: 'refresh', score: 0, useCase, motionState, maxUsableAgeMs, reasons: ['visual context unavailable'] };
+    return { decision: 'refresh', score: 0, useCase, motionState, maxUsableAgeMs, latencyHealth, latencyMs, reasons: ['visual context unavailable'] };
   }
 
   if (status.relevant === false) reasons.push('visual context marked irrelevant');
-  if (status.stability && status.stability !== 'stable') reasons.push(`visual context is ${status.stability}`);
+  if (status.stability === 'transitioning') reasons.push(`visual context is ${status.stability}`);
   if (useCase === 'high-risk') reasons.push('high-risk visual confirmation requires fresh capture');
 
   const ageMs = status.ageMs;
@@ -122,7 +140,20 @@ export function evaluateVisualContextFreshness(
   }
 
   if (reasons.length > 0) {
-    return { decision: 'refresh', score: 0, useCase, motionState, maxUsableAgeMs, ageMs, reasons };
+    if (canDeferRefreshForLatency({ status, useCase, latencyHealth, ageMs, maxUsableAgeMs, reasons })) {
+      return {
+        decision: 'degraded-reuse',
+        score: 0.35,
+        useCase,
+        motionState,
+        maxUsableAgeMs,
+        ageMs,
+        latencyHealth,
+        latencyMs,
+        reasons: [...reasons, `visual refresh path is ${latencyHealth}; avoid immediate refresh churn`]
+      };
+    }
+    return { decision: 'refresh', score: 0, useCase, motionState, maxUsableAgeMs, ageMs, latencyHealth, latencyMs, reasons };
   }
 
   const ageScore = typeof ageMs === 'number' && maxUsableAgeMs > 0 ? Math.max(0, 1 - ageMs / maxUsableAgeMs) : 0.5;
@@ -137,8 +168,31 @@ export function evaluateVisualContextFreshness(
     motionState,
     maxUsableAgeMs,
     ageMs,
+    latencyHealth,
+    latencyMs,
     reasons: score < 0.75 ? ['visual context usable but decaying'] : ['visual context fresh enough to reuse']
   };
+}
+
+function canDeferRefreshForLatency(input: {
+  status: ContextStatus;
+  useCase: VisualContextUseCase;
+  latencyHealth: LatencyHealthStatus;
+  ageMs?: number;
+  maxUsableAgeMs: number;
+  reasons: string[];
+}): boolean {
+  if (input.latencyHealth !== 'degraded' && input.latencyHealth !== 'unavailable') return false;
+  if (input.useCase === 'high-risk' || input.useCase === 'navigation') return false;
+  if (input.status.available !== true || input.status.relevant === false) return false;
+  if (input.status.stability === 'transitioning') return false;
+  if (typeof input.status.confidence === 'number' && input.status.confidence < DEFAULT_REFRESH_POLICY.minConfidence) return false;
+  if (!input.reasons.some((reason) => reason.startsWith('visual context too old'))) return false;
+  if (typeof input.ageMs !== 'number') return false;
+
+  const latencyMs = input.status.refreshHealth?.analysisLatencyMs ?? input.status.analysisLatencyMs ?? input.status.refreshHealth?.latencyMs ?? input.status.latencyMs ?? 0;
+  const degradedAllowanceMs = Math.max(input.maxUsableAgeMs * 2, input.maxUsableAgeMs + latencyMs);
+  return input.ageMs <= degradedAllowanceMs;
 }
 
 export function shouldRefreshContext(

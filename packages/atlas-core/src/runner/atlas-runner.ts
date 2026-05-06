@@ -204,6 +204,7 @@ export function contextStatusFromSession(session: AtlasSessionState): ContextSta
     relevant: Boolean(session.perception.latestImageId),
     latencyMs: session.perception.observationLatencyMs,
     analysisLatencyMs: session.perception.analysisLatencyMs,
+    refreshHealth: session.perception.health?.visualRefresh,
     note: session.perception.notes?.join(' ')
   };
 }

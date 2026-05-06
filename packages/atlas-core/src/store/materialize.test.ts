@@ -59,6 +59,8 @@ test('materializeSession derives freshness from observed time, not availability 
   assert.equal(materialized.perception.freshnessMs, 42000);
   assert.equal(materialized.perception.observationLatencyMs, 41000);
   assert.equal(materialized.perception.analysisLatencyMs, 38000);
+  assert.equal(materialized.perception.health?.visualRefresh?.status, 'degraded');
+  assert.equal(materialized.perception.health?.visualRefresh?.notifyUser, true);
 });
 
 test('materializeSessionCheckpoint resumes after the explicit event cursor', () => {

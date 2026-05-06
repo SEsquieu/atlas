@@ -1,5 +1,6 @@
-import type { AtlasSessionState, Observation, StateUpdate } from '../types.js';
+import type { AtlasSessionState, Observation, StateUpdate, VisualRefreshHealth } from '../types.js';
 import type { AuditEvent } from '../audit/event-log.js';
+import { classifyVisualRefreshLatency } from '../state/context-policy.js';
 
 export function applySessionEvent(state: AtlasSessionState, event: AuditEvent): AtlasSessionState {
   switch (event.type) {
@@ -53,6 +54,7 @@ function applyObservationCaptured(state: AtlasSessionState, event: AuditEvent): 
   const freshnessMs = Number.isFinite(observedAtMs) && Number.isFinite(eventAtMs) ? Math.max(0, eventAtMs - observedAtMs) : 0;
   const observationLatencyMs = observation.telemetry?.latencyMs?.total ?? durationMs(latestObservationAt, latestObservationAvailableAt);
   const analysisLatencyMs = observation.telemetry?.latencyMs?.analysis;
+  const visualRefreshHealth = classifyVisualRefreshHealth({ observationLatencyMs, analysisLatencyMs, at: event.at });
 
   return markEventApplied(
     touch(
@@ -73,7 +75,11 @@ function applyObservationCaptured(state: AtlasSessionState, event: AuditEvent): 
         stability: observation.quality?.motion === true ? 'transitioning' : observation.quality?.motion === false ? 'stable' : state.perception.stability,
         motionState: observation.quality?.motion === true ? 'turning' : observation.quality?.motion === false ? 'stationary' : state.perception.motionState,
         blurScore: observation.quality?.blurScore ?? state.perception.blurScore,
-        motionDetected: observation.quality?.motion ?? state.perception.motionDetected
+        motionDetected: observation.quality?.motion ?? state.perception.motionDetected,
+        health: {
+          ...state.perception.health,
+          visualRefresh: visualRefreshHealth
+        }
       }
       },
       event.at
@@ -91,6 +97,30 @@ function applyStateUpdated(state: AtlasSessionState, event: AuditEvent): AtlasSe
     next = setByPath(next, update.path, update.value) as AtlasSessionState;
   }
   return markEventApplied(touch(next, event.at), event);
+}
+
+function classifyVisualRefreshHealth(input: {
+  observationLatencyMs?: number;
+  analysisLatencyMs?: number;
+  at: string;
+}): VisualRefreshHealth {
+  const latencyMs = input.analysisLatencyMs ?? input.observationLatencyMs;
+  const status = classifyVisualRefreshLatency(latencyMs);
+  return {
+    status,
+    latencyMs: input.observationLatencyMs,
+    analysisLatencyMs: input.analysisLatencyMs,
+    since: input.at,
+    notifyUser: status === 'degraded' || status === 'unavailable',
+    reason:
+      status === 'healthy'
+        ? 'visual refresh latency is within normal range'
+        : status === 'slow'
+          ? 'visual refresh latency is elevated'
+          : status === 'degraded'
+            ? 'visual refresh latency is degraded; prefer stable context reuse over churn'
+            : 'visual refresh path appears unavailable or too slow for normal cadence'
+  };
 }
 
 function durationMs(start: string | undefined, end: string | undefined): number | undefined {

@@ -16,11 +16,20 @@ export function planHeartbeatTick(session: AtlasSessionState, now = Date.now()):
   }
 
   const stale = session.perception.freshnessMs > 30_000;
-  const unstable = session.perception.stability !== 'stable';
+  const unstable = session.perception.stability === 'transitioning';
+  const refreshHealth = session.perception.health?.visualRefresh;
+  const degradedRefresh = refreshHealth?.status === 'degraded' || refreshHealth?.status === 'unavailable';
+  const shouldDeferForLatency = stale && degradedRefresh && session.perception.stability !== 'transitioning';
 
   return {
-    shouldCapture: stale || unstable,
+    shouldCapture: (stale && !shouldDeferForLatency) || unstable,
     shouldCallProvider: false,
-    reason: stale ? 'visual context is stale' : unstable ? 'visual context is unstable' : `visual context fresh at ${now}`
+    reason: shouldDeferForLatency
+      ? `visual context is stale, but refresh is ${refreshHealth?.status}; deferring capture to avoid churn`
+      : stale
+        ? 'visual context is stale'
+        : unstable
+          ? 'visual context is unstable'
+          : `visual context fresh at ${now}`
   };
 }

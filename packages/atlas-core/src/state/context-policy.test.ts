@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   classifyVisualContextUseCase,
+  classifyVisualRefreshLatency,
   evaluateVisualContextFreshness,
   promptLikelyNeedsVisualContext,
   shouldRefreshContext
@@ -18,6 +19,14 @@ test('visual context use-case classifier separates descriptive, navigation, conf
   assert.equal(classifyVisualContextUseCase('Is this the right part?'), 'confirmation');
   assert.equal(classifyVisualContextUseCase('Am I in the right place?'), 'navigation');
   assert.equal(classifyVisualContextUseCase('Which wire should I cut?'), 'high-risk');
+});
+
+test('visual refresh latency classifier returns health bands', () => {
+  assert.equal(classifyVisualRefreshLatency(undefined), 'healthy');
+  assert.equal(classifyVisualRefreshLatency(4_000), 'healthy');
+  assert.equal(classifyVisualRefreshLatency(20_000), 'slow');
+  assert.equal(classifyVisualRefreshLatency(80_000), 'degraded');
+  assert.equal(classifyVisualRefreshLatency(180_000), 'unavailable');
 });
 
 test('refresh policy rejects missing, stale, low-confidence, or unstable context', () => {
@@ -62,6 +71,41 @@ test('visual freshness refreshes confirmation context much sooner while walking'
   assert.equal(assessment.decision, 'refresh');
   assert.equal(assessment.useCase, 'confirmation');
   assert.equal(assessment.maxUsableAgeMs, 5_000);
+});
+
+test('visual freshness degrades to reuse when refresh latency would churn stable context', () => {
+  const assessment = evaluateVisualContextFreshness(
+    {
+      available: true,
+      ageMs: 45_000,
+      confidence: 0.9,
+      stability: 'stable',
+      motionState: 'unknown',
+      analysisLatencyMs: 80_000
+    },
+    { text: 'What am I looking at?' }
+  );
+
+  assert.equal(assessment.decision, 'degraded-reuse');
+  assert.equal(assessment.latencyHealth, 'degraded');
+  assert.ok(assessment.reasons.some((reason) => reason.includes('avoid immediate refresh churn')));
+});
+
+test('visual freshness still refreshes navigation during degraded refresh latency', () => {
+  const assessment = evaluateVisualContextFreshness(
+    {
+      available: true,
+      ageMs: 45_000,
+      confidence: 0.9,
+      stability: 'stable',
+      motionState: 'unknown',
+      analysisLatencyMs: 80_000
+    },
+    { text: 'Am I in the right place?' }
+  );
+
+  assert.equal(assessment.decision, 'refresh');
+  assert.equal(assessment.latencyHealth, 'degraded');
 });
 
 test('visual freshness always refreshes high-risk visual confirmations', () => {
