@@ -54,7 +54,11 @@ To benchmark OpenClaw image-analysis latency against a saved image without Andro
 npm run bench:image-openclaw -- .atlas-cache/images/latest-back.jpg openai-codex/gpt-5.5 5
 ```
 
-The benchmark prints OpenClaw CLI startup timing separately from repeated `openclaw infer image describe` timings.
+The benchmark prints OpenClaw CLI startup timing separately from repeated `openclaw infer image describe` timings. To check whether image calls are locally serialized or overlapping upstream:
+
+```bash
+npm run bench:image-openclaw:concurrent -- .atlas-cache/images/latest-back.jpg openai-codex/gpt-5.5 2
+```
 
 Manual equivalent:
 

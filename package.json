@@ -12,7 +12,8 @@
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "demo:live-android": "node examples/android-openclaw-basic/live-demo.mjs",
-    "bench:image-openclaw": "node examples/android-openclaw-basic/benchmark-image-analysis.mjs"
+    "bench:image-openclaw": "node examples/android-openclaw-basic/benchmark-image-analysis.mjs",
+    "bench:image-openclaw:concurrent": "node examples/android-openclaw-basic/benchmark-image-concurrent.mjs"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
