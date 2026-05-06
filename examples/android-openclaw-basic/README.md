@@ -27,7 +27,7 @@ Expected behavior:
 
 This example now includes command wrappers for the first local live path:
 
-- `bridge-wrapper.mjs` calls `openclaw nodes camera snap`, stages the image into `.atlas-cache/images`, optionally asks Ollama for a visual summary, and prints Android bridge result JSON.
+- `bridge-wrapper.mjs` calls `openclaw nodes camera snap`, stages the image into `.atlas-cache/images`, optionally asks OpenClaw/Codex or Ollama for a visual summary, and prints Android bridge result JSON.
 - `provider-wrapper.mjs` converts a normalized Atlas turn into an `openclaw agent --json` call and prints a normalized provider result.
 - `atlas-live.config.example.json` wires both wrappers into the Atlas CLI.
 
@@ -44,6 +44,6 @@ The example assumes:
 
 - `openclaw` is on PATH.
 - A paired Android node is available to OpenClaw.
-- Ollama has the configured vision model, default `qwen3.5:4b`, if `analysisMode` stays `ollama`.
+- OpenClaw image understanding is configured; the live example defaults to `openai-codex/gpt-5.5` via `analysisMode=openclaw`.
 
 Override wrapper behavior through the config `env` blocks, for example `ATLAS_ANDROID_BRIDGE_NODE`, `ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN`, `ATLAS_ANDROID_BRIDGE_OLLAMA_MODEL`, or `ATLAS_OPENCLAW_AGENT_ID`.

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 
 try {
   const turn = await readJsonInput('ATLAS_PROVIDER_TURN');
@@ -11,7 +12,7 @@ try {
 }
 
 async function runOpenClawAgent(turn) {
-  const openclawBin = firstString(process.env.ATLAS_OPENCLAW_BIN) ?? defaultOpenClawBin();
+  const openclaw = resolveOpenClawInvocation(firstString(process.env.ATLAS_OPENCLAW_BIN));
   const sessionPrefix = firstString(process.env.ATLAS_OPENCLAW_AGENT_SESSION_PREFIX) ?? 'atlas';
   const sessionId = `${sessionPrefix}-${safeSessionId(turn?.session?.sessionId ?? 'session')}`;
   const timeoutSeconds = firstString(process.env.ATLAS_OPENCLAW_AGENT_TIMEOUT_SECONDS) ?? '600';
@@ -23,7 +24,7 @@ async function runOpenClawAgent(turn) {
   if (agentId) args.push('--agent', agentId);
   if (thinking) args.push('--thinking', thinking);
 
-  const output = await runCommand(openclawBin, args, {
+  const output = await runCommand(openclaw.command, [...openclaw.args, ...args], {
     timeoutMs: Number(timeoutSeconds) * 1000 + 5000
   });
 
@@ -82,7 +83,7 @@ async function readJsonInput(envKey) {
 
 async function runCommand(command, args, options = {}) {
   return await new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: shouldUseShell(command) });
     const timeout = options.timeoutMs
       ? setTimeout(() => {
           child.kill();
@@ -121,10 +122,12 @@ function extractOpenClawText(stdout) {
     parsed.message,
     parsed.text,
     parsed.content,
+    parsed.payloads?.[0]?.text,
     parsed.result?.responseText,
     parsed.result?.reply,
     parsed.result?.message,
     parsed.result?.text,
+    parsed.result?.payloads?.[0]?.text,
     parsed.assistant?.text,
     parsed.assistant?.message
   );
@@ -151,8 +154,21 @@ function safeSessionId(value) {
   return String(value).replace(/[^a-zA-Z0-9_.:-]+/g, '-').slice(0, 96) || 'session';
 }
 
-function defaultOpenClawBin() {
-  return process.platform === 'win32' ? 'openclaw.cmd' : 'openclaw';
+function resolveOpenClawInvocation(configuredBin) {
+  if (process.platform === 'win32') {
+    const npmDir = configuredBin && /\.(cmd|bat)$/i.test(configuredBin)
+      ? path.dirname(configuredBin)
+      : path.join(process.env.APPDATA ?? '', 'npm');
+    return {
+      command: process.execPath,
+      args: [path.join(npmDir, 'node_modules', 'openclaw', 'openclaw.mjs')]
+    };
+  }
+  return { command: configuredBin ?? 'openclaw', args: [] };
+}
+
+function shouldUseShell(command) {
+  return process.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
 }
 
 function firstString(...values) {

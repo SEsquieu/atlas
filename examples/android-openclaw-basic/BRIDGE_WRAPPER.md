@@ -91,7 +91,7 @@ This repo includes a concrete wrapper at `examples/android-openclaw-basic/bridge
 - calls `openclaw nodes camera snap`
 - parses `MEDIA:` output or falls back to the OpenClaw temp image directory
 - stages the selected image into `.atlas-cache/images`
-- optionally runs Ollama visual analysis
+- optionally runs OpenClaw/Codex or Ollama visual analysis
 - prints bridge-result JSON to stdout
 
 This is the first live-harness seam: the command can call OpenClaw however the local install supports, while Atlas still sees only normalized device output.

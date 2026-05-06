@@ -20,7 +20,7 @@ async function captureWithOpenClaw(options) {
   const startedAt = Date.now();
   const node = firstString(options.node, process.env.ATLAS_ANDROID_BRIDGE_NODE) ?? 'paired-android-node';
   const facing = firstString(options.facing, process.env.ATLAS_ANDROID_BRIDGE_FACING) ?? 'back';
-  const openclawBin = firstString(process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN) ?? defaultOpenClawBin();
+  const openclaw = resolveOpenClawInvocation(firstString(process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN));
   const tempDir = firstString(process.env.ATLAS_ANDROID_BRIDGE_TEMP_DIR) ?? path.join(os.tmpdir(), 'openclaw');
   const imagesDir = path.resolve(firstString(process.env.ATLAS_ANDROID_BRIDGE_IMAGES_DIR) ?? path.join('.atlas-cache', 'images'));
   const latestFileName = firstString(process.env.ATLAS_ANDROID_BRIDGE_LATEST_FILE_NAME) ?? 'latest';
@@ -31,7 +31,7 @@ async function captureWithOpenClaw(options) {
   appendOptionalArg(helperArgs, '--quality', normalizeQuality(options.quality));
   appendOptionalArg(helperArgs, '--delay-ms', options.delayMs);
 
-  const helper = await runCommand(openclawBin, helperArgs, { timeoutMs: readNumberEnv('ATLAS_ANDROID_BRIDGE_CAPTURE_TIMEOUT_MS') ?? 30000 });
+  const helper = await runCommand(openclaw.command, [...openclaw.args, ...helperArgs], { timeoutMs: readNumberEnv('ATLAS_ANDROID_BRIDGE_CAPTURE_TIMEOUT_MS') ?? 30000 });
   const captureEndedAt = Date.now();
   const helperMedia = await parseMediaPaths(helper.stdout);
   const selectedSource = await resolveFreshSourceImage({ helperMedia, tempDir, startedAt });
@@ -61,6 +61,18 @@ async function captureWithOpenClaw(options) {
     } catch (error) {
       analysisState = `error:${formatError(error)}`;
       analysisText = `Image captured and staged, but Ollama analysis failed: ${formatError(error)}`;
+    }
+  } else if (analysisMode === 'openclaw') {
+    try {
+      analysisText = await describeImageWithOpenClaw({
+        imagePath: staged.archivePath,
+        model: firstString(process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_MODEL) ?? 'openai-codex/gpt-5.5',
+        timeoutMs: readNumberEnv('ATLAS_ANDROID_BRIDGE_ANALYSIS_TIMEOUT_MS') ?? 180000
+      });
+      analysisState = analysisText ? 'ok' : 'empty';
+    } catch (error) {
+      analysisState = `error:${formatError(error)}`;
+      analysisText = `Image captured and staged, but OpenClaw image analysis failed: ${formatError(error)}`;
     }
   }
 
@@ -196,9 +208,21 @@ async function describeImageWithOllama({ imagePath, baseUrl, model, prompt }) {
   return String(json.response ?? '').trim();
 }
 
+async function describeImageWithOpenClaw({ imagePath, model, timeoutMs }) {
+  const openclaw = resolveOpenClawInvocation(firstString(process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN));
+  const args = ['infer', 'image', 'describe', '--file', imagePath, '--model', model, '--json'];
+  const output = await runCommand(openclaw.command, [...openclaw.args, ...args], { timeoutMs });
+  const parsed = JSON.parse(output.stdout.trim());
+  const text = parsed?.outputs?.[0]?.text;
+  if (typeof text !== 'string' || text.trim().length === 0) {
+    throw new Error('OpenClaw image describe returned no text.');
+  }
+  return text.trim();
+}
+
 async function runCommand(command, args, options = {}) {
   return await new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: shouldUseShell(command) });
     const timeout = options.timeoutMs
       ? setTimeout(() => {
           child.kill();
@@ -227,8 +251,21 @@ async function runCommand(command, args, options = {}) {
   });
 }
 
-function defaultOpenClawBin() {
-  return process.platform === 'win32' ? 'openclaw.cmd' : 'openclaw';
+function resolveOpenClawInvocation(configuredBin) {
+  if (process.platform === 'win32') {
+    const npmDir = configuredBin && /\.(cmd|bat)$/i.test(configuredBin)
+      ? path.dirname(configuredBin)
+      : path.join(process.env.APPDATA ?? '', 'npm');
+    return {
+      command: process.execPath,
+      args: [path.join(npmDir, 'node_modules', 'openclaw', 'openclaw.mjs')]
+    };
+  }
+  return { command: configuredBin ?? 'openclaw', args: [] };
+}
+
+function shouldUseShell(command) {
+  return process.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
 }
 
 function firstString(...values) {

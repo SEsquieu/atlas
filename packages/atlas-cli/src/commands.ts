@@ -234,7 +234,7 @@ function createCliAdapterRegistry(sessionConfig: Pick<AtlasSessionConfig, 'provi
   const devices: DeviceAdapter[] = sessionConfig.devices?.length
     ? sessionConfig.devices.map(createDeviceFromBinding)
     : [createFakeCameraDevice({ includeSummary: false })];
-  const analyzers = sessionConfig.analyzers?.length
+  const analyzers = sessionConfig.analyzers
     ? sessionConfig.analyzers.map((id) => createFakeVisualAnalyzer({ id, name: id, summary: 'CLI fake visual analyzer summary.', confidence: 0.9 }))
     : [createFakeVisualAnalyzer({ summary: 'CLI fake visual analyzer summary.', confidence: 0.9 })];
   const provider = createProviderFromBinding(sessionConfig.provider ?? { id: providerId, adapter: providerAdapter });
