@@ -39,6 +39,8 @@ test('runHeartbeatTick captures context silently when active context is missing 
     assert.equal(result.decision.shouldCapture, true);
     assert.equal(result.decision.cadence.mode, 'active-task');
     assert.equal(result.decision.cadence.nextDelayMs, 30_000);
+    assert.equal(result.decision.freshness.hasVisualContext, false);
+    assert.equal(result.decision.freshness.stale, true);
     assert.ok(result.observation);
     assert.equal(result.significance?.level, 'low');
     assert.equal(result.significance?.shouldCallProvider, false);
@@ -114,7 +116,8 @@ test('runHeartbeatTick defers stale stable context when refresh health is degrad
   const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-degraded-'));
   try {
     const store = new FileSessionStore({ rootDir: root });
-    const now = new Date().toISOString();
+    const nowMs = Date.now();
+    const now = new Date(nowMs).toISOString();
     const session = createSessionState({
       sessionId: 'degraded-session',
       now,
@@ -126,11 +129,12 @@ test('runHeartbeatTick defers stale stable context when refresh health is degrad
       status: 'active',
       perception: {
         ...session.perception,
-        latestObservationAt: new Date(Date.now() - 90_000).toISOString(),
+        latestObservationAt: new Date(nowMs - 130_000).toISOString(),
         latestImageId: 'slow-image',
         confidence: 0.9,
-        freshnessMs: 90_000,
+        freshnessMs: 130_000,
         stability: 'stable',
+        motionState: 'stationary',
         health: {
           visualRefresh: {
             status: 'degraded',
@@ -152,6 +156,7 @@ test('runHeartbeatTick defers stale stable context when refresh health is degrad
 
     assert.equal(result.decision.shouldCapture, false);
     assert.equal(result.decision.cadence.mode, 'stable-scene');
+    assert.equal(result.decision.freshness.staleAfterMs, 112_500);
     assert.match(result.decision.reason, /deferring capture/);
     assert.equal(result.observation, undefined);
   } finally {
@@ -193,7 +198,8 @@ test('runHeartbeatTick refreshes when latest observation age is stale even if st
 
     assert.equal(result.decision.shouldCapture, true);
     assert.equal(result.decision.cadence.mode, 'active-task');
-    assert.match(result.decision.reason, /stale/);
+    assert.equal(result.decision.freshness.contextAgeMs, 90_000);
+    assert.match(result.decision.reason, /exceeds stale window/);
     assert.ok(result.observation);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -242,6 +248,73 @@ test('planHeartbeatTick exposes dynamic cadence modes and clamps configured dela
     }
   });
   assert.equal(moving.cadence.mode, 'unstable-scene');
+});
+
+test('planHeartbeatTick ages context against weighted stale windows', () => {
+  const nowMs = Date.now();
+  const base = createSessionState({
+    sessionId: 'weighted-freshness-session',
+    provider: { id: 'fake-provider', adapter: '@atlas/core/testing' }
+  });
+
+  const stationary = planHeartbeatTick(
+    {
+      ...base,
+      status: 'active',
+      perception: {
+        ...base.perception,
+        latestObservationAt: new Date(nowMs - 45_000).toISOString(),
+        latestImageId: 'stationary-image',
+        confidence: 0.9,
+        stability: 'stable',
+        motionState: 'stationary'
+      }
+    },
+    nowMs
+  );
+  assert.equal(stationary.shouldCapture, false);
+  assert.equal(stationary.freshness.contextAgeMs, 45_000);
+  assert.equal(stationary.freshness.staleAfterMs, 56_250);
+  assert.match(stationary.reason, /within stale window/);
+
+  const walking = planHeartbeatTick(
+    {
+      ...base,
+      status: 'active',
+      perception: {
+        ...base.perception,
+        latestObservationAt: new Date(nowMs - 20_000).toISOString(),
+        latestImageId: 'walking-image',
+        confidence: 0.9,
+        stability: 'stable',
+        motionState: 'walking'
+      }
+    },
+    nowMs
+  );
+  assert.equal(walking.shouldCapture, true);
+  assert.equal(walking.freshness.staleAfterMs, 14_850);
+  assert.equal(walking.cadence.mode, 'unstable-scene');
+
+  const highRisk = planHeartbeatTick(
+    {
+      ...base,
+      status: 'active',
+      perception: {
+        ...base.perception,
+        latestObservationAt: new Date(nowMs - 16_000).toISOString(),
+        latestImageId: 'risk-image',
+        confidence: 0.9,
+        stability: 'stable',
+        motionState: 'stationary',
+        relevance: { 'high-risk': 0.9 }
+      }
+    },
+    nowMs
+  );
+  assert.equal(highRisk.shouldCapture, true);
+  assert.equal(highRisk.freshness.staleAfterMs, 14_070);
+  assert.equal(highRisk.cadence.mode, 'high-risk');
 });
 
 test('runHeartbeatTick stays quiet when context is fresh and stable', async () => {

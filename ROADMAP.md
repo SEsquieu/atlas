@@ -180,6 +180,7 @@ Done:
 - Motion-aware visual freshness scoring.
 - User turn planning now carries the freshness assessment and distinguishes reuse/background-refresh/refresh.
 - Heartbeat planning now emits a dynamic cadence decision (`idle`, `stable-scene`, `active-task`, `unstable-scene`, `high-risk`) with a suggested next delay and reason.
+- Heartbeat freshness now uses a weighted stale window and exposes context age/stale window metadata so non-capturing ticks cannot disguise aging context as refreshed context.
 
 Deliverables:
 
@@ -190,6 +191,7 @@ Deliverables:
 - Prompt intent classifier for visual-context-dependent questions.
 - Motion-aware visual context decay policy.
 - Dynamic heartbeat cadence decision hook based on idle/active/stable/unstable/high-risk state. ✅ initial hook landed
+- Weighted heartbeat freshness window using motion/stability/confidence/risk/refresh-health multipliers. ✅ v0 landed
 
 Pass criteria:
 

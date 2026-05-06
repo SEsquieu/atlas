@@ -245,9 +245,16 @@ function summarizeEvent(event: AuditEvent): string | undefined {
   if (event.type === 'provider.requested' && typeof data.provider === 'string') return `provider=${data.provider}`;
   if (event.type === 'provider.responded' && typeof data.provider === 'string') return `provider=${data.provider}`;
   if (event.type === 'heartbeat.tick') {
-    const decision = data.decision as { cadence?: { mode?: string; nextDelayMs?: number }; reason?: string } | undefined;
+    const decision = data.decision as {
+      cadence?: { mode?: string; nextDelayMs?: number };
+      freshness?: { contextAgeMs?: number; staleAfterMs?: number; multiplier?: number; stale?: boolean };
+      reason?: string;
+    } | undefined;
     const cadence = decision?.cadence;
-    return cadence?.mode ? `heartbeat tick (${cadence.mode}, next=${cadence.nextDelayMs ?? '?'}ms)` : 'heartbeat tick';
+    const freshness = decision?.freshness;
+    return cadence?.mode
+      ? `heartbeat tick (${cadence.mode}, next=${cadence.nextDelayMs ?? '?'}ms, age=${formatCompactMs(freshness?.contextAgeMs)}/${formatCompactMs(freshness?.staleAfterMs)}, stale=${freshness?.stale === true})`
+      : 'heartbeat tick';
   }
   if (event.type === 'perception.significance') {
     const decision = data.decision as { level?: string; score?: number; shouldCallProvider?: boolean } | undefined;
@@ -261,4 +268,10 @@ function summarizeEvent(event: AuditEvent): string | undefined {
 
 function formatScore(score: number | undefined): string {
   return typeof score === 'number' && Number.isFinite(score) ? score.toFixed(2) : '?';
+}
+
+function formatCompactMs(value: number | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '?';
+  if (value < 1000) return `${Math.round(value)}ms`;
+  return `${(value / 1000).toFixed(1)}s`;
 }

@@ -4,7 +4,7 @@ Status: first tunable policy, 2026-05-05.
 
 Atlas treats visual context as decaying state, not a permanent fact. A heartbeat capture can be reused for a later user turn only when the physical/session signals say it is still safe enough for the request.
 
-This policy should also feed dynamic heartbeat cadence. Stable, high-confidence context can slow the perception loop; unstable, moving, low-confidence, or high-risk context should speed it up within configured limits.
+This policy also feeds dynamic heartbeat cadence. Stable, high-confidence context can slow the perception loop; unstable, moving, low-confidence, or high-risk context should speed it up within configured limits. Heartbeat freshness uses wall-clock age from `latestObservationAt`; heartbeat checks that skip capture do not bump freshness.
 
 ## Inputs
 
@@ -65,6 +65,25 @@ motionState: 'stationary' | 'handheld-stable' | 'turning' | 'walking' | 'vehicle
 ```
 
 Even rough IMU-derived activity recognition is enough to tune visual decay better than wall-clock age alone.
+
+## Heartbeat weighted freshness
+
+Heartbeat planning starts from a 30s base stale window, then applies simple v0 multipliers before deciding whether to capture:
+
+| Signal | Multiplier |
+| --- | ---: |
+| high-risk relevance | 0.25x |
+| transitioning scene | 0.25x |
+| walking/turning | 0.33x |
+| vehicle | 0.25x |
+| handheld-stable | 0.75x |
+| stationary | 1.25x |
+| stable + high confidence | 1.5x |
+| medium confidence | 0.75x |
+| low confidence | 0.5x |
+| degraded/unavailable refresh while stable | 2x |
+
+The resulting stale window is clamped between 5s and 120s. Heartbeat decisions include `freshness.contextAgeMs`, `freshness.staleAfterMs`, `freshness.multiplier`, `freshness.stale`, and the signals used, so loop journals can prove that context is aging toward stale rather than being refreshed by check-only ticks.
 
 ## Dynamic cadence output
 
