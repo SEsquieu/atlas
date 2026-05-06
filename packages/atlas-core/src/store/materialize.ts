@@ -55,6 +55,11 @@ function applyObservationCaptured(state: AtlasSessionState, event: AuditEvent): 
   const observationLatencyMs = observation.telemetry?.latencyMs?.total ?? durationMs(latestObservationAt, latestObservationAvailableAt);
   const analysisLatencyMs = observation.telemetry?.latencyMs?.analysis;
   const visualRefreshHealth = classifyVisualRefreshHealth({ observationLatencyMs, analysisLatencyMs, at: event.at });
+  const stability = observation.quality?.motion === true ? 'transitioning' : observation.quality?.motion === false ? 'stable' : observation.type === 'image' ? 'stable' : state.perception.stability;
+  const motionState = observation.quality?.motion === true ? 'turning' : observation.quality?.motion === false ? 'stationary' : observation.type === 'image' ? 'handheld-stable' : state.perception.motionState;
+  const notes = observation.type === 'image'
+    ? filterStaleObservationNotes(state.perception.notes)
+    : state.perception.notes;
 
   return markEventApplied(
     touch(
@@ -72,14 +77,15 @@ function applyObservationCaptured(state: AtlasSessionState, event: AuditEvent): 
         freshnessMs,
         observationLatencyMs,
         analysisLatencyMs,
-        stability: observation.quality?.motion === true ? 'transitioning' : observation.quality?.motion === false ? 'stable' : state.perception.stability,
-        motionState: observation.quality?.motion === true ? 'turning' : observation.quality?.motion === false ? 'stationary' : state.perception.motionState,
+        stability,
+        motionState,
         blurScore: observation.quality?.blurScore ?? state.perception.blurScore,
         motionDetected: observation.quality?.motion ?? state.perception.motionDetected,
         health: {
           ...state.perception.health,
           visualRefresh: visualRefreshHealth
-        }
+        },
+        notes
       }
       },
       event.at
@@ -97,6 +103,11 @@ function applyStateUpdated(state: AtlasSessionState, event: AuditEvent): AtlasSe
     next = setByPath(next, update.path, update.value) as AtlasSessionState;
   }
   return markEventApplied(touch(next, event.at), event);
+}
+
+function filterStaleObservationNotes(notes: string[] | undefined): string[] | undefined {
+  const filtered = notes?.filter((note) => !/no observations captured yet/i.test(note));
+  return filtered?.length ? filtered : undefined;
 }
 
 function classifyVisualRefreshHealth(input: {
