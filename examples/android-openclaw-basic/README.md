@@ -38,7 +38,15 @@ npm run build
 npm run demo:live-android -- "What am I looking at?"
 ```
 
-The live demo script creates a temporary session store, runs the full Android/OpenClaw loop, prints the response, and emits a timing report for the turn.
+The live demo script creates a temporary session store, runs the Android/OpenClaw loop, prints the response, and emits a timing report for the turn. By default it runs the full two-pass path: image analysis through OpenClaw/Codex, then an OpenClaw agent provider call.
+
+For latency demos where the second provider pass would only paraphrase the image summary, use the summary fast path:
+
+```bash
+npm run demo:live-android -- --fast "What am I looking at?"
+```
+
+That still captures a real Android image and runs OpenClaw/Codex image analysis, but the provider wrapper returns the latest normalized visual summary directly instead of making a second `openclaw agent` call.
 
 Manual equivalent:
 
@@ -55,4 +63,4 @@ The example assumes:
 - A paired Android node is available to OpenClaw.
 - OpenClaw image understanding is configured; the live example defaults to `openai-codex/gpt-5.5` via `analysisMode=openclaw`.
 
-Override wrapper behavior through the config `env` blocks, for example `ATLAS_ANDROID_BRIDGE_NODE`, `ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN`, `ATLAS_ANDROID_BRIDGE_OLLAMA_MODEL`, or `ATLAS_OPENCLAW_AGENT_ID`.
+Override wrapper behavior through the config `env` blocks, for example `ATLAS_ANDROID_BRIDGE_NODE`, `ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN`, `ATLAS_ANDROID_BRIDGE_OLLAMA_MODEL`, `ATLAS_OPENCLAW_AGENT_ID`, or `ATLAS_OPENCLAW_PROVIDER_MODE=summary`.

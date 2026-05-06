@@ -12,6 +12,9 @@ try {
 }
 
 async function runOpenClawAgent(turn) {
+  const providerMode = firstString(process.env.ATLAS_OPENCLAW_PROVIDER_MODE) ?? 'agent';
+  if (providerMode === 'summary' || providerMode === 'visual-summary') return summarizeLatestObservation(turn);
+
   const openclaw = resolveOpenClawInvocation(firstString(process.env.ATLAS_OPENCLAW_BIN));
   const sessionPrefix = firstString(process.env.ATLAS_OPENCLAW_AGENT_SESSION_PREFIX) ?? 'atlas';
   const sessionId = `${sessionPrefix}-${safeSessionId(turn?.session?.sessionId ?? 'session')}`;
@@ -32,6 +35,33 @@ async function runOpenClawAgent(turn) {
     turnId: turn.turnId,
     responseText: extractOpenClawText(output.stdout) || output.stdout.trim() || undefined
   };
+}
+
+function summarizeLatestObservation(turn) {
+  const observations = Array.isArray(turn?.observations) ? turn.observations : [];
+  const latest = observations.at(-1);
+  const summary = latestObservationSummary(latest);
+  return {
+    turnId: turn?.turnId,
+    responseText: summary
+      ? `I’m seeing: ${summary}`
+      : 'I do not have a usable visual summary yet.'
+  };
+}
+
+function latestObservationSummary(observation) {
+  if (!observation || typeof observation !== 'object') return undefined;
+  const direct = firstString(observation.summary);
+  if (direct) return direct;
+
+  const analyses = Array.isArray(observation.analyses) ? observation.analyses : [];
+  for (const kind of ['visual-summary', 'quality']) {
+    const match = analyses.find((analysis) => analysis?.kind === kind && typeof analysis.summary === 'string' && analysis.summary.length > 0);
+    if (match) return match.summary;
+  }
+
+  const anySummary = analyses.find((analysis) => typeof analysis?.summary === 'string' && analysis.summary.length > 0);
+  return anySummary?.summary;
 }
 
 function buildOpenClawPrompt(turn) {

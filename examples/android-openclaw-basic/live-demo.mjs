@@ -9,14 +9,19 @@ const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const cliPath = path.join(repoRoot, 'packages', 'atlas-cli', 'dist', 'index.js');
 const configPath = path.join(repoRoot, 'examples', 'android-openclaw-basic', 'atlas-live.config.example.json');
 const sessionId = process.env.ATLAS_LIVE_SESSION_ID ?? 'live-android-openclaw';
-const text = process.argv.slice(2).join(' ') || process.env.ATLAS_LIVE_TEXT || 'What am I looking at?';
+const demoArgs = process.argv.slice(2);
+const useSummaryProvider = demoArgs.includes('--fast') || demoArgs.includes('--summary-provider') || process.env.ATLAS_LIVE_PROVIDER_MODE === 'summary';
+const promptArgs = demoArgs.filter((arg) => arg !== '--fast' && arg !== '--summary-provider');
+const text = promptArgs.join(' ') || process.env.ATLAS_LIVE_TEXT || 'What am I looking at?';
 const storeRoot = process.env.ATLAS_STORE || (await mkdtemp(path.join(os.tmpdir(), 'atlas-live-demo-')));
+if (useSummaryProvider) process.env.ATLAS_OPENCLAW_PROVIDER_MODE = 'summary';
 
 try {
   console.log('Atlas live Android/OpenClaw demo');
   console.log(`Session: ${sessionId}`);
   console.log(`Store: ${storeRoot}`);
   console.log(`Prompt: ${text}`);
+  console.log(`Provider mode: ${useSummaryProvider ? 'summary fast path' : 'OpenClaw agent'}`);
   console.log('');
 
   await atlas(['session', 'create', sessionId, '--config', configPath, '--store', storeRoot]);
