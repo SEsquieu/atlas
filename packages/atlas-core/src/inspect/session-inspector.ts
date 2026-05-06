@@ -37,6 +37,17 @@ export type SessionInspection = {
       analysisCount: number;
     };
   };
+  timing?: {
+    userTurnMs?: number;
+    captureRoundTripMs?: number;
+    providerRoundTripMs?: number;
+    bridge?: {
+      totalMs?: number;
+      captureMs?: number;
+      stageMs?: number;
+      analysisMs?: number;
+    };
+  };
   events: {
     count: number;
     byType: Record<string, number>;
@@ -100,6 +111,7 @@ export function summarizeSession(state: AtlasSessionState, events: AuditEvent[],
           }
         : undefined
     },
+    timing: summarizeTiming(state, events),
     events: {
       count: events.length,
       byType: countEventsByType(events),
@@ -112,6 +124,80 @@ export function summarizeSession(state: AtlasSessionState, events: AuditEvent[],
       }))
     }
   };
+}
+
+function summarizeTiming(state: AtlasSessionState, events: AuditEvent[]): SessionInspection['timing'] | undefined {
+  const latestObservation = state.recentObservations.at(-1);
+  const latestTurnStartIndex = findLastEventIndex(events, 'user.utterance');
+  const turnEvents = latestTurnStartIndex >= 0 ? events.slice(latestTurnStartIndex) : events;
+
+  const userTurnMs = durationBetween(findFirstEvent(turnEvents, 'user.utterance'), findFirstEvent(turnEvents, 'agent.speech'));
+  const captureRequested = findFirstEvent(turnEvents, 'tool.requested', (event) => eventDataString(event, 'toolName') === 'capture_current_view');
+  const captureCompleted = captureRequested
+    ? findFirstEventAfter(turnEvents, captureRequested, 'tool.completed', (event) => eventDataString(event, 'toolName') === 'capture_current_view')
+    : undefined;
+  const providerRequested = findFirstEvent(turnEvents, 'provider.requested');
+  const providerResponded = providerRequested ? findFirstEventAfter(turnEvents, providerRequested, 'provider.responded') : undefined;
+  const bridge = extractBridgeTimings(latestObservation?.data);
+
+  const timing = {
+    userTurnMs,
+    captureRoundTripMs: durationBetween(captureRequested, captureCompleted),
+    providerRoundTripMs: durationBetween(providerRequested, providerResponded),
+    bridge
+  };
+
+  return Object.values(timing).some((value) => value !== undefined) ? timing : undefined;
+}
+
+function findLastEventIndex(events: AuditEvent[], type: string): number {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (events[index]?.type === type) return index;
+  }
+  return -1;
+}
+
+function findFirstEvent(events: AuditEvent[], type: string, predicate?: (event: AuditEvent) => boolean): AuditEvent | undefined {
+  return events.find((event) => event.type === type && (!predicate || predicate(event)));
+}
+
+function findFirstEventAfter(events: AuditEvent[], after: AuditEvent, type: string, predicate?: (event: AuditEvent) => boolean): AuditEvent | undefined {
+  const afterIndex = events.findIndex((event) => event.id === after.id);
+  return events.slice(afterIndex + 1).find((event) => event.type === type && (!predicate || predicate(event)));
+}
+
+function eventDataString(event: AuditEvent, key: string): string | undefined {
+  const data = typeof event.data === 'object' && event.data !== null ? (event.data as Record<string, unknown>) : undefined;
+  const value = data?.[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function durationBetween(start: AuditEvent | undefined, end: AuditEvent | undefined): number | undefined {
+  if (!start || !end) return undefined;
+  const startMs = Date.parse(start.at);
+  const endMs = Date.parse(end.at);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return undefined;
+  return Math.max(0, endMs - startMs);
+}
+
+function extractBridgeTimings(data: unknown): NonNullable<SessionInspection['timing']>['bridge'] | undefined {
+  if (typeof data !== 'object' || data === null) return undefined;
+  const bridge = (data as Record<string, unknown>).bridge;
+  if (typeof bridge !== 'object' || bridge === null) return undefined;
+  const timings = (bridge as Record<string, unknown>).timings;
+  if (typeof timings !== 'object' || timings === null) return undefined;
+  const source = timings as Record<string, unknown>;
+  const result = {
+    totalMs: readFiniteNumber(source.totalMs),
+    captureMs: readFiniteNumber(source.captureMs),
+    stageMs: readFiniteNumber(source.stageMs),
+    analysisMs: readFiniteNumber(source.analysisMs)
+  };
+  return Object.values(result).some((value) => value !== undefined) ? result : undefined;
+}
+
+function readFiniteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 function summarizeCheckpoint(state: AtlasSessionState, events: AuditEvent[]): SessionInspection['events']['checkpoint'] {

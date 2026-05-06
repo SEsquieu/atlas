@@ -169,20 +169,24 @@ async function askSessionCommand(sessionId: string, args: string[], options: Cli
   const runnerResult = await createCliRunner(sessionId, store, config.config);
   if ('error' in runnerResult) return fail(runnerResult.error, 1);
 
-  const result = await runnerResult.runner.runUserTurn({ sessionId, text });
-  return ok(
-    JSON.stringify(
-      {
-        sessionId,
-        responseText: result.providerResult.responseText,
-        plan: result.plan,
-        refreshedObservationId: result.refreshedObservation?.id,
-        status: result.session.status
-      },
-      null,
-      2
-    )
-  );
+  try {
+    const result = await runnerResult.runner.runUserTurn({ sessionId, text });
+    return ok(
+      JSON.stringify(
+        {
+          sessionId,
+          responseText: result.providerResult.responseText,
+          plan: result.plan,
+          refreshedObservationId: result.refreshedObservation?.id,
+          status: result.session.status
+        },
+        null,
+        2
+      )
+    );
+  } catch (error) {
+    return fail(`session ask failed: ${formatError(error)}`, 1);
+  }
 }
 
 async function heartbeatSessionCommand(sessionId: string, args: string[], options: CliOptions): Promise<CliResult> {
@@ -192,19 +196,23 @@ async function heartbeatSessionCommand(sessionId: string, args: string[], option
   const runnerResult = await createCliRunner(sessionId, store, config.config);
   if ('error' in runnerResult) return fail(runnerResult.error, 1);
 
-  const result = await runnerResult.runner.runHeartbeatTick({ sessionId });
-  return ok(
-    JSON.stringify(
-      {
-        sessionId,
-        decision: result.decision,
-        observationId: result.observation?.id,
-        status: result.session.status
-      },
-      null,
-      2
-    )
-  );
+  try {
+    const result = await runnerResult.runner.runHeartbeatTick({ sessionId });
+    return ok(
+      JSON.stringify(
+        {
+          sessionId,
+          decision: result.decision,
+          observationId: result.observation?.id,
+          status: result.session.status
+        },
+        null,
+        2
+      )
+    );
+  } catch (error) {
+    return fail(`session heartbeat failed: ${formatError(error)}`, 1);
+  }
 }
 
 async function createCliRunner(sessionId: string, store: FileSessionStore, config?: AtlasConfig): Promise<{ runner: AtlasRunner } | { error: string }> {
@@ -425,6 +433,11 @@ function ok(stdout: string): CliResult {
 
 function fail(stderr: string, exitCode: number): CliResult {
   return { exitCode, stderr };
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 function helpText(): string {

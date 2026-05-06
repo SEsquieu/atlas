@@ -310,6 +310,8 @@ test('session ask can resolve command-backed OpenClaw and Android bridge adapter
     const inspected = JSON.parse(inspect.stdout ?? '{}');
     assert.equal(inspected.observations.latest.deviceId, 'command-android');
     assert.equal(inspected.perception.summary.startsWith('Command bridge saw a live-ish scene'), true);
+    assert.equal(inspected.timing.bridge.totalMs, 12);
+    assert.equal(typeof inspected.timing.captureRoundTripMs, 'number');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

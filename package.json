@@ -10,7 +10,8 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "demo:live-android": "node examples/android-openclaw-basic/live-demo.mjs"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

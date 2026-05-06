@@ -43,6 +43,19 @@ node packages/atlas-cli/dist/index.js sessions list
 node packages/atlas-cli/dist/index.js session inspect <sessionId>
 ```
 
+`session inspect` includes timing when available:
+
+- latest user turn duration
+- Atlas capture round trip
+- Android bridge total/capture/stage/analysis timings
+- provider round trip
+
+The Android/OpenClaw example also provides a one-command live demo:
+
+```bash
+npm run demo:live-android -- "What am I looking at?"
+```
+
 The CLI can now resolve command-backed edge adapters from config:
 
 - `@atlas/device-android/bridge-command`

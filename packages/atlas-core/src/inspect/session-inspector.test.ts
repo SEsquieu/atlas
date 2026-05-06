@@ -31,3 +31,45 @@ test('summarizeSession returns compact state and event counts', () => {
   assert.equal(inspection.events.recent.at(-1)?.summary, 'A fake view.');
   assert.equal(inspection.devices[0]?.id, 'fake-camera');
 });
+
+test('summarizeSession reports latest turn and bridge timings', () => {
+  const session = createSessionState({
+    sessionId: 'timed-session',
+    provider: { id: 'fake-provider', adapter: '@atlas/core/testing' }
+  });
+  const timedSession = {
+    ...session,
+    recentObservations: [
+      {
+        id: 'obs-1',
+        type: 'image' as const,
+        capturedAt: '2026-05-05T14:00:06.000Z',
+        deviceId: 'fake-camera',
+        data: {
+          bridge: {
+            timings: {
+              totalMs: 5000,
+              captureMs: 1200,
+              stageMs: 10,
+              analysisMs: 3790
+            }
+          }
+        }
+      }
+    ]
+  };
+
+  const inspection = summarizeSession(timedSession, [
+    { id: '1', type: 'user.utterance', at: '2026-05-05T14:00:00.000Z', data: { text: 'What am I looking at?' } },
+    { id: '2', type: 'tool.requested', at: '2026-05-05T14:00:01.000Z', data: { toolName: 'capture_current_view' } },
+    { id: '3', type: 'tool.completed', at: '2026-05-05T14:00:06.000Z', data: { toolName: 'capture_current_view' } },
+    { id: '4', type: 'provider.requested', at: '2026-05-05T14:00:06.100Z' },
+    { id: '5', type: 'provider.responded', at: '2026-05-05T14:00:08.600Z' },
+    { id: '6', type: 'agent.speech', at: '2026-05-05T14:00:08.700Z', data: { text: 'A timed view.' } }
+  ]);
+
+  assert.equal(inspection.timing?.userTurnMs, 8700);
+  assert.equal(inspection.timing?.captureRoundTripMs, 5000);
+  assert.equal(inspection.timing?.providerRoundTripMs, 2500);
+  assert.equal(inspection.timing?.bridge?.analysisMs, 3790);
+});

@@ -35,9 +35,18 @@ After building from the Atlas repo root:
 
 ```bash
 npm run build
+npm run demo:live-android -- "What am I looking at?"
+```
+
+The live demo script creates a temporary session store, runs the full Android/OpenClaw loop, prints the response, and emits a timing report for the turn.
+
+Manual equivalent:
+
+```bash
 node packages/atlas-cli/dist/index.js session create live-android-openclaw --config examples/android-openclaw-basic/atlas-live.config.example.json
 node packages/atlas-cli/dist/index.js session start live-android-openclaw
 node packages/atlas-cli/dist/index.js session ask live-android-openclaw --text "What am I looking at?" --config examples/android-openclaw-basic/atlas-live.config.example.json
+node packages/atlas-cli/dist/index.js session inspect live-android-openclaw
 ```
 
 The example assumes:

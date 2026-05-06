@@ -70,6 +70,7 @@ Useful harness commands:
 npm --workspace @atlas/test-harness run demo
 npm --workspace @atlas/test-harness run demo:android-bridge
 npm --workspace @atlas/test-harness run inspect -- demo-session
+npm run demo:live-android -- "What am I looking at?"
 ```
 
 Useful CLI commands after building:
@@ -83,6 +84,8 @@ node packages/atlas-cli/dist/index.js config inspect
 node packages/atlas-cli/dist/index.js sessions list
 node packages/atlas-cli/dist/index.js session inspect demo-session
 ```
+
+`session inspect` includes a timing report when enough events/bridge telemetry are available, including capture round-trip, bridge capture/stage/analysis timings, provider round-trip, and total user-turn latency.
 
 Config-selected command adapters are available for live harness work:
 
