@@ -289,7 +289,10 @@ function createDeviceFromBinding(binding: DeviceBinding): DeviceAdapter {
       inputMode: readOptionalInputMode(config, 'inputMode'),
       facing: readOptionalFacing(config, 'facing'),
       analyze: readOptionalBoolean(config, 'analyze'),
-      analysisMode: readOptionalString(config, 'analysisMode')
+      analysisMode: readOptionalString(config, 'analysisMode'),
+      maxWidth: readOptionalNumber(config, 'maxWidth'),
+      quality: readOptionalQuality(config, 'quality'),
+      delayMs: readOptionalNumber(config, 'delayMs')
     });
   }
 
@@ -344,6 +347,12 @@ function readOptionalInputMode(config: Record<string, unknown>, key: string): 'e
 function readOptionalFacing(config: Record<string, unknown>, key: string): 'back' | 'front' | undefined {
   const value = config[key];
   return value === 'back' || value === 'front' ? value : undefined;
+}
+
+function readOptionalQuality(config: Record<string, unknown>, key: string): 'low' | 'medium' | 'high' | number | undefined {
+  const value = config[key];
+  if (value === 'low' || value === 'medium' || value === 'high') return value;
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 async function loadOptionalConfig(args: string[], options: CliOptions): Promise<{ config?: AtlasConfig } | { error: string }> {

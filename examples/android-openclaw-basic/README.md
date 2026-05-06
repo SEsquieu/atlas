@@ -51,6 +51,14 @@ npm run demo:live-android -- --fast "What am I looking at?"
 
 That still captures a real Android image and runs OpenClaw/Codex image analysis, but the provider wrapper returns the latest normalized visual summary directly instead of making a second `openclaw agent` call.
 
+To demonstrate the Phase 6 ambient-perception shape, run a heartbeat refresh first and then ask against the already-fresh session context:
+
+```bash
+npm run demo:ambient-android -- "What am I looking at?"
+```
+
+This starts the warm image worker, creates/starts the session, runs `atlas session heartbeat` to capture context silently, then runs the summary fast-path ask. The expected UX target is that the visible ask skips capture and returns from cached context in milliseconds while the refresh cost is paid before the user prompt.
+
 To benchmark OpenClaw image-analysis latency against a saved image without Android/camera capture in the loop:
 
 ```bash

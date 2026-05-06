@@ -235,7 +235,13 @@ Pass criteria:
 
 ## Phase 6 — Heartbeat / Perception Loop MVP
 
+Status: started.
+
 Goal: give Atlas ambient physical awareness without babbling or provider spam.
+
+Current slice:
+
+- `npm run demo:ambient-android -- "What am I looking at?"` runs a live heartbeat refresh before the user ask, proving the intended shape: Atlas can pay capture/analysis cost ambiently, then answer from fresh cached visual context without refreshing during the explicit prompt.
 
 Deliverables:
 

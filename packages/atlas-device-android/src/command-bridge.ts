@@ -45,9 +45,9 @@ export function createAndroidBridgeCommandDeviceAdapter(options: AndroidBridgeCo
           facing: options.facing ?? 'back',
           analyze: options.analyze ?? true,
           analysisMode: options.analysisMode ?? 'ollama',
-          maxWidth: requestedOptions?.maxWidth ?? options.maxWidth,
-          quality: requestedOptions?.quality ?? options.quality,
-          delayMs: requestedOptions?.delayMs ?? options.delayMs
+          maxWidth: options.maxWidth ?? requestedOptions?.maxWidth,
+          quality: options.quality ?? requestedOptions?.quality,
+          delayMs: options.delayMs ?? requestedOptions?.delayMs
         });
         return normalizeAndroidBridgeCaptureResult(result, {
           deviceId,

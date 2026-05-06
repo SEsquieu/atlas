@@ -247,10 +247,11 @@ test('session ask can resolve command-backed OpenClaw and Android bridge adapter
       `const options = JSON.parse(process.env.ATLAS_ANDROID_BRIDGE_OPTIONS ?? '{}');\n` +
         `console.log(JSON.stringify({\n` +
         `  mediaRef: 'command://android/current-view.jpg',\n` +
-        `  summary: 'Command bridge saw a live-ish scene for ' + (options.reason ?? 'unknown'),\n` +
+        `  summary: 'Command bridge saw a live-ish scene at maxWidth ' + options.maxWidth + ' quality ' + options.quality + ' delay ' + options.delayMs,\n` +
         `  analysis: { confidence: 0.88, mode: options.analysisMode },\n` +
         `  node: 'command-android-node',\n` +
         `  facing: options.facing,\n` +
+        `  requested: { maxWidth: options.maxWidth, quality: options.quality, delayMs: options.delayMs },\n` +
         `  capturedAt: new Date().toISOString(),\n` +
         `  timings: { totalMs: 12, captureMs: 7, stageMs: 2, analysisMs: 3 }\n` +
         `}));\n`,
@@ -285,6 +286,9 @@ test('session ask can resolve command-backed OpenClaw and Android bridge adapter
                   command: process.execPath,
                   args: [bridgeScript],
                   analysisMode: 'openclaw',
+                  maxWidth: 1024,
+                  quality: 0.7,
+                  delayMs: 0,
                   timeoutMs: 5000
                 }
               }
@@ -309,7 +313,7 @@ test('session ask can resolve command-backed OpenClaw and Android bridge adapter
     const inspect = await runAtlasCli(['session', 'inspect', 'command-runner', '--store', storeRoot], { cwd: root, env: {} });
     const inspected = JSON.parse(inspect.stdout ?? '{}');
     assert.equal(inspected.observations.latest.deviceId, 'command-android');
-    assert.equal(inspected.perception.summary.startsWith('Command bridge saw a live-ish scene'), true);
+    assert.equal(inspected.perception.summary.includes('maxWidth 1024 quality 0.7 delay 0'), true);
     assert.equal(inspected.timing.bridge.totalMs, 12);
     assert.equal(typeof inspected.timing.captureRoundTripMs, 'number');
   } finally {

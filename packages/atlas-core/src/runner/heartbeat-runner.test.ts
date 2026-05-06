@@ -98,6 +98,46 @@ test('runHeartbeatTick defers stale stable context when refresh health is degrad
   }
 });
 
+test('runHeartbeatTick refreshes when latest observation age is stale even if stored freshness was fresh at capture time', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-wall-age-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const nowMs = Date.now();
+    const session = createSessionState({
+      sessionId: 'wall-age-session',
+      now: new Date(nowMs - 90_000).toISOString(),
+      provider: { id: 'fake-provider', adapter: '@atlas/core/testing' }
+    });
+
+    await store.create({
+      ...session,
+      status: 'active',
+      perception: {
+        ...session.perception,
+        latestObservationAt: new Date(nowMs - 90_000).toISOString(),
+        latestImageId: 'old-image',
+        confidence: 0.9,
+        freshnessMs: 0,
+        stability: 'stable'
+      }
+    });
+
+    const runner = new AtlasRunner({
+      store,
+      devices: [createFakeCameraDevice()],
+      provider: createFakeProvider()
+    });
+
+    const result = await runner.runHeartbeatTick({ sessionId: session.sessionId, now: nowMs });
+
+    assert.equal(result.decision.shouldCapture, true);
+    assert.match(result.decision.reason, /stale/);
+    assert.ok(result.observation);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('runHeartbeatTick stays quiet when context is fresh and stable', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-quiet-'));
   try {

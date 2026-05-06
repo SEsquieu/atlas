@@ -108,7 +108,7 @@ export function normalizeAndroidBridgeCaptureResult(
     firstString(details.summary, details.visionSummary, details.description, details.analysisText) ??
     extractAnalysisSummary(details.analysis) ??
     extractContentSummary(result.content);
-  const confidence = extractAnalysisConfidence(details.analysis);
+  const confidence = extractAnalysisConfidence(details.analysis) ?? (summary ? 0.85 : undefined);
   const analysis = summary
     ? createBridgeAnalysis({
         observationIdSeed: mediaRef ?? `${options.deviceId}:${capturedAt}`,

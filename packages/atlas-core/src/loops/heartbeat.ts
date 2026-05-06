@@ -15,7 +15,11 @@ export function planHeartbeatTick(session: AtlasSessionState, now = Date.now()):
     return { shouldCapture: false, shouldCallProvider: false, reason: 'observation is not permitted' };
   }
 
-  const stale = session.perception.freshnessMs > 30_000;
+  const latestObservedAtMs = session.perception.latestObservationAt ? Date.parse(session.perception.latestObservationAt) : undefined;
+  const effectiveFreshnessMs = typeof latestObservedAtMs === 'number' && Number.isFinite(latestObservedAtMs)
+    ? Math.max(0, now - latestObservedAtMs)
+    : session.perception.freshnessMs;
+  const stale = effectiveFreshnessMs > 30_000;
   const unstable = session.perception.stability === 'transitioning';
   const refreshHealth = session.perception.health?.visualRefresh;
   const degradedRefresh = refreshHealth?.status === 'degraded' || refreshHealth?.status === 'unavailable';
