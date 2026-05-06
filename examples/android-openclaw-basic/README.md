@@ -48,6 +48,14 @@ npm run demo:live-android -- --fast "What am I looking at?"
 
 That still captures a real Android image and runs OpenClaw/Codex image analysis, but the provider wrapper returns the latest normalized visual summary directly instead of making a second `openclaw agent` call.
 
+To benchmark OpenClaw image-analysis latency against a saved image without Android/camera capture in the loop:
+
+```bash
+npm run bench:image-openclaw -- .atlas-cache/images/latest-back.jpg openai-codex/gpt-5.5 5
+```
+
+The benchmark prints OpenClaw CLI startup timing separately from repeated `openclaw infer image describe` timings.
+
 Manual equivalent:
 
 ```bash
