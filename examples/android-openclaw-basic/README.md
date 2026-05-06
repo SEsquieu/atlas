@@ -28,6 +28,7 @@ Expected behavior:
 This example now includes command wrappers for the first local live path:
 
 - `bridge-wrapper.mjs` calls `openclaw nodes camera snap`, stages the image into `.atlas-cache/images`, optionally asks OpenClaw/Codex or Ollama for a visual summary, and prints Android bridge result JSON.
+- `openclaw-image-worker.mjs` keeps OpenClaw image understanding warm in one Node process, avoiding the ~20–30s cold provider/model-runtime load on every capture.
 - `provider-wrapper.mjs` converts a normalized Atlas turn into an `openclaw agent --json` call and prints a normalized provider result.
 - `atlas-live.config.example.json` wires both wrappers into the Atlas CLI.
 
@@ -38,7 +39,9 @@ npm run build
 npm run demo:live-android -- "What am I looking at?"
 ```
 
-The live demo script creates a temporary session store, runs the Android/OpenClaw loop, prints the response, and emits a timing report for the turn. By default it runs the full two-pass path: image analysis through OpenClaw/Codex, then an OpenClaw agent provider call.
+The live demo script creates a temporary session store, starts a warm OpenClaw image worker, runs the Android/OpenClaw loop, prints the response, and emits a timing report for the turn. By default it runs the full two-pass path: image analysis through OpenClaw/Codex, then an OpenClaw agent provider call.
+
+Set `ATLAS_LIVE_USE_IMAGE_WORKER=false` to force the older cold CLI path. Set `ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM=false` to start the worker without doing a prewarm image request.
 
 For latency demos where the second provider pass would only paraphrase the image summary, use the summary fast path:
 
@@ -54,7 +57,15 @@ To benchmark OpenClaw image-analysis latency against a saved image without Andro
 npm run bench:image-openclaw -- .atlas-cache/images/latest-back.jpg openai-codex/gpt-5.5 5
 ```
 
-The benchmark prints OpenClaw CLI startup timing separately from repeated `openclaw infer image describe` timings. To check whether image calls are locally serialized or overlapping upstream:
+The benchmark prints OpenClaw CLI startup timing separately from repeated `openclaw infer image describe` timings. Cold CLI calls include OpenClaw provider/model setup, so they can be much slower than warmed in-process image calls. To run the warm worker directly:
+
+```bash
+npm run openclaw:image-worker
+```
+
+The worker prints a JSON ready line with its local URL. Point the bridge wrapper at it with `ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL=http://127.0.0.1:<port>`.
+
+To check whether image calls are locally serialized or overlapping upstream:
 
 ```bash
 npm run bench:image-openclaw:concurrent -- .atlas-cache/images/latest-back.jpg openai-codex/gpt-5.5 2
@@ -75,4 +86,4 @@ The example assumes:
 - A paired Android node is available to OpenClaw.
 - OpenClaw image understanding is configured; the live example defaults to `openai-codex/gpt-5.5` via `analysisMode=openclaw`.
 
-Override wrapper behavior through the config `env` blocks, for example `ATLAS_ANDROID_BRIDGE_NODE`, `ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN`, `ATLAS_ANDROID_BRIDGE_OLLAMA_MODEL`, `ATLAS_OPENCLAW_AGENT_ID`, or `ATLAS_OPENCLAW_PROVIDER_MODE=summary`.
+Override wrapper behavior through the config `env` blocks, for example `ATLAS_ANDROID_BRIDGE_NODE`, `ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN`, `ATLAS_ANDROID_BRIDGE_OLLAMA_MODEL`, `ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL`, `ATLAS_OPENCLAW_AGENT_ID`, or `ATLAS_OPENCLAW_PROVIDER_MODE=summary`.

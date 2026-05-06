@@ -223,6 +223,16 @@ async function describeImageWithOllama({ imagePath, baseUrl, model, prompt }) {
 }
 
 async function describeImageWithOpenClaw({ imagePath, model, timeoutMs }) {
+  const workerUrl = firstString(process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL, process.env.ATLAS_OPENCLAW_IMAGE_WORKER_URL);
+  if (workerUrl) {
+    const response = await postJson(new URL('/describe', workerUrl), { imagePath, model, timeoutMs }, { timeoutMs });
+    const text = response?.text;
+    if (typeof text !== 'string' || text.trim().length === 0) {
+      throw new Error(`OpenClaw image worker returned no text.${response?.error ? ` error: ${response.error}` : ''}`);
+    }
+    return text.trim();
+  }
+
   const openclaw = resolveOpenClawInvocation(firstString(process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN));
   const args = ['infer', 'image', 'describe', '--file', imagePath, '--model', model, '--json'];
   const output = await runCommand(openclaw.command, [...openclaw.args, ...args], { timeoutMs });
@@ -232,6 +242,27 @@ async function describeImageWithOpenClaw({ imagePath, model, timeoutMs }) {
     throw new Error('OpenClaw image describe returned no text.');
   }
   return text.trim();
+}
+
+async function postJson(url, body, options = {}) {
+  const controller = new AbortController();
+  const timeout = options.timeoutMs
+    ? setTimeout(() => controller.abort(new Error(`OpenClaw image worker timed out after ${options.timeoutMs}ms.`)), options.timeoutMs)
+    : undefined;
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    const text = await response.text();
+    const json = text.trim() ? JSON.parse(text) : {};
+    if (!response.ok || json?.ok === false) throw new Error(json?.error ?? `HTTP ${response.status}: ${text}`);
+    return json;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 async function runCommand(command, args, options = {}) {

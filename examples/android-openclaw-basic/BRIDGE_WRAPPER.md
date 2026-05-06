@@ -92,6 +92,23 @@ This repo includes a concrete wrapper at `examples/android-openclaw-basic/bridge
 - parses `MEDIA:` output or falls back to the OpenClaw temp image directory
 - stages the selected image into `.atlas-cache/images`
 - optionally runs OpenClaw/Codex or Ollama visual analysis
+- when `ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL` or `ATLAS_OPENCLAW_IMAGE_WORKER_URL` is set, sends OpenClaw image-analysis requests to a persistent warm worker instead of spawning a fresh `openclaw infer image describe` process
 - prints bridge-result JSON to stdout
 
 This is the first live-harness seam: the command can call OpenClaw however the local install supports, while Atlas still sees only normalized device output.
+
+## Warm OpenClaw image worker
+
+Fresh OpenClaw CLI image calls can spend tens of seconds loading provider/model runtime before actual image inference. `openclaw-image-worker.mjs` keeps that runtime warm:
+
+```bash
+npm run openclaw:image-worker
+```
+
+The worker prints a JSON ready line containing a local URL. Use that URL in the bridge wrapper environment:
+
+```bash
+ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL=http://127.0.0.1:12345
+```
+
+The live demo starts this worker automatically unless `ATLAS_LIVE_USE_IMAGE_WORKER=false` is set. By default it also prewarms with a tiny calibration image; disable that with `ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM=false`.
