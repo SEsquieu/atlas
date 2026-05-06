@@ -27,6 +27,7 @@ export type SessionInspection = {
     analysisLatencyMs?: number;
     visualRefreshHealth?: VisualRefreshHealth;
     stability: string;
+    motionState?: string;
     notes?: string[];
   };
   observations: {
@@ -105,6 +106,7 @@ export function summarizeSession(state: AtlasSessionState, events: AuditEvent[],
       analysisLatencyMs: state.perception.analysisLatencyMs,
       visualRefreshHealth: state.perception.health?.visualRefresh,
       stability: state.perception.stability,
+      motionState: state.perception.motionState,
       notes: state.perception.notes
     },
     observations: {
