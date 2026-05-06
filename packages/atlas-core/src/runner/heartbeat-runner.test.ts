@@ -7,6 +7,7 @@ import { AtlasRunner } from './atlas-runner.js';
 import { createSessionState } from '../session/index.js';
 import { FileSessionStore } from '../store/file-session-store.js';
 import { createFakeCameraDevice, createFakeProvider } from '../testing/fakes.js';
+import type { AuditEvent } from '../audit/event-log.js';
 import { planHeartbeatTick } from '../loops/heartbeat.js';
 
 test('runHeartbeatTick captures context silently when active context is missing or unstable', async () => {
@@ -316,6 +317,100 @@ test('planHeartbeatTick ages context against weighted stale windows', () => {
   assert.equal(highRisk.freshness.staleAfterMs, 14_070);
   assert.equal(highRisk.cadence.mode, 'high-risk');
 });
+
+test('planHeartbeatTick defers stale stable context when capture budget is constrained', () => {
+  const nowMs = Date.now();
+  const base = createSessionState({
+    sessionId: 'budget-session',
+    provider: { id: 'fake-provider', adapter: '@atlas/core/testing' }
+  });
+  const session = {
+    ...base,
+    status: 'active' as const,
+    perception: {
+      ...base.perception,
+      latestObservationAt: new Date(nowMs - 90_000).toISOString(),
+      latestImageId: 'budget-image',
+      confidence: 0.9,
+      stability: 'stable' as const,
+      motionState: 'stationary' as const
+    }
+  };
+
+  const result = planHeartbeatTick(session, nowMs, {
+    captureBudget: {
+      status: 'constrained',
+      capturesLastMinute: 5,
+      capturesLastFiveMinutes: 5,
+      reason: 'capture rate is constrained'
+    }
+  });
+
+  assert.equal(result.shouldCapture, false);
+  assert.equal(result.captureBudget?.status, 'constrained');
+  assert.match(result.reason, /capture budget is constrained/);
+  assert.equal(result.cadence.mode, 'stable-scene');
+});
+
+test('runHeartbeatTick defers stale stable context when recent capture rate is constrained', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-budget-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const nowMs = Date.now();
+    const session = createSessionState({
+      sessionId: 'budget-runner-session',
+      now: new Date(nowMs - 90_000).toISOString(),
+      provider: { id: 'fake-provider', adapter: '@atlas/core/testing' }
+    });
+
+    await store.create({
+      ...session,
+      status: 'active',
+      perception: {
+        ...session.perception,
+        latestObservationAt: new Date(nowMs - 90_000).toISOString(),
+        latestImageId: 'old-image',
+        confidence: 0.9,
+        stability: 'stable',
+        motionState: 'stationary'
+      }
+    });
+
+    for (let index = 0; index < 5; index += 1) {
+      await store.appendEvent(session.sessionId, captureEvent(nowMs - index * 10_000));
+    }
+
+    const runner = new AtlasRunner({
+      store,
+      devices: [createFakeCameraDevice()],
+      provider: createFakeProvider()
+    });
+
+    const result = await runner.runHeartbeatTick({ sessionId: session.sessionId, now: nowMs });
+
+    assert.equal(result.decision.shouldCapture, false);
+    assert.equal(result.decision.captureBudget?.status, 'constrained');
+    assert.equal(result.observation, undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+function captureEvent(atMs: number): Omit<AuditEvent, 'id'> {
+  return {
+    type: 'observation.captured',
+    at: new Date(atMs).toISOString(),
+    data: {
+      observation: {
+        id: crypto.randomUUID(),
+        type: 'image',
+        capturedAt: new Date(atMs).toISOString(),
+        deviceId: 'fake-camera',
+        telemetry: { latencyMs: { total: 1_000 } }
+      }
+    }
+  };
+}
 
 test('runHeartbeatTick stays quiet when context is fresh and stable', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-quiet-'));

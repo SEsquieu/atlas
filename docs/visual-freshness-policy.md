@@ -85,6 +85,21 @@ Heartbeat planning starts from a 30s base stale window, then applies simple v0 m
 
 The resulting stale window is clamped between 5s and 120s. Heartbeat decisions include `freshness.contextAgeMs`, `freshness.staleAfterMs`, `freshness.multiplier`, `freshness.stale`, and the signals used, so loop journals can prove that context is aging toward stale rather than being refreshed by check-only ticks.
 
+## Capture budget / device pressure
+
+Heartbeat planning also receives a v0 Atlas-side capture budget derived from recent `observation.captured` events. This is not real phone battery or thermal telemetry yet; it is a protective placeholder until a native device runtime can report actual health.
+
+Budget states:
+
+| Status | Meaning |
+| --- | --- |
+| `healthy` | low capture pressure |
+| `warm` | capture rate or latency is elevated, but still allowed |
+| `constrained` | non-urgent stale stable refreshes should be deferred when context exists |
+| `cooldown` | heartbeat captures should be deferred for a short cooldown |
+
+The first policy considers captures in the last minute, captures in the last five minutes, and average recent capture latency. High-risk or unstable situations can still override `constrained`; `cooldown` defers heartbeat captures to avoid runaway device pressure.
+
 ## Dynamic cadence output
 
 Heartbeat planning now pairs freshness assessment with a cadence decision:

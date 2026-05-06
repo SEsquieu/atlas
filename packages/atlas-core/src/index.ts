@@ -1,6 +1,7 @@
 export * from './types.js';
 export * from './session/index.js';
 export * from './loops/heartbeat.js';
+export * from './loops/capture-budget.js';
 export * from './loops/user-loop.js';
 export * from './state/context-policy.js';
 export * from './tools/registry.js';

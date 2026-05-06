@@ -1,3 +1,4 @@
+import type { CaptureBudgetDecision } from './capture-budget.js';
 import type { AtlasSessionState, MotionState } from '../types.js';
 
 export type HeartbeatCadenceMode = 'idle' | 'stable-scene' | 'active-task' | 'unstable-scene' | 'high-risk';
@@ -24,6 +25,7 @@ export type HeartbeatDecision = {
   shouldCallProvider: boolean;
   reason: string;
   freshness: HeartbeatFreshnessAssessment;
+  captureBudget?: CaptureBudgetDecision;
   cadence: HeartbeatCadenceDecision;
 };
 
@@ -34,6 +36,7 @@ export type HeartbeatPolicyOptions = {
   baseStaleAfterMs?: number;
   minStaleAfterMs?: number;
   maxStaleAfterMs?: number;
+  captureBudget?: CaptureBudgetDecision;
 };
 
 const DEFAULT_STALE_AFTER_MS = 30_000;
@@ -79,24 +82,32 @@ export function planHeartbeatTick(session: AtlasSessionState, now = Date.now(), 
   const refreshHealth = session.perception.health?.visualRefresh;
   const degradedRefresh = refreshHealth?.status === 'degraded' || refreshHealth?.status === 'unavailable';
   const shouldDeferForLatency = freshness.stale && degradedRefresh && session.perception.stability !== 'transitioning';
+  const initialShouldCapture = (freshness.stale && !shouldDeferForLatency) || unstable;
+  const budgetDeferReason = budgetDeferCaptureReason(options.captureBudget, {
+    shouldCapture: initialShouldCapture,
+    highRisk,
+    unstable,
+    hasVisualContext
+  });
   const cadence = planHeartbeatCadence(
     session,
-    { stale: freshness.stale, unstable, lowConfidence, moving, highRisk, shouldDeferForLatency },
+    { stale: freshness.stale, unstable, lowConfidence, moving, highRisk, shouldDeferForLatency, budgetDeferred: Boolean(budgetDeferReason) },
     options
   );
 
   return {
-    shouldCapture: (freshness.stale && !shouldDeferForLatency) || unstable,
+    shouldCapture: initialShouldCapture && !budgetDeferReason,
     shouldCallProvider: false,
     freshness,
+    captureBudget: options.captureBudget,
     cadence,
-    reason: shouldDeferForLatency
+    reason: budgetDeferReason ?? (shouldDeferForLatency
       ? `visual context is stale (${freshness.reason}), but refresh is ${refreshHealth?.status}; deferring capture to avoid churn`
       : freshness.stale
         ? freshness.reason
         : unstable
           ? 'visual context is unstable'
-          : freshness.reason
+          : freshness.reason)
   };
 }
 
@@ -144,6 +155,7 @@ type CadenceSignals = {
   moving: boolean;
   highRisk: boolean;
   shouldDeferForLatency: boolean;
+  budgetDeferred: boolean;
 };
 
 function planHeartbeatCadence(
@@ -162,6 +174,10 @@ function planHeartbeatCadence(
       signals.lowConfidence ? 'visual confidence is low' : undefined
     ].filter(Boolean);
     return cadenceDecision('unstable-scene', reasons.join('; '), options);
+  }
+
+  if (signals.budgetDeferred) {
+    return cadenceDecision('stable-scene', 'capture budget is constrained, so slow heartbeat to avoid device churn', options);
   }
 
   if (signals.shouldDeferForLatency) {
@@ -228,6 +244,20 @@ function freshnessMultiplier(session: AtlasSessionState, input: { highRisk: bool
   }
 
   return { multiplier: roundMultiplier(multiplier), signals };
+}
+
+function budgetDeferCaptureReason(
+  budget: CaptureBudgetDecision | undefined,
+  signals: { shouldCapture: boolean; highRisk: boolean; unstable: boolean; hasVisualContext: boolean }
+): string | undefined {
+  if (!budget || !signals.shouldCapture) return undefined;
+  if (budget.status === 'cooldown') {
+    return `capture budget is in cooldown (${budget.reason}); deferring heartbeat capture until ${budget.cooldownUntil ?? 'later'}`;
+  }
+  if (budget.status === 'constrained' && !signals.highRisk && !signals.unstable && signals.hasVisualContext) {
+    return `capture budget is constrained (${budget.reason}); reusing stale context instead of adding device pressure`;
+  }
+  return undefined;
 }
 
 function inactiveFreshnessAssessment(

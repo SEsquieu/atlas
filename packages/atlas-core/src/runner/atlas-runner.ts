@@ -7,6 +7,7 @@ import type {
   Observation,
   PerceptionAnalyzerAdapter
 } from '../types.js';
+import { assessCaptureBudget } from '../loops/capture-budget.js';
 import { planHeartbeatTick, type HeartbeatDecision } from '../loops/heartbeat.js';
 import { buildUserSessionTurn, planUserTurn } from '../loops/user-loop.js';
 import { analyzeObservationWithPipeline } from '../perception/analysis.js';
@@ -66,7 +67,9 @@ export class AtlasRunner {
     if (!record) throw new Error(`Session not found: ${input.sessionId}`);
 
     let session = materializeSessionCheckpoint(record.state, record.events);
-    const decision = planHeartbeatTick(session, input.now ?? Date.now());
+    const now = input.now ?? Date.now();
+    const captureBudget = assessCaptureBudget(record.events, now);
+    const decision = planHeartbeatTick(session, now, { captureBudget });
 
     const heartbeatEvent = await this.store.appendEvent(session.sessionId, {
       type: 'heartbeat.tick',

@@ -248,12 +248,13 @@ function summarizeEvent(event: AuditEvent): string | undefined {
     const decision = data.decision as {
       cadence?: { mode?: string; nextDelayMs?: number };
       freshness?: { contextAgeMs?: number; staleAfterMs?: number; multiplier?: number; stale?: boolean };
+      captureBudget?: { status?: string; capturesLastMinute?: number; capturesLastFiveMinutes?: number };
       reason?: string;
     } | undefined;
     const cadence = decision?.cadence;
     const freshness = decision?.freshness;
     return cadence?.mode
-      ? `heartbeat tick (${cadence.mode}, next=${cadence.nextDelayMs ?? '?'}ms, age=${formatCompactMs(freshness?.contextAgeMs)}/${formatCompactMs(freshness?.staleAfterMs)}, stale=${freshness?.stale === true})`
+      ? `heartbeat tick (${cadence.mode}, next=${cadence.nextDelayMs ?? '?'}ms, age=${formatCompactMs(freshness?.contextAgeMs)}/${formatCompactMs(freshness?.staleAfterMs)}, stale=${freshness?.stale === true}, budget=${decision?.captureBudget?.status ?? '?'})`
       : 'heartbeat tick';
   }
   if (event.type === 'perception.significance') {

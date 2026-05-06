@@ -34,6 +34,10 @@ Initial testing target:
    - Run a heartbeat that detects a safety/action cue.
    - Expected: Atlas records `perception.significance` as `actionable`; this is the only v0 level that may pass the future proactive notification hard gate.
 
-7. **Adapter independence**
+7. **Capture budget / device pressure**
+   - Seed recent capture events or run repeated heartbeats.
+   - Expected: heartbeat decisions include `captureBudget`; stale stable context can be deferred when budget is `constrained` or `cooldown`.
+
+8. **Adapter independence**
    - Run the same normalized turn through the OpenClaw adapter and a fake adapter.
    - Expected: Atlas Core behavior remains unchanged.

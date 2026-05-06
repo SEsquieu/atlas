@@ -181,6 +181,7 @@ Done:
 - User turn planning now carries the freshness assessment and distinguishes reuse/background-refresh/refresh.
 - Heartbeat planning now emits a dynamic cadence decision (`idle`, `stable-scene`, `active-task`, `unstable-scene`, `high-risk`) with a suggested next delay and reason.
 - Heartbeat freshness now uses a weighted stale window and exposes context age/stale window metadata so non-capturing ticks cannot disguise aging context as refreshed context.
+- Heartbeat planning now includes an Atlas-side capture budget/device-pressure placeholder derived from recent capture rate and latency.
 
 Deliverables:
 
@@ -258,6 +259,7 @@ Deliverables:
 - Cheap significance gate. ✅ v0 landed
 - Silent-by-default behavior.
 - Human-readable ambient loop summary log for test review. ✅ fake-safe runner landed
+- Capture budget / device health placeholder to avoid runaway camera pressure. ✅ v0 landed
 - Optional provider call for meaningful scene changes.
 - Hard gate for proactive speech.
 

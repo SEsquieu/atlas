@@ -111,6 +111,7 @@ function buildEntry({ tick, wallMs, heartbeat, inspection }) {
       nextDelayMs: heartbeat.decision?.cadence?.nextDelayMs,
       reason: heartbeat.decision?.cadence?.reason
     },
+    captureBudget: heartbeat.decision?.captureBudget,
     significance: significance
       ? {
           level: significance.level,
@@ -241,6 +242,7 @@ function formatMarkdownEntry(entry) {
     `- cadence: ${entry.cadence.mode ?? 'unknown'} next=${formatMs(entry.cadence.nextDelayMs)} (${entry.cadence.reason ?? 'no reason'})`,
     `- freshness: age=${formatMs(entry.freshness?.contextAgeMs)} staleAfter=${formatMs(entry.freshness?.staleAfterMs)} multiplier=${entry.freshness?.multiplier ?? '?'} stale=${entry.freshness?.stale ?? '?'}`,
     entry.freshness?.signals?.length ? `- freshness signals: ${entry.freshness.signals.join(', ')}` : undefined,
+    `- capture budget: ${entry.captureBudget ? `${entry.captureBudget.status} (${entry.captureBudget.capturesLastMinute}/min, ${entry.captureBudget.capturesLastFiveMinutes}/5min${entry.captureBudget.averageCaptureLatencyMs ? `, avg ${formatMs(entry.captureBudget.averageCaptureLatencyMs)}` : ''})` : 'n/a'}`,
     `- capture: ${entry.captured ? `yes (${entry.observationId})` : 'no'}`,
     `- decision: ${entry.decision.reason ?? 'n/a'}`,
     `- significance: ${entry.significance ? `${entry.significance.level} score=${formatScore(entry.significance.score)} provider=${entry.significance.shouldCallProvider} notify=${entry.significance.shouldNotifyUser}` : 'not assessed'}`,
@@ -260,6 +262,7 @@ function printEntry(entry) {
       `tick ${entry.tick}`,
       `cadence=${entry.cadence.mode ?? 'unknown'}`,
       `age=${formatMs(entry.freshness?.contextAgeMs)}/${formatMs(entry.freshness?.staleAfterMs)}`,
+      `budget=${entry.captureBudget?.status ?? 'n/a'}`,
       `capture=${entry.captured ? 'yes' : 'no'}`,
       `significance=${entry.significance?.level ?? 'n/a'}`,
       `wall=${formatMs(entry.wallMs)}`,
