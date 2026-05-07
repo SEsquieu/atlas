@@ -326,6 +326,8 @@ test('planHeartbeatTick ages context against weighted stale windows', () => {
   assert.equal(stationary.freshness.refreshDue, false);
   assert.equal(stationary.freshness.expectedRefreshLatencyMs, 10_000);
   assert.equal(stationary.freshness.safetyMarginMs, 2_000);
+  assert.equal(stationary.cadence.nextDelayMs, 14_250);
+  assert.match(stationary.cadence.reason, /capped to refresh deadline/);
   assert.match(stationary.reason, /within stale window/);
 
   const preemptive = planHeartbeatTick(
@@ -519,7 +521,8 @@ test('runHeartbeatTick stays quiet when context is fresh and stable', async () =
 
     assert.equal(result.decision.shouldCapture, false);
     assert.equal(result.decision.cadence.mode, 'stable-scene');
-    assert.equal(result.decision.cadence.nextDelayMs, 60_000);
+    assert.equal(result.decision.cadence.nextDelayMs <= 33_000, true);
+    assert.match(result.decision.cadence.reason, /capped to refresh deadline/);
     assert.equal(result.observation, undefined);
 
     const events = await store.loadEvents(session.sessionId);

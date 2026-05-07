@@ -103,10 +103,14 @@ export function planHeartbeatTick(session: AtlasSessionState, now = Date.now(), 
     unstable,
     hasVisualContext
   });
-  const cadence = planHeartbeatCadence(
-    session,
-    { stale: freshness.stale, refreshDue: freshness.refreshDue, unstable, lowConfidence, moving, highRisk, shouldDeferForLatency, budgetDeferred: Boolean(budgetDeferReason) },
-    options
+  const cadence = capCadenceToRefreshDeadline(
+    planHeartbeatCadence(
+      session,
+      { stale: freshness.stale, refreshDue: freshness.refreshDue, unstable, lowConfidence, moving, highRisk, shouldDeferForLatency, budgetDeferred: Boolean(budgetDeferReason) },
+      options
+    ),
+    freshness,
+    now
   );
 
   return {
@@ -278,6 +282,21 @@ function freshnessMultiplier(session: AtlasSessionState, input: { highRisk: bool
   }
 
   return { multiplier: roundMultiplier(multiplier), signals };
+}
+
+function capCadenceToRefreshDeadline(
+  cadence: HeartbeatCadenceDecision,
+  freshness: HeartbeatFreshnessAssessment,
+  now: number
+): HeartbeatCadenceDecision {
+  if (freshness.stale || freshness.refreshDue || typeof freshness.refreshDueAtMs !== 'number') return cadence;
+  const msUntilRefreshDue = Math.max(0, Math.ceil(freshness.refreshDueAtMs - now));
+  if (msUntilRefreshDue >= cadence.nextDelayMs) return cadence;
+  return {
+    ...cadence,
+    nextDelayMs: msUntilRefreshDue,
+    reason: `${cadence.reason}; capped to refresh deadline in ${formatMs(msUntilRefreshDue)}`
+  };
 }
 
 function expectedRefreshLatency(session: AtlasSessionState, options: HeartbeatPolicyOptions): number {
