@@ -46,7 +46,7 @@ Provider round trip: 138ms
 
 The run captured a real office scene from the Galaxy S22 Ultra and returned a useful visual summary. A migrated hardcoded Windows user path in the warm OpenClaw image worker was replaced with `APPDATA` / `USERPROFILE` based resolution so the harness is no longer tied to the old `C:\Users\16096` profile.
 
-Product implication: the basic remote development loop is now stable enough to treat Atlas Phase 6 ambient-perception work as the next primary track, rather than spending more time proving connectivity.
+Product implication: the basic remote development loop is now stable enough to treat Atlas Phase 6 ambient-perception work as the next primary track, rather than spending more time proving connectivity. The OpenClaw Android app path should remain a proof adapter for validating loop semantics and timing telemetry; deeper mobile latency, lifecycle, and sensor-control work belongs in a native Atlas mobile adapter instead of Android-app-specific optimization.
 
 ## Ambient Android Demo Checkpoint — 2026-05-07
 

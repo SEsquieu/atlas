@@ -144,8 +144,15 @@ async function askLoop() {
     console.log(result.responseText ?? '(no response text)');
     console.log('');
     console.log(`- refreshed during ask: ${result.refreshedObservationId ?? 'no'}`);
+    const bridge = latestBridgeTiming(inspection);
     console.log(`- user turn: ${formatMs(inspection.timing?.userTurnMs)}`);
     console.log(`- capture round trip: ${formatMs(inspection.timing?.captureRoundTripMs)}`);
+    if (bridge) {
+      console.log(`- bridge total: ${formatMs(bridge.totalMs)}`);
+      console.log(`  - camera/helper capture: ${formatMs(bridge.captureMs)}`);
+      console.log(`  - file stage: ${formatMs(bridge.stageMs)}`);
+      console.log(`  - image analysis: ${formatMs(bridge.analysisMs)}`);
+    }
     console.log(`- provider round trip: ${formatMs(inspection.timing?.providerRoundTripMs)}`);
     console.log(`- latest observation: ${inspection.observations?.latest?.id ?? 'none'}`);
   } finally {
@@ -445,6 +452,18 @@ function countBy(values, keyFn) {
 
 function formatCounts(counts) {
   return [...counts.entries()].map(([key, count]) => `${key}=${count}`).join(', ') || 'none';
+}
+
+function latestBridgeTiming(inspection) {
+  const latest = inspection?.observations?.latest;
+  const timings = latest?.data?.bridge?.timings;
+  const latency = latest?.telemetry?.latencyMs;
+  const totalMs = timings?.totalMs ?? latency?.total;
+  const captureMs = timings?.captureMs ?? latency?.capture;
+  const stageMs = timings?.stageMs ?? latency?.stage;
+  const analysisMs = timings?.analysisMs ?? latency?.analysis;
+  if (![totalMs, captureMs, stageMs, analysisMs].some(isFiniteNumber)) return null;
+  return { totalMs, captureMs, stageMs, analysisMs };
 }
 
 function formatMs(value) {
