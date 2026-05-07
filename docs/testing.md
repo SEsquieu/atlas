@@ -24,6 +24,7 @@ Initial testing target:
    - Run heartbeat ticks in an unchanged scene.
    - Expected: state updates silently; significance is `none` or `low`; no babbling; no unnecessary provider calls.
    - Fake-safe journal command: `npm run demo:ambient-loop -- --ticks 3` writes `ambient-loop.jsonl` and `ambient-loop.md` under the session store.
+   - `npm run loop:android -- summary --store <store> --session ambient-loop-fake` parses the JSONL without touching the phone and prints the freshness scorecard.
    - The journal should show `freshness.age` increasing relative to `freshness.staleAfter`; check-only ticks must not reset freshness.
 
 5. **Meaningful ambient change**

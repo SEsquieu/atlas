@@ -283,6 +283,7 @@ async function printSummary() {
 function printParsedSummary(entries) {
   const captures = entries.filter((entry) => entry.captured).length;
   const reuses = entries.length - captures;
+  const freshness = buildFreshnessScorecard(entries);
   const wallValues = entries.map((entry) => entry.wallMs).filter(isFiniteNumber);
   const capturedWallValues = entries.filter((entry) => entry.captured).map((entry) => entry.wallMs).filter(isFiniteNumber);
   const reuseWallValues = entries.filter((entry) => !entry.captured).map((entry) => entry.wallMs).filter(isFiniteNumber);
@@ -303,6 +304,7 @@ function printParsedSummary(entries) {
   if (analysisValues.length) console.log(`- avg image analysis: ${formatMs(avg(analysisValues))}`);
   console.log(`- significance: ${formatCounts(countBy(entries, (entry) => entry.significance?.level ?? 'none'))}`);
   console.log(`- cadence: ${formatCounts(countBy(entries, (entry) => entry.cadence?.mode ?? 'unknown'))}`);
+  printFreshnessScorecard(freshness);
   console.log(`- latest tick: ${latest?.tick ?? 'n/a'} at ${latest?.at ?? 'n/a'}`);
   console.log(`- latest capture: ${latest?.captured ? 'yes' : 'no'}`);
   console.log(`- latest significance: ${latest?.significance?.level ?? 'none'}${isFiniteNumber(latest?.significance?.score) ? ` score=${latest.significance.score.toFixed(2)}` : ''}`);
@@ -312,6 +314,97 @@ function printParsedSummary(entries) {
   console.log(`- markdown: ${summaryPath}`);
   console.log('');
   console.log(`Latest summary: ${latest?.summary ?? '(none)'}`);
+}
+
+function buildFreshnessScorecard(entries) {
+  const entriesWithFreshness = entries.filter((entry) => entry.freshness);
+  const establishedEntries = entriesWithFreshness.filter((entry) => entry.freshness?.hasVisualContext !== false);
+  const staleEntries = establishedEntries.filter((entry) => entry.freshness?.stale === true);
+  const refreshDueEntries = establishedEntries.filter((entry) => entry.freshness?.refreshDue === true);
+  const staleCaptures = staleEntries.filter((entry) => entry.captured);
+  const refreshDueCaptures = refreshDueEntries.filter((entry) => entry.captured);
+  const preemptiveCaptures = establishedEntries.filter((entry) => entry.captured && entry.freshness?.refreshDue === true && entry.freshness?.stale !== true);
+  const initialCaptures = entriesWithFreshness.filter((entry) => entry.captured && !isFiniteNumber(entry.freshness?.contextAgeMs));
+  const staleReuses = staleEntries.filter((entry) => !entry.captured);
+  const refreshDueReuses = refreshDueEntries.filter((entry) => !entry.captured && entry.freshness?.stale !== true);
+  const freshReuses = establishedEntries.filter((entry) => !entry.captured && entry.freshness?.stale !== true && entry.freshness?.refreshDue !== true);
+  const ageRatios = establishedEntries.map((entry) => freshnessAgeRatio(entry.freshness)).filter(isFiniteNumber);
+  const ageValues = establishedEntries.map((entry) => entry.freshness?.contextAgeMs).filter(isFiniteNumber);
+  const staleWindowValues = establishedEntries.map((entry) => entry.freshness?.staleAfterMs).filter(isFiniteNumber);
+  const refreshDueWindowValues = establishedEntries.map((entry) => freshnessRefreshDueWindowMs(entry.freshness)).filter(isFiniteNumber);
+  const maxAgeEntry = establishedEntries
+    .filter((entry) => isFiniteNumber(entry.freshness?.contextAgeMs))
+    .reduce((best, entry) => (!best || entry.freshness.contextAgeMs > best.freshness.contextAgeMs ? entry : best), null);
+
+  return {
+    ticksWithFreshness: entriesWithFreshness.length,
+    establishedTicks: establishedEntries.length,
+    refreshDueTicks: refreshDueEntries.length,
+    refreshDueCaptures: refreshDueCaptures.length,
+    preemptiveCaptures: preemptiveCaptures.length,
+    staleTicks: staleEntries.length,
+    staleCaptures: staleCaptures.length,
+    staleReuses: staleReuses.length,
+    refreshDueReuses: refreshDueReuses.length,
+    freshReuses: freshReuses.length,
+    initialCaptures: initialCaptures.length,
+    maxAgeMs: max(ageValues),
+    avgAgeMs: avg(ageValues),
+    maxStaleWindowMs: max(staleWindowValues),
+    avgStaleWindowMs: avg(staleWindowValues),
+    minRefreshDueWindowMs: min(refreshDueWindowValues),
+    maxAgeRatio: max(ageRatios),
+    maxAgeTick: maxAgeEntry?.tick,
+    staleEverHit: staleEntries.length > 0,
+    score: freshnessScore({ staleEntries, staleReuses, refreshDueReuses, preemptiveCaptures, ageRatios })
+  };
+}
+
+function printFreshnessScorecard(scorecard) {
+  console.log('');
+  console.log('Freshness scorecard');
+  if (scorecard.ticksWithFreshness === 0) {
+    console.log('- freshness telemetry: unavailable');
+    return;
+  }
+  console.log(`- health: ${scorecard.score}`);
+  if (scorecard.initialCaptures > 0) console.log(`- initial baseline captures: ${scorecard.initialCaptures}`);
+  console.log(`- refresh-due captures: ${scorecard.refreshDueCaptures} (${scorecard.preemptiveCaptures} preemptive before stale)`);
+  console.log(`- stale captures: ${scorecard.staleCaptures}`);
+  console.log(`- stale ever hit: ${scorecard.staleEverHit ? 'yes' : 'no'}`);
+  if (scorecard.staleReuses > 0 || scorecard.refreshDueReuses > 0) {
+    console.log(`- missed freshness opportunities: stale reuses=${scorecard.staleReuses}, refresh-due reuses=${scorecard.refreshDueReuses}`);
+  }
+  console.log(`- reuse while fresh: ${scorecard.freshReuses}`);
+  console.log(`- max age: ${formatMs(scorecard.maxAgeMs)}${scorecard.maxAgeTick ? ` at tick ${scorecard.maxAgeTick}` : ''}`);
+  console.log(`- avg age: ${formatMs(scorecard.avgAgeMs)}`);
+  console.log(`- stale window: avg ${formatMs(scorecard.avgStaleWindowMs)}, max ${formatMs(scorecard.maxStaleWindowMs)}`);
+  console.log(`- earliest refresh-due window: ${formatMs(scorecard.minRefreshDueWindowMs)}`);
+  console.log(`- max age/stale-window: ${formatRatio(scorecard.maxAgeRatio)}`);
+  console.log('');
+}
+
+function freshnessScore({ staleEntries, staleReuses, refreshDueReuses, preemptiveCaptures, ageRatios }) {
+  if (staleReuses.length > 0) return 'degraded — stale context was reused';
+  if (staleEntries.length > 0) return 'fallback — stale was reached before refresh';
+  if (refreshDueReuses.length > 0) return 'watch — refresh was due but skipped';
+  if (preemptiveCaptures.length > 0) return 'good — refreshed before stale';
+  const maxRatio = max(ageRatios);
+  if (isFiniteNumber(maxRatio) && maxRatio >= 0.9) return 'watch — context approached stale window';
+  return 'good — stayed fresh';
+}
+
+function freshnessAgeRatio(freshness) {
+  if (!isFiniteNumber(freshness?.contextAgeMs) || !isFiniteNumber(freshness?.staleAfterMs) || freshness.staleAfterMs <= 0) return undefined;
+  return freshness.contextAgeMs / freshness.staleAfterMs;
+}
+
+function freshnessRefreshDueWindowMs(freshness) {
+  if (isFiniteNumber(freshness?.refreshDueAtMs) && isFiniteNumber(freshness?.staleAtMs)) return freshness.staleAtMs - freshness.refreshDueAtMs;
+  if (isFiniteNumber(freshness?.expectedRefreshLatencyMs) || isFiniteNumber(freshness?.safetyMarginMs)) {
+    return (freshness.expectedRefreshLatencyMs ?? 0) + (freshness.safetyMarginMs ?? 0);
+  }
+  return undefined;
 }
 
 async function readControl() {
@@ -454,6 +547,16 @@ function avg(values) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+function min(values) {
+  if (!values.length) return undefined;
+  return Math.min(...values);
+}
+
+function max(values) {
+  if (!values.length) return undefined;
+  return Math.max(...values);
+}
+
 function countBy(values, keyFn) {
   const counts = new Map();
   for (const value of values) {
@@ -506,6 +609,10 @@ function formatMs(value) {
 }
 
 function formatPercent(value) {
+  return isFiniteNumber(value) ? `${Math.round(value * 100)}%` : 'n/a';
+}
+
+function formatRatio(value) {
   return isFiniteNumber(value) ? `${Math.round(value * 100)}%` : 'n/a';
 }
 
