@@ -69,6 +69,8 @@ interface HeartbeatCadenceDecision {
 
 This pairs with visual freshness. Fresh, stable context slows the loop. Unstable or decaying context speeds it up.
 
+The loop should aim to refresh before context becomes stale. Stale is a hard-deadline/fallback condition; the normal heartbeat trigger should be an earlier refresh deadline based on weighted freshness, recent refresh latency, and a safety margin. Later policy can expose this as a speed-vs-performance mode: speed favors context correctness and low ask latency at the cost of battery/heat, while performance favors device health and accepts more stale-context fallback.
+
 ## 2. Freshness Decay with Context-Aware Multipliers
 
 Freshness should decay according to risk and context, not just wall-clock time.

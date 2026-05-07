@@ -6,6 +6,8 @@ Atlas treats visual context as decaying state, not a permanent fact. A heartbeat
 
 This policy also feeds dynamic heartbeat cadence. Stable, high-confidence context can slow the perception loop; unstable, moving, low-confidence, or high-risk context should speed it up within configured limits. Heartbeat freshness uses wall-clock age from `latestObservationAt`; heartbeat checks that skip capture do not bump freshness.
 
+Important design target: stale should be a degradation/fallback state, not the normal recapture trigger. A healthy ambient loop should refresh preemptively before the current observation crosses its weighted stale deadline, accounting for expected capture/analysis latency plus safety margin.
+
 ## Inputs
 
 The first policy uses:
@@ -40,6 +42,8 @@ The policy returns:
 - `background-refresh`: current context is usable, but decaying; answer may proceed while a refresh is scheduled soon.
 - `degraded-reuse`: context is stale, but the refresh path is degraded; reuse stable context to avoid churn unless the request is high-risk/navigational.
 - `refresh`: capture before answering.
+
+For the heartbeat/perception loop, `background-refresh` should be interpreted more aggressively than it is for a foreground user turn. The ambient loop exists to keep context warm, so “decaying but still usable” often means “refresh now so it is still usable when the user asks.”
 
 Visual refresh health bands:
 
@@ -84,6 +88,38 @@ Heartbeat planning starts from a 30s base stale window, then applies simple v0 m
 | degraded/unavailable refresh while stable | 2x |
 
 The resulting stale window is clamped between 5s and 120s. Heartbeat decisions include `freshness.contextAgeMs`, `freshness.staleAfterMs`, `freshness.multiplier`, `freshness.stale`, and the signals used, so loop journals can prove that context is aging toward stale rather than being refreshed by check-only ticks.
+
+### Preemptive refresh deadline
+
+Current implementation note: the first heartbeat policy captures when context is already stale. That is useful for proving decay, but it is not the intended steady-state behavior.
+
+The intended policy is to derive both a hard stale deadline and an earlier refresh deadline:
+
+```text
+staleAt = observedAt + weightedStaleWindow
+refreshDueAt = staleAt - expectedRefreshLatency - safetyMargin
+```
+
+Where `expectedRefreshLatency` comes from recent adapter telemetry (`observationLatencyMs`, bridge timing, or device status), and `safetyMargin` absorbs jitter. A heartbeat should capture when `now >= refreshDueAt`, not merely when `now >= staleAt`.
+
+Conceptual states:
+
+| State | Meaning | Normal action |
+| --- | --- | --- |
+| `fresh` | context can be reused safely | no capture unless other signals require it |
+| `refresh-due` | context is still usable, but will likely go stale before the next useful answer | capture preemptively |
+| `stale` | context should not be presented as current | answer only with caveat or refresh/fallback |
+
+This is central to the point of adaptive heartbeats/freshness multipliers: the edge device can pay the heat/battery cost when speed/correctness mode demands it, so the user loop rarely discovers stale context at prompt time.
+
+### Speed vs performance mode
+
+Future policy should expose an explicit mode switch:
+
+- **speed / correctness mode**: favors context correctness and low ask latency. Refreshes earlier, accepts more device heat/battery use, and treats `refresh-due` as capture-now.
+- **performance / conservation mode**: favors battery, thermal health, and device longevity. Refreshes later, tolerates more stale-context fallback, and may defer non-urgent refreshes when the device is warm/constrained.
+
+This is not wired yet. For now it is a design note: mode should adjust refresh lead time, safety margins, and capture-budget behavior without hardcoding quirks of any one adapter.
 
 ## Capture budget / device pressure
 

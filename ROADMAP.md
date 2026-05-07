@@ -73,6 +73,8 @@ The demo captured a real Android image from the Galaxy S22 Ultra, stored it as t
 
 Atlas now treats visual context as decaying state. Reuse depends on context age, confidence, stability, inferred motion state, and question use case. The first policy returns `reuse`, `background-refresh`, or `refresh`, with much shorter reuse windows for walking/navigation/confirmation and mandatory refresh for high-risk visual questions.
 
+Design refinement on 2026-05-07: stale should be a degradation/fallback state, not the normal heartbeat recapture trigger. The intended steady-state loop should compute a preemptive refresh deadline before the hard stale deadline using weighted freshness, expected refresh latency, and safety margin. This also becomes a future speed-vs-performance switch: speed favors context correctness and ask latency at the cost of battery/heat; performance favors battery/device health and tolerates more stale fallback.
+
 See `docs/visual-freshness-policy.md` for the initial matrix and examples.
 
 ## Future Architecture Shape — 2026-05-06
