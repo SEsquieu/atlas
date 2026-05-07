@@ -6,4 +6,5 @@ coverage/
 .env.*
 !.env.example
 .atlas-cache/
+.atlas-runs/
 media-cache/

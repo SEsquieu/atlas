@@ -12,10 +12,10 @@ const shouldBuild = args.build !== false;
 const ticks = String(args.ticks ?? 3);
 const maxSleepMs = String(args.maxSleepMs ?? 30_000);
 const session = args.session ?? process.env.ATLAS_AMBIENT_SESSION_ID ?? 'live-android-openclaw';
-const loopArgs = [ambientLoopPath, '--config', configPath, '--session', session, '--ticks', ticks, '--image-worker', args.imageWorker ?? 'auto'];
+const store = args.store ?? process.env.ATLAS_AMBIENT_STORE ?? path.join(repoRoot, '.atlas-runs', 'latest-ambient-android');
+const loopArgs = [ambientLoopPath, '--config', configPath, '--session', session, '--ticks', ticks, '--store', store, '--image-worker', args.imageWorker ?? 'auto'];
 
 if (args.wait !== false) loopArgs.push('--wait', '--max-sleep-ms', maxSleepMs);
-if (args.store) loopArgs.push('--store', args.store);
 if (args.jsonl) loopArgs.push('--jsonl', args.jsonl);
 if (args.markdown) loopArgs.push('--markdown', args.markdown);
 
@@ -24,6 +24,8 @@ try {
   console.log(`Session: ${session}`);
   console.log(`Ticks: ${ticks}`);
   console.log(`Wait: ${args.wait !== false ? `yes (max ${maxSleepMs}ms)` : 'no'}`);
+  console.log(`Store: ${store}`);
+  console.log(`Summary logs: ${path.join(store, session, 'ambient-loop.md')}`);
   console.log(`Build: ${shouldBuild ? 'yes' : 'skipped'}`);
   console.log('Note: this uses the live Android/OpenClaw config and may invoke the phone camera during heartbeat ticks.');
   console.log('');
@@ -103,5 +105,5 @@ function formatMs(value) {
 }
 
 function helpText() {
-  return `Atlas ambient Android/OpenClaw loop smoke\n\nUsage:\n  npm run demo:smoke-ambient-android -- [--ticks 3] [--max-sleep-ms 30000]\n                                      [--no-build] [--no-wait]\n                                      [--session id] [--store path]\n                                      [--image-worker auto|true|false]\n\nRuns the live Android/OpenClaw ambient loop with the example config. Defaults to waiting between ticks using Atlas cadence, capped at 30s.`;
+  return `Atlas ambient Android/OpenClaw loop smoke\n\nUsage:\n  npm run demo:smoke-ambient-android -- [--ticks 3] [--max-sleep-ms 30000]\n                                      [--no-build] [--no-wait]\n                                      [--session id] [--store path]\n                                      [--image-worker auto|true|false]\n\nRuns the live Android/OpenClaw ambient loop with the example config. Defaults to waiting between ticks using Atlas cadence, capped at 30s. Unless --store is provided, logs and session state are written to .atlas-runs/latest-ambient-android/<session>/.`;
 }
