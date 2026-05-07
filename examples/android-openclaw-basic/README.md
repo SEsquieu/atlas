@@ -75,6 +75,17 @@ npm run demo:smoke-ambient-android -- --ticks 3
 
 By default this builds Atlas, starts the warm image worker, runs the live Android/OpenClaw config, waits between ticks using Atlas cadence capped at 30s, and writes `ambient-loop.jsonl` / `ambient-loop.md` under `.atlas-runs/latest-ambient-android/<session>/`. Use `--store <path>` to choose a different log/session location, `--no-build` while iterating, `--max-sleep-ms <ms>` to shorten waits, or `--no-wait` to run ticks back-to-back.
 
+For chat/operator-style loop control over a longer-running ambient loop:
+
+```bash
+npm run loop:android -- start
+npm run loop:android -- status
+npm run loop:android -- summary
+npm run loop:android -- stop
+```
+
+`start` resumes the stable `.atlas-runs/latest-ambient-android` loop location. Use `fresh-start` when you explicitly want a clean loop store. This is still a CLI harness, not a daemon/service, but it gives Vera/OpenClaw a stable command surface for “start the loop” / “stop the loop” chat control.
+
 For a fake-safe ambient loop journal that does **not** invoke the phone camera unless you pass a live Android config:
 
 ```bash

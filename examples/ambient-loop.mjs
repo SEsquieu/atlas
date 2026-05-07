@@ -20,10 +20,12 @@ const markdownPath = args.markdown ?? path.join(logDir, 'ambient-loop.md');
 
 let stopped = false;
 let imageWorker;
-process.on('SIGINT', () => {
+const requestStop = () => {
   stopped = true;
   console.log('\nStopping ambient loop after current tick...');
-});
+};
+process.on('SIGINT', requestStop);
+process.on('SIGTERM', requestStop);
 
 try {
   console.log('Atlas ambient loop runner');
