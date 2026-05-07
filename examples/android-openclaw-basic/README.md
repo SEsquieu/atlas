@@ -59,6 +59,14 @@ npm run demo:ambient-android -- "What am I looking at?"
 
 This starts the warm image worker, creates/starts the session, runs `atlas session heartbeat` to capture context silently, then runs the summary fast-path ask. The expected UX target is that the visible ask skips capture and returns from cached context in milliseconds while the refresh cost is paid before the user prompt.
 
+For a one-command live smoke pass that builds Atlas, runs the live fast ask, then runs the ambient heartbeat + cached ask demo:
+
+```bash
+npm run demo:smoke-android -- "What am I looking at?"
+```
+
+Use `--no-build` to skip the build step when iterating quickly. The smoke pass intentionally invokes the Android camera twice: once for the direct live fast ask and once for the ambient heartbeat refresh.
+
 For a fake-safe ambient loop journal that does **not** invoke the phone camera unless you pass a live Android config:
 
 ```bash
