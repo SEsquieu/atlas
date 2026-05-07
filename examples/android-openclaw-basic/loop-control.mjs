@@ -183,10 +183,10 @@ async function startImageWorker() {
   const workerEnv = {
     ...process.env,
     ATLAS_OPENCLAW_IMAGE_WORKER_MODEL: process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_MODEL ?? 'openai-codex/gpt-5.5',
-    ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM: process.env.ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM ?? '1'
+    ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM: process.env.ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM ?? '0'
   };
   const child = spawn(process.execPath, [imageWorkerPath], { cwd: repoRoot, env: sanitizeEnv(workerEnv), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-  const timeoutMs = Number(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_START_TIMEOUT_MS ?? 120000);
+  const timeoutMs = Number(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_START_TIMEOUT_MS ?? 180000);
   const { url } = await waitForWorkerReady(child, timeoutMs);
   process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL = url;
   process.env.ATLAS_OPENCLAW_IMAGE_WORKER_URL = url;

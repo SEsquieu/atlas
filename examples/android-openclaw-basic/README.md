@@ -73,7 +73,7 @@ For a live multi-tick ambient loop smoke that runs the Android/OpenClaw heartbea
 npm run demo:smoke-ambient-android -- --ticks 3
 ```
 
-By default this builds Atlas, starts the warm image worker, runs the live Android/OpenClaw config, waits between ticks using Atlas cadence capped at 30s, and writes `ambient-loop.jsonl` / `ambient-loop.md` under `.atlas-runs/latest-ambient-android/<session>/`. Use `--store <path>` to choose a different log/session location, `--no-build` while iterating, `--max-sleep-ms <ms>` to shorten waits, or `--no-wait` to run ticks back-to-back.
+By default this builds Atlas, starts the OpenClaw image worker without blocking on prewarm, runs the live Android/OpenClaw config, waits between ticks using Atlas cadence capped at 30s, and writes `ambient-loop.jsonl` / `ambient-loop.md` under `.atlas-runs/latest-ambient-android/<session>/`. Set `ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM=1` only when you intentionally want startup to include a calibration image-analysis call. Use `--store <path>` to choose a different log/session location, `--no-build` while iterating, `--max-sleep-ms <ms>` to shorten waits, or `--no-wait` to run ticks back-to-back.
 
 For chat/operator-style loop control over a longer-running ambient loop:
 
