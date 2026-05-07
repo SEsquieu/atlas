@@ -141,6 +141,7 @@ async function askLoop() {
   try {
     imageWorker = await maybeStartImageWorker();
     if (imageWorker?.url) console.log(`OpenClaw image worker: ${imageWorker.url}`);
+    if (imageWorker?.warm) console.log(`OpenClaw image worker warm: ${formatWarmState(imageWorker.warm)}`);
     const result = await atlasJson(['session', 'ask', session, '--text', text, '--config', configPath, '--store', store]);
     const inspection = await atlasJson(['session', 'inspect', session, '--store', store]);
     console.log(result.responseText ?? '(no response text)');
@@ -180,17 +181,52 @@ function currentImageWorkerUrl() {
 }
 
 async function startImageWorker() {
+  const shouldPrewarm = parseBoolean(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM, false);
   const workerEnv = {
     ...process.env,
     ATLAS_OPENCLAW_IMAGE_WORKER_MODEL: process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_MODEL ?? 'openai-codex/gpt-5.5',
-    ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM: process.env.ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM ?? '0'
+    ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM: '0'
   };
   const child = spawn(process.execPath, [imageWorkerPath], { cwd: repoRoot, env: sanitizeEnv(workerEnv), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   const timeoutMs = Number(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_START_TIMEOUT_MS ?? 180000);
   const { url } = await waitForWorkerReady(child, timeoutMs);
   process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL = url;
   process.env.ATLAS_OPENCLAW_IMAGE_WORKER_URL = url;
-  return { url, stop: () => stopChild(child) };
+  try {
+    const warm = shouldPrewarm ? await warmImageWorker(url, workerEnv) : undefined;
+    return { url, warm, stop: () => stopChild(child) };
+  } catch (error) {
+    stopChild(child);
+    throw error;
+  }
+}
+
+async function warmImageWorker(url, workerEnv) {
+  const timeoutMs = Number(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_WARM_TIMEOUT_MS ?? workerEnv.ATLAS_OPENCLAW_IMAGE_WORKER_TIMEOUT_MS ?? 180000);
+  const response = await postJson(new URL('/warm', url), {
+    model: workerEnv.ATLAS_OPENCLAW_IMAGE_WORKER_MODEL,
+    timeoutMs
+  }, { timeoutMs });
+  return response?.warm;
+}
+
+async function postJson(url, body, options = {}) {
+  const controller = new AbortController();
+  const timeout = options.timeoutMs ? setTimeout(() => controller.abort(new Error(`request timed out after ${options.timeoutMs}ms`)), options.timeoutMs) : undefined;
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    const text = await response.text();
+    const json = text.trim() ? JSON.parse(text) : {};
+    if (!response.ok || json?.ok === false) throw new Error(json?.error ?? `HTTP ${response.status}: ${text}`);
+    return json;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 async function waitForWorkerReady(child, timeoutMs) {
@@ -534,6 +570,13 @@ function readImageWorkerMode(value) {
   throw new Error('--image-worker must be one of: auto, true, false');
 }
 
+function parseBoolean(value, fallback) {
+  if (typeof value !== 'string' || !value.trim()) return fallback;
+  if (/^(1|true|yes|on)$/i.test(value)) return true;
+  if (/^(0|false|no|off)$/i.test(value)) return false;
+  return fallback;
+}
+
 function sanitizeEnv(env) {
   return Object.fromEntries(Object.entries(env).filter((entry) => typeof entry[1] === 'string'));
 }
@@ -614,6 +657,15 @@ function formatPercent(value) {
 
 function formatRatio(value) {
   return isFiniteNumber(value) ? `${Math.round(value * 100)}%` : 'n/a';
+}
+
+function formatWarmState(warm) {
+  if (!warm) return 'n/a';
+  const parts = [warm.status ?? 'unknown'];
+  if (warm.model) parts.push(warm.model);
+  if (isFiniteNumber(warm.durationMs)) parts.push(`in ${formatMs(warm.durationMs)}`);
+  if (warm.error) parts.push(`error=${warm.error}`);
+  return parts.join(' ');
 }
 
 function truncate(value, maxLength) {

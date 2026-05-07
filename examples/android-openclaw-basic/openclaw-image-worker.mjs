@@ -21,22 +21,25 @@ let initPromise;
 let queue = Promise.resolve();
 let requestCount = 0;
 let lastError;
+let warmState = { status: 'idle' };
 
 try {
   logProgress('initializing OpenClaw image runtime');
   await initializeRuntime();
   logProgress('OpenClaw image runtime initialized');
-  if (prewarmEnabled) {
-    logProgress('prewarming OpenClaw image runtime');
-    await prewarmRuntime();
-    logProgress('OpenClaw image runtime prewarm complete');
-  }
   const server = http.createServer(handleRequest);
   await listen(server, port, host);
   const address = server.address();
   const actualPort = typeof address === 'object' && address ? address.port : port;
   const url = `http://${host}:${actualPort}`;
-  process.stdout.write(`${JSON.stringify({ kind: 'atlas.openclaw-image-worker.ready', url, pid: process.pid, prewarmed: prewarmEnabled })}\n`);
+  process.stdout.write(`${JSON.stringify({ kind: 'atlas.openclaw-image-worker.ready', url, pid: process.pid, warm: warmState })}\n`);
+
+  if (prewarmEnabled) {
+    void enqueue(() => warmRuntime()).then(
+      () => logProgress('OpenClaw image runtime prewarm complete'),
+      (error) => logProgress(`OpenClaw image runtime prewarm failed: ${formatError(error)}`)
+    );
+  }
 
   const shutdown = () => server.close(() => process.exit(0));
   process.on('SIGINT', shutdown);
@@ -50,7 +53,14 @@ async function handleRequest(req, res) {
   try {
     if (req.method === 'GET' && req.url === '/health') {
       await initializeRuntime();
-      sendJson(res, 200, { ok: true, requestCount, lastError });
+      sendJson(res, 200, { ok: true, requestCount, lastError, warm: warmState });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/warm') {
+      const body = await readJsonBody(req);
+      const result = await enqueue(() => warmRuntime(body));
+      sendJson(res, 200, result);
       return;
     }
 
@@ -120,14 +130,43 @@ async function describe(body = {}) {
   };
 }
 
-async function prewarmRuntime() {
-  const imagePath = prewarmImage ? path.resolve(prewarmImage) : await ensureTinyPrewarmPng();
+async function warmRuntime(body = {}) {
+  const requestedAt = new Date().toISOString();
+  const modelRef = firstString(body.model, prewarmModel) ?? defaultModel;
+  const imagePath = firstString(body.imagePath, body.filePath, prewarmImage);
+  const resolvedImagePath = imagePath ? path.resolve(imagePath) : await ensureTinyPrewarmPng();
+  const prompt = firstString(body.prompt) ?? 'Briefly describe this calibration image.';
+  const timeoutMs = readNumber(body.timeoutMs) ?? defaultTimeoutMs;
+  const startedAtMs = Date.now();
+  warmState = {
+    status: 'warming',
+    model: modelRef,
+    imagePath: resolvedImagePath,
+    requestedAt,
+    startedAt: new Date(startedAtMs).toISOString()
+  };
+  logProgress(`warming OpenClaw image runtime with ${modelRef}`);
   try {
-    await describe({ imagePath, model: prewarmModel, prompt: 'Briefly describe this calibration image.', timeoutMs: defaultTimeoutMs });
+    const result = await describe({ imagePath: resolvedImagePath, model: modelRef, prompt, timeoutMs });
+    warmState = {
+      ...warmState,
+      status: 'warm',
+      provider: result.provider,
+      resolvedModel: result.model,
+      durationMs: Date.now() - startedAtMs,
+      completedAt: new Date().toISOString()
+    };
+    return { ok: true, warm: warmState };
   } catch (error) {
-    // Prewarm is a latency optimization, not a hard startup dependency.
-    lastError = `prewarm failed: ${formatError(error)}`;
-    process.stderr.write(`${lastError}\n`);
+    lastError = `warm failed: ${formatError(error)}`;
+    warmState = {
+      ...warmState,
+      status: 'failed',
+      error: formatError(error),
+      durationMs: Date.now() - startedAtMs,
+      completedAt: new Date().toISOString()
+    };
+    throw error;
   }
 }
 
