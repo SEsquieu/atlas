@@ -30,8 +30,13 @@ try {
   console.log('Smoke summary:');
   console.log(`- overall: passed in ${formatMs(Date.now() - startedAt)}`);
   for (const result of results) {
+    const summary = summarizeOutput(result.output);
     console.log(`- ${result.name}: ${formatMs(result.durationMs)}`);
-    for (const line of summarizeOutput(result.output)) console.log(`  - ${line}`);
+    if (typeof summary.measuredMs === 'number') {
+      console.log(`  - measured Atlas path: ${formatMs(summary.measuredMs)}`);
+      console.log(`  - harness/setup overhead: ${formatMs(Math.max(0, result.durationMs - summary.measuredMs))}`);
+    }
+    for (const line of summary.lines) console.log(`  - ${line}`);
   }
 } catch (error) {
   console.error('');
@@ -85,6 +90,7 @@ function sanitizeEnv(env) {
 
 function summarizeOutput(output) {
   const lines = [];
+  const measuredMs = measuredAtlasPathMs(output);
   const patterns = [
     /^- Total user turn: .+$/m,
     /^- Atlas capture round trip: .+$/m,
@@ -102,7 +108,31 @@ function summarizeOutput(output) {
     const match = output.match(pattern);
     if (match) lines.push(match[0].replace(/^- /, ''));
   }
-  return lines;
+  return { lines, measuredMs };
+}
+
+function measuredAtlasPathMs(output) {
+  const totalUserTurn = readDuration(output, /^- Total user turn: (.+)$/m);
+  if (typeof totalUserTurn === 'number') return totalUserTurn;
+  const heartbeat = readDuration(output, /^- heartbeat wall time: (.+)$/m);
+  const ask = readDuration(output, /^- ask wall time: (.+)$/m);
+  if (typeof heartbeat === 'number' || typeof ask === 'number') return (heartbeat ?? 0) + (ask ?? 0);
+  return undefined;
+}
+
+function readDuration(output, pattern) {
+  const match = output.match(pattern);
+  if (!match) return undefined;
+  return parseDuration(match[1]);
+}
+
+function parseDuration(raw) {
+  const trimmed = raw.trim();
+  const match = trimmed.match(/^(\d+(?:\.\d+)?)(ms|s)$/);
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) return undefined;
+  return match[2] === 's' ? Math.round(value * 1000) : value;
 }
 
 function parseArgs(values) {
