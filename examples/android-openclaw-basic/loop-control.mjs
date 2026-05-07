@@ -24,6 +24,7 @@ try {
   else if (action === 'stop') await stopLoop();
   else if (action === 'status') await printStatus();
   else if (action === 'summary') await printSummary();
+  else if (action === 'ask') await askLoop();
   else if (action === 'fresh-start') await freshStartLoop();
   else if (action === '--help' || action === '-h' || action === 'help') console.log(helpText());
   else throw new Error(`Unknown action: ${action}\n\n${helpText()}`);
@@ -128,6 +129,29 @@ async function printStatus() {
   console.log(`Recorded ticks: ${tickCount}`);
 }
 
+async function askLoop() {
+  const text = (args.text ?? args._.slice(1).join(' ')).trim();
+  if (!text) throw new Error('Usage: npm run loop:android -- ask "What am I looking at?"');
+  await ensureConfiguredSession();
+  process.env.ATLAS_OPENCLAW_PROVIDER_MODE = args.providerMode ?? 'summary';
+  const result = await atlasJson(['session', 'ask', session, '--text', text, '--config', configPath, '--store', store]);
+  const inspection = await atlasJson(['session', 'inspect', session, '--store', store]);
+  console.log(result.responseText ?? '(no response text)');
+  console.log('');
+  console.log(`- refreshed during ask: ${result.refreshedObservationId ?? 'no'}`);
+  console.log(`- user turn: ${formatMs(inspection.timing?.userTurnMs)}`);
+  console.log(`- capture round trip: ${formatMs(inspection.timing?.captureRoundTripMs)}`);
+  console.log(`- provider round trip: ${formatMs(inspection.timing?.providerRoundTripMs)}`);
+  console.log(`- latest observation: ${inspection.observations?.latest?.id ?? 'none'}`);
+}
+
+async function ensureConfiguredSession() {
+  const inspect = await atlas(['session', 'inspect', session, '--store', store], { allowFailure: true });
+  if (inspect.code === 0) return;
+  await atlas(['session', 'create', session, '--config', configPath, '--store', store]);
+  await atlas(['session', 'start', session, '--store', store]);
+}
+
 async function printSummary() {
   const entries = await readJsonlEntries(jsonlPath);
   if (entries.length === 0) {
@@ -219,15 +243,35 @@ async function stopProcess(pid) {
   process.kill(pid, 'SIGTERM');
 }
 
+async function atlas(cliArgs, options = {}) {
+  const result = await runProcess(process.execPath, [path.join(repoRoot, 'packages', 'atlas-cli', 'dist', 'index.js'), ...cliArgs]);
+  if (result.code !== 0 && !options.allowFailure) {
+    throw new Error([`atlas ${cliArgs.join(' ')} failed with code ${result.code}`, result.stdout, result.stderr].filter(Boolean).join('\n'));
+  }
+  return options.allowFailure ? result : result.stdout;
+}
+
+async function atlasJson(cliArgs) {
+  return JSON.parse(await atlas(cliArgs));
+}
+
 async function run(command, commandArgs) {
+  await runProcess(command, commandArgs, { rejectOnFailure: true });
+}
+
+async function runProcess(command, commandArgs, options = {}) {
   return await new Promise((resolve, reject) => {
     const child = spawn(command, commandArgs, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    let stdout = '';
     let stderr = '';
+    child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => (stdout += chunk));
     child.stderr.on('data', (chunk) => (stderr += chunk));
     child.on('error', reject);
     child.on('close', (code) => {
-      if (code === 0) resolve();
+      const result = { code, stdout, stderr };
+      if (code === 0 || !options.rejectOnFailure) resolve(result);
       else reject(new Error(`${command} ${commandArgs.join(' ')} failed with code ${code}${stderr ? `: ${stderr.trim()}` : ''}`));
     });
   });
@@ -266,6 +310,8 @@ function parseArgs(raw) {
     else if (arg === '--store') parsed.store = raw[++index];
     else if (arg === '--tail') parsed.tail = readPositiveInteger(raw[++index], '--tail');
     else if (arg === '--markdown') parsed.markdown = true;
+    else if (arg === '--text') parsed.text = raw[++index] ?? '';
+    else if (arg === '--provider-mode') parsed.providerMode = raw[++index] ?? '';
     else if (arg === '--image-worker') parsed.imageWorker = readImageWorkerMode(raw[++index]);
     else parsed._.push(arg);
   }
@@ -316,5 +362,5 @@ function formatMs(value) {
 }
 
 function helpText() {
-  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--markdown] [--tail 120]\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. summary parses ambient-loop.jsonl by default; use --markdown to tail ambient-loop.md. Logs are written under <store>/<session>/.`;
+  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--markdown] [--tail 120]\n  npm run loop:android -- ask \"What am I looking at?\"\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. summary parses ambient-loop.jsonl by default; use --markdown to tail ambient-loop.md. ask uses the stable session/store and summary provider mode by default. Logs are written under <store>/<session>/.`;
 }

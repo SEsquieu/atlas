@@ -82,6 +82,7 @@ npm run loop:android -- start
 npm run loop:android -- status
 npm run loop:android -- summary
 npm run loop:android -- summary --markdown --tail 40
+npm run loop:android -- ask "What am I looking at?"
 npm run loop:android -- stop
 ```
 
