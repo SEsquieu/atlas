@@ -48,6 +48,27 @@ The run captured a real office scene from the Galaxy S22 Ultra and returned a us
 
 Product implication: the basic remote development loop is now stable enough to treat Atlas Phase 6 ambient-perception work as the next primary track, rather than spending more time proving connectivity.
 
+## Ambient Android Demo Checkpoint — 2026-05-07
+
+Atlas ambient Android/OpenClaw demo confirmed the intended Phase 6 MVP shape: heartbeat pays the capture/analysis cost before the explicit user prompt, then the user ask answers from cached fresh context without another camera refresh.
+
+```text
+Ambient heartbeat refresh:
+heartbeat wall time: 11.60s
+ambient bridge: 11.31s
+camera/helper capture: 6.01s
+file stage: 9ms
+image analysis: 5.29s
+
+User ask using ambient context:
+ask wall time: 269ms
+refreshed during ask: no
+user turn timing: 109ms
+provider fast path: 105ms
+```
+
+The demo captured a real Android image from the Galaxy S22 Ultra, stored it as the latest observation, and answered the prompt from that ambient observation. This validates the core felt-latency bet even while raw perception wall time is still around eleven seconds: intelligent heartbeating can move that cost out of the explicit user interaction path.
+
 ## Visual Freshness Policy — 2026-05-05
 
 Atlas now treats visual context as decaying state. Reuse depends on context age, confidence, stability, inferred motion state, and question use case. The first policy returns `reuse`, `background-refresh`, or `refresh`, with much shorter reuse windows for walking/navigation/confirmation and mandatory refresh for high-risk visual questions.
