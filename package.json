@@ -14,6 +14,7 @@
     "demo:live-android": "node examples/android-openclaw-basic/live-demo.mjs",
     "demo:ambient-android": "node examples/android-openclaw-basic/ambient-demo.mjs",
     "demo:smoke-android": "node examples/android-openclaw-basic/smoke-demo.mjs",
+    "demo:smoke-ambient-android": "node examples/android-openclaw-basic/ambient-loop-smoke.mjs",
     "demo:ambient-loop": "node examples/ambient-loop.mjs",
     "openclaw:image-worker": "node examples/android-openclaw-basic/openclaw-image-worker.mjs",
     "bench:image-openclaw": "node examples/android-openclaw-basic/benchmark-image-analysis.mjs",

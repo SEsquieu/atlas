@@ -67,6 +67,14 @@ npm run demo:smoke-android -- "What am I looking at?"
 
 Use `--no-build` to skip the build step when iterating quickly. The smoke pass intentionally invokes the Android camera twice: once for the direct live fast ask and once for the ambient heartbeat refresh.
 
+For a live multi-tick ambient loop smoke that runs the Android/OpenClaw heartbeat path over time:
+
+```bash
+npm run demo:smoke-ambient-android -- --ticks 3
+```
+
+By default this builds Atlas, starts the warm image worker, runs the live Android/OpenClaw config, waits between ticks using Atlas cadence capped at 30s, and writes `ambient-loop.jsonl` / `ambient-loop.md` under the session store. Use `--no-build` while iterating, `--max-sleep-ms <ms>` to shorten waits, or `--no-wait` to run ticks back-to-back.
+
 For a fake-safe ambient loop journal that does **not** invoke the phone camera unless you pass a live Android config:
 
 ```bash
