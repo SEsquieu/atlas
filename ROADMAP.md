@@ -1,6 +1,6 @@
 # Atlas Roadmap
 
-Status: Phase 1 core session skeleton closed; Phase 2 Android adapter MVP is now focused on live Android/OpenClaw latency and observation telemetry.
+Status: Phase 1 core session skeleton closed; Phase 2 Android adapter MVP is live against Seth's Android/OpenClaw path; Phase 6 heartbeat/perception loop is the next major focus.
 
 ## Current Position
 
@@ -27,6 +27,26 @@ Product implication: Atlas should optimize for *felt latency*, not only raw late
 Engineering implication: capture latency likely includes OpenClaw CLI/helper/gateway/node overhead, so a native Atlas runtime or persistent device connection should be able to reduce it. Analysis latency is usable now, and should be hidden or amortized through background perception, prewarming, and significance gating.
 
 See `docs/latency-notes.md` for the measurement notes and optimization tracks.
+
+## Live Remote Gateway Checkpoint — 2026-05-07
+
+The dedicated project laptop is now a viable OpenClaw/Vera home base for Atlas development. Android phone, home desktop, and office desktop all reach the gateway cleanly over Tailscale/MagicDNS, and the office desktop Control UI pairing path is confirmed.
+
+Atlas fast Android/OpenClaw demo ran successfully from the laptop environment using the summary fast path:
+
+```text
+Total user turn: 11.59s
+Atlas capture round trip: 11.44s
+Bridge total: 11.30s
+camera/helper capture: 6.82s
+file stage: 9ms
+image analysis: 4.47s
+Provider round trip: 138ms
+```
+
+The run captured a real office scene from the Galaxy S22 Ultra and returned a useful visual summary. A migrated hardcoded Windows user path in the warm OpenClaw image worker was replaced with `APPDATA` / `USERPROFILE` based resolution so the harness is no longer tied to the old `C:\Users\16096` profile.
+
+Product implication: the basic remote development loop is now stable enough to treat Atlas Phase 6 ambient-perception work as the next primary track, rather than spending more time proving connectivity.
 
 ## Visual Freshness Policy — 2026-05-05
 

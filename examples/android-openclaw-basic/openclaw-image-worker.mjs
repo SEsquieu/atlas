@@ -194,7 +194,8 @@ function resolveOpenClawDistDir() {
   if (explicit) return path.resolve(explicit);
   const openclawMjs = firstString(process.env.OPENCLAW_MJS, process.env.ATLAS_OPENCLAW_MJS);
   if (openclawMjs) return path.join(path.dirname(path.resolve(openclawMjs)), 'dist');
-  return 'C:\\Users\\16096\\AppData\\Roaming\\npm\\node_modules\\openclaw\\dist';
+  if (process.env.APPDATA) return path.join(process.env.APPDATA, 'npm', 'node_modules', 'openclaw', 'dist');
+  return path.join(process.env.USERPROFILE ?? process.cwd(), 'AppData', 'Roaming', 'npm', 'node_modules', 'openclaw', 'dist');
 }
 
 function listen(server, requestedPort, requestedHost) {
