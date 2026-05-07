@@ -16,6 +16,11 @@ export type HeartbeatFreshnessAssessment = {
   staleAfterMs: number;
   multiplier: number;
   stale: boolean;
+  refreshDue: boolean;
+  staleAtMs?: number;
+  refreshDueAtMs?: number;
+  expectedRefreshLatencyMs: number;
+  safetyMarginMs: number;
   reason: string;
   signals: string[];
 };
@@ -36,6 +41,10 @@ export type HeartbeatPolicyOptions = {
   baseStaleAfterMs?: number;
   minStaleAfterMs?: number;
   maxStaleAfterMs?: number;
+  expectedRefreshLatencyMs?: number;
+  minExpectedRefreshLatencyMs?: number;
+  maxExpectedRefreshLatencyMs?: number;
+  refreshSafetyMarginMs?: number;
   captureBudget?: CaptureBudgetDecision;
 };
 
@@ -49,6 +58,10 @@ const DEFAULT_CADENCE_MS: Record<HeartbeatCadenceMode, number> = {
   'unstable-scene': 10_000,
   'high-risk': 5_000
 };
+const DEFAULT_EXPECTED_REFRESH_LATENCY_MS = 10_000;
+const DEFAULT_MIN_EXPECTED_REFRESH_LATENCY_MS = 1_000;
+const DEFAULT_MAX_EXPECTED_REFRESH_LATENCY_MS = 30_000;
+const DEFAULT_REFRESH_SAFETY_MARGIN_MS = 2_000;
 
 const UNSTABLE_MOTION_STATES = new Set<MotionState>(['turning', 'walking', 'vehicle']);
 
@@ -81,8 +94,9 @@ export function planHeartbeatTick(session: AtlasSessionState, now = Date.now(), 
   const moving = session.perception.motionState ? UNSTABLE_MOTION_STATES.has(session.perception.motionState) : false;
   const refreshHealth = session.perception.health?.visualRefresh;
   const degradedRefresh = refreshHealth?.status === 'degraded' || refreshHealth?.status === 'unavailable';
-  const shouldDeferForLatency = freshness.stale && degradedRefresh && session.perception.stability !== 'transitioning';
-  const initialShouldCapture = (freshness.stale && !shouldDeferForLatency) || unstable;
+  const needsRefresh = freshness.stale || freshness.refreshDue;
+  const shouldDeferForLatency = needsRefresh && degradedRefresh && session.perception.stability !== 'transitioning';
+  const initialShouldCapture = (needsRefresh && !shouldDeferForLatency) || unstable;
   const budgetDeferReason = budgetDeferCaptureReason(options.captureBudget, {
     shouldCapture: initialShouldCapture,
     highRisk,
@@ -91,7 +105,7 @@ export function planHeartbeatTick(session: AtlasSessionState, now = Date.now(), 
   });
   const cadence = planHeartbeatCadence(
     session,
-    { stale: freshness.stale, unstable, lowConfidence, moving, highRisk, shouldDeferForLatency, budgetDeferred: Boolean(budgetDeferReason) },
+    { stale: freshness.stale, refreshDue: freshness.refreshDue, unstable, lowConfidence, moving, highRisk, shouldDeferForLatency, budgetDeferred: Boolean(budgetDeferReason) },
     options
   );
 
@@ -102,8 +116,8 @@ export function planHeartbeatTick(session: AtlasSessionState, now = Date.now(), 
     captureBudget: options.captureBudget,
     cadence,
     reason: budgetDeferReason ?? (shouldDeferForLatency
-      ? `visual context is stale (${freshness.reason}), but refresh is ${refreshHealth?.status}; deferring capture to avoid churn`
-      : freshness.stale
+      ? `visual context needs refresh (${freshness.reason}), but refresh is ${refreshHealth?.status}; deferring capture to avoid churn`
+      : freshness.stale || freshness.refreshDue
         ? freshness.reason
         : unstable
           ? 'visual context is unstable'
@@ -128,7 +142,15 @@ export function assessHeartbeatFreshness(
     ? freshnessMultiplier(session, { highRisk: input.highRisk === true })
     : { multiplier: 1, signals: [] };
   const staleAfterMs = clampStaleAfter(baseStaleAfterMs * multiplier, options);
+  const expectedRefreshLatencyMs = expectedRefreshLatency(session, options);
+  const safetyMarginMs = finiteOrUndefined(options.refreshSafetyMarginMs) ?? DEFAULT_REFRESH_SAFETY_MARGIN_MS;
   const stale = !hasVisualContext || contextAgeMs === undefined || contextAgeMs > staleAfterMs;
+  const staleAtMs = hasVisualContext && typeof latestObservedAtMs === 'number' && Number.isFinite(latestObservedAtMs)
+    ? latestObservedAtMs + staleAfterMs
+    : undefined;
+  const refreshLeadMs = Math.max(0, expectedRefreshLatencyMs + Math.max(0, safetyMarginMs));
+  const refreshDueAtMs = typeof staleAtMs === 'number' ? Math.max(latestObservedAtMs ?? 0, staleAtMs - refreshLeadMs) : undefined;
+  const refreshDue = hasVisualContext && !stale && typeof refreshDueAtMs === 'number' && now >= refreshDueAtMs;
 
   return {
     hasVisualContext,
@@ -137,6 +159,11 @@ export function assessHeartbeatFreshness(
     staleAfterMs,
     multiplier,
     stale,
+    refreshDue,
+    staleAtMs,
+    refreshDueAtMs,
+    expectedRefreshLatencyMs,
+    safetyMarginMs,
     signals,
     reason: !hasVisualContext
       ? 'no visual context is available yet'
@@ -144,12 +171,15 @@ export function assessHeartbeatFreshness(
         ? 'visual context age is unknown'
         : stale
           ? `visual context age ${formatMs(contextAgeMs)} exceeds stale window ${formatMs(staleAfterMs)}`
-          : `visual context age ${formatMs(contextAgeMs)} is within stale window ${formatMs(staleAfterMs)}`
+          : refreshDue
+            ? `visual context age ${formatMs(contextAgeMs)} is within stale window ${formatMs(staleAfterMs)} but refresh is due before stale deadline`
+            : `visual context age ${formatMs(contextAgeMs)} is within stale window ${formatMs(staleAfterMs)}`
   };
 }
 
 type CadenceSignals = {
   stale: boolean;
+  refreshDue: boolean;
   unstable: boolean;
   lowConfidence: boolean;
   moving: boolean;
@@ -184,8 +214,12 @@ function planHeartbeatCadence(
     return cadenceDecision('stable-scene', 'refresh path is degraded, so slow heartbeat to avoid churn', options);
   }
 
-  if (signals.stale || !session.perception.latestImageId) {
-    return cadenceDecision('active-task', signals.stale ? 'visual context is stale' : 'no visual context is available yet', options);
+  if (signals.stale || signals.refreshDue || !session.perception.latestImageId) {
+    return cadenceDecision(
+      'active-task',
+      signals.stale ? 'visual context is stale' : signals.refreshDue ? 'visual context refresh is due before stale deadline' : 'no visual context is available yet',
+      options
+    );
   }
 
   return cadenceDecision('stable-scene', 'scene is stable with reusable visual context', options);
@@ -246,6 +280,17 @@ function freshnessMultiplier(session: AtlasSessionState, input: { highRisk: bool
   return { multiplier: roundMultiplier(multiplier), signals };
 }
 
+function expectedRefreshLatency(session: AtlasSessionState, options: HeartbeatPolicyOptions): number {
+  const configured = finiteOrUndefined(options.expectedRefreshLatencyMs);
+  const observed = finiteOrUndefined(session.perception.observationLatencyMs);
+  const refreshHealthLatency = finiteOrUndefined(session.perception.health?.visualRefresh?.latencyMs);
+  const analysisLatency = finiteOrUndefined(session.perception.analysisLatencyMs) ?? finiteOrUndefined(session.perception.health?.visualRefresh?.analysisLatencyMs);
+  const raw = configured ?? observed ?? refreshHealthLatency ?? analysisLatency ?? DEFAULT_EXPECTED_REFRESH_LATENCY_MS;
+  const min = finiteOrUndefined(options.minExpectedRefreshLatencyMs) ?? DEFAULT_MIN_EXPECTED_REFRESH_LATENCY_MS;
+  const max = finiteOrUndefined(options.maxExpectedRefreshLatencyMs) ?? DEFAULT_MAX_EXPECTED_REFRESH_LATENCY_MS;
+  return Math.min(Math.max(raw, min), max);
+}
+
 function budgetDeferCaptureReason(
   budget: CaptureBudgetDecision | undefined,
   signals: { shouldCapture: boolean; highRisk: boolean; unstable: boolean; hasVisualContext: boolean }
@@ -274,6 +319,9 @@ function inactiveFreshnessAssessment(
     staleAfterMs,
     multiplier: 1,
     stale,
+    refreshDue: false,
+    expectedRefreshLatencyMs: expectedRefreshLatency(session, options),
+    safetyMarginMs: finiteOrUndefined(options.refreshSafetyMarginMs) ?? DEFAULT_REFRESH_SAFETY_MARGIN_MS,
     reason: 'heartbeat freshness was not assessed because the heartbeat is inactive',
     signals: []
   };

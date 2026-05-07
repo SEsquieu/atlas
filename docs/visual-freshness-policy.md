@@ -91,16 +91,14 @@ The resulting stale window is clamped between 5s and 120s. Heartbeat decisions i
 
 ### Preemptive refresh deadline
 
-Current implementation note: the first heartbeat policy captures when context is already stale. That is useful for proving decay, but it is not the intended steady-state behavior.
-
-The intended policy is to derive both a hard stale deadline and an earlier refresh deadline:
+The heartbeat policy derives both a hard stale deadline and an earlier refresh deadline:
 
 ```text
 staleAt = observedAt + weightedStaleWindow
 refreshDueAt = staleAt - expectedRefreshLatency - safetyMargin
 ```
 
-Where `expectedRefreshLatency` comes from recent adapter telemetry (`observationLatencyMs`, bridge timing, or device status), and `safetyMargin` absorbs jitter. A heartbeat should capture when `now >= refreshDueAt`, not merely when `now >= staleAt`.
+Where `expectedRefreshLatency` comes from recent adapter telemetry (`observationLatencyMs`, bridge timing, or device status), and `safetyMargin` absorbs jitter. A heartbeat captures when `now >= refreshDueAt`, not merely when `now >= staleAt`.
 
 Conceptual states:
 

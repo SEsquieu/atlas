@@ -165,6 +165,53 @@ test('runHeartbeatTick defers stale stable context when refresh health is degrad
   }
 });
 
+test('runHeartbeatTick captures preemptively when context is refresh-due but not stale', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-refresh-due-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const nowMs = Date.now();
+    const session = createSessionState({
+      sessionId: 'refresh-due-session',
+      now: new Date(nowMs - 50_000).toISOString(),
+      provider: { id: 'fake-provider', adapter: '@atlas/core/testing' }
+    });
+
+    await store.create({
+      ...session,
+      status: 'active',
+      perception: {
+        ...session.perception,
+        latestObservationAt: new Date(nowMs - 50_000).toISOString(),
+        latestImageId: 'aging-image',
+        confidence: 0.9,
+        freshnessMs: 0,
+        stability: 'stable',
+        motionState: 'stationary',
+        observationLatencyMs: 8_000
+      }
+    });
+
+    const runner = new AtlasRunner({
+      store,
+      devices: [createFakeCameraDevice()],
+      provider: createFakeProvider()
+    });
+
+    const result = await runner.runHeartbeatTick({ sessionId: session.sessionId, now: nowMs });
+
+    assert.equal(result.decision.freshness.staleAfterMs, 56_250);
+    assert.equal(result.decision.freshness.stale, false);
+    assert.equal(result.decision.freshness.refreshDue, true);
+    assert.equal(result.decision.freshness.expectedRefreshLatencyMs, 8_000);
+    assert.equal(result.decision.shouldCapture, true);
+    assert.equal(result.decision.cadence.mode, 'active-task');
+    assert.match(result.decision.reason, /refresh is due before stale deadline/);
+    assert.ok(result.observation);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('runHeartbeatTick refreshes when latest observation age is stale even if stored freshness was fresh at capture time', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-wall-age-'));
   try {
@@ -264,7 +311,7 @@ test('planHeartbeatTick ages context against weighted stale windows', () => {
       status: 'active',
       perception: {
         ...base.perception,
-        latestObservationAt: new Date(nowMs - 45_000).toISOString(),
+        latestObservationAt: new Date(nowMs - 30_000).toISOString(),
         latestImageId: 'stationary-image',
         confidence: 0.9,
         stability: 'stable',
@@ -274,9 +321,35 @@ test('planHeartbeatTick ages context against weighted stale windows', () => {
     nowMs
   );
   assert.equal(stationary.shouldCapture, false);
-  assert.equal(stationary.freshness.contextAgeMs, 45_000);
+  assert.equal(stationary.freshness.contextAgeMs, 30_000);
   assert.equal(stationary.freshness.staleAfterMs, 56_250);
+  assert.equal(stationary.freshness.refreshDue, false);
+  assert.equal(stationary.freshness.expectedRefreshLatencyMs, 10_000);
+  assert.equal(stationary.freshness.safetyMarginMs, 2_000);
   assert.match(stationary.reason, /within stale window/);
+
+  const preemptive = planHeartbeatTick(
+    {
+      ...base,
+      status: 'active',
+      perception: {
+        ...base.perception,
+        latestObservationAt: new Date(nowMs - 45_000).toISOString(),
+        latestImageId: 'stationary-near-stale-image',
+        confidence: 0.9,
+        stability: 'stable',
+        motionState: 'stationary'
+      }
+    },
+    nowMs
+  );
+  assert.equal(preemptive.shouldCapture, true);
+  assert.equal(preemptive.freshness.stale, false);
+  assert.equal(preemptive.freshness.refreshDue, true);
+  assert.equal(preemptive.freshness.contextAgeMs, 45_000);
+  assert.equal(preemptive.freshness.staleAfterMs, 56_250);
+  assert.equal(preemptive.cadence.mode, 'active-task');
+  assert.match(preemptive.reason, /refresh is due before stale deadline/);
 
   const walking = planHeartbeatTick(
     {

@@ -242,7 +242,8 @@ function formatMarkdownEntry(entry) {
     `## Tick ${entry.tick} — ${entry.at}`,
     '',
     `- cadence: ${entry.cadence.mode ?? 'unknown'} next=${formatMs(entry.cadence.nextDelayMs)} (${entry.cadence.reason ?? 'no reason'})`,
-    `- freshness: age=${formatMs(entry.freshness?.contextAgeMs)} staleAfter=${formatMs(entry.freshness?.staleAfterMs)} multiplier=${entry.freshness?.multiplier ?? '?'} stale=${entry.freshness?.stale ?? '?'}`,
+    `- freshness: age=${formatMs(entry.freshness?.contextAgeMs)} staleAfter=${formatMs(entry.freshness?.staleAfterMs)} multiplier=${entry.freshness?.multiplier ?? '?'} refreshDue=${entry.freshness?.refreshDue ?? '?'} stale=${entry.freshness?.stale ?? '?'}`,
+    `- refresh deadline: dueAt=${formatTimeMs(entry.freshness?.refreshDueAtMs)} staleAt=${formatTimeMs(entry.freshness?.staleAtMs)} expectedLatency=${formatMs(entry.freshness?.expectedRefreshLatencyMs)} safety=${formatMs(entry.freshness?.safetyMarginMs)}`,
     entry.freshness?.signals?.length ? `- freshness signals: ${entry.freshness.signals.join(', ')}` : undefined,
     `- capture budget: ${entry.captureBudget ? `${entry.captureBudget.status} (${entry.captureBudget.capturesLastMinute}/min, ${entry.captureBudget.capturesLastFiveMinutes}/5min${entry.captureBudget.averageCaptureLatencyMs ? `, avg ${formatMs(entry.captureBudget.averageCaptureLatencyMs)}` : ''})` : 'n/a'}`,
     `- capture: ${entry.captured ? `yes (${entry.observationId})` : 'no'}`,
@@ -264,6 +265,7 @@ function printEntry(entry) {
       `tick ${entry.tick}`,
       `cadence=${entry.cadence.mode ?? 'unknown'}`,
       `age=${formatMs(entry.freshness?.contextAgeMs)}/${formatMs(entry.freshness?.staleAfterMs)}`,
+      `refreshDue=${entry.freshness?.refreshDue === true ? 'yes' : 'no'}`,
       `budget=${entry.captureBudget?.status ?? 'n/a'}`,
       `capture=${entry.captured ? 'yes' : 'no'}`,
       `significance=${entry.significance?.level ?? 'n/a'}`,
@@ -349,6 +351,11 @@ function formatMs(value) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return 'n/a';
   if (value < 1000) return `${value}ms`;
   return `${(value / 1000).toFixed(2)}s`;
+}
+
+function formatTimeMs(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'n/a';
+  return new Date(value).toISOString();
 }
 
 function helpText() {
