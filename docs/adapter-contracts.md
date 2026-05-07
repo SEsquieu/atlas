@@ -2,6 +2,8 @@
 
 This file tracks the stable interface boundary for Atlas adapters.
 
+See also `docs/native-mobile-adapter.md` for the target contract of a future Atlas-owned phone adapter. The current OpenClaw Android path is a proof adapter, not the architecture ceiling.
+
 ## Provider Adapter
 
 Provider adapters accept a normalized session turn and return a normalized agent result.

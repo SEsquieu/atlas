@@ -16,6 +16,7 @@
     "demo:smoke-android": "node examples/android-openclaw-basic/smoke-demo.mjs",
     "demo:smoke-ambient-android": "node examples/android-openclaw-basic/ambient-loop-smoke.mjs",
     "demo:ambient-loop": "node examples/ambient-loop.mjs",
+    "demo:warm-context": "node examples/warm-context-harness.mjs",
     "loop:android": "node examples/android-openclaw-basic/loop-control.mjs",
     "openclaw:image-worker": "node examples/android-openclaw-basic/openclaw-image-worker.mjs",
     "bench:image-openclaw": "node examples/android-openclaw-basic/benchmark-image-analysis.mjs",
