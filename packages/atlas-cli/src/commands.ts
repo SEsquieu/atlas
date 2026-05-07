@@ -178,6 +178,8 @@ async function askSessionCommand(sessionId: string, args: string[], options: Cli
           responseText: result.providerResult.responseText,
           plan: result.plan,
           refreshedObservationId: result.refreshedObservation?.id,
+          refreshError: result.refreshError,
+          reusedLastObservationAfterRefreshFailure: result.reusedLastObservationAfterRefreshFailure,
           status: result.session.status
         },
         null,

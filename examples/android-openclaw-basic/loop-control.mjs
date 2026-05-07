@@ -128,6 +128,8 @@ async function printStatus() {
   if (control?.stoppedAt) console.log(`Stopped: ${control.stoppedAt}`);
   const tickCount = await countJsonlLines(control?.jsonlPath ?? jsonlPath);
   console.log(`Recorded ticks: ${tickCount}`);
+  const inspection = await inspectConfiguredSession();
+  if (inspection) printInspectionStatus(inspection);
 }
 
 async function askLoop() {
@@ -144,6 +146,11 @@ async function askLoop() {
     console.log(result.responseText ?? '(no response text)');
     console.log('');
     console.log(`- refreshed during ask: ${result.refreshedObservationId ?? 'no'}`);
+    if (result.reusedLastObservationAfterRefreshFailure) {
+      console.log(`- refresh fallback: reused latest observation after refresh failed (${result.refreshError ?? 'unknown error'})`);
+    } else if (result.refreshError) {
+      console.log(`- refresh error: ${result.refreshError}`);
+    }
     const bridge = latestBridgeTiming(inspection);
     console.log(`- user turn: ${formatMs(inspection.timing?.userTurnMs)}`);
     console.log(`- capture round trip: ${formatMs(inspection.timing?.captureRoundTripMs)}`);
@@ -354,6 +361,12 @@ async function atlasJson(cliArgs) {
   return JSON.parse(await atlas(cliArgs));
 }
 
+async function inspectConfiguredSession() {
+  const result = await atlas(['session', 'inspect', session, '--store', store], { allowFailure: true });
+  if (result.code !== 0) return null;
+  return JSON.parse(result.stdout);
+}
+
 async function run(command, commandArgs) {
   await runProcess(command, commandArgs, { rejectOnFailure: true });
 }
@@ -454,14 +467,34 @@ function formatCounts(counts) {
   return [...counts.entries()].map(([key, count]) => `${key}=${count}`).join(', ') || 'none';
 }
 
+function printInspectionStatus(inspection) {
+  const latest = inspection.observations?.latest;
+  const perception = inspection.perception ?? {};
+  console.log(`Atlas session state: ${inspection.status}`);
+  console.log(`Latest observation: ${latest?.id ?? 'none'}`);
+  if (perception.latestObservationAt) console.log(`Latest observation age: ${formatMs(Date.now() - Date.parse(perception.latestObservationAt))}`);
+  if (perception.latestObservationAvailableAt) console.log(`Latest available age: ${formatMs(Date.now() - Date.parse(perception.latestObservationAvailableAt))}`);
+  console.log(`Visual context: confidence=${formatPercent(perception.confidence)} stability=${perception.stability ?? 'unknown'} motion=${perception.motionState ?? 'unknown'}`);
+  const refresh = perception.visualRefreshHealth;
+  if (refresh) {
+    console.log(`Refresh health: ${refresh.status}${isFiniteNumber(refresh.latencyMs) ? ` total=${formatMs(refresh.latencyMs)}` : ''}${isFiniteNumber(refresh.analysisLatencyMs) ? ` analysis=${formatMs(refresh.analysisLatencyMs)}` : ''}`);
+  }
+  const bridge = latestBridgeTiming(inspection);
+  if (bridge) {
+    console.log(`Latest bridge: ${formatMs(bridge.totalMs)} (capture ${formatMs(bridge.captureMs)}, stage ${formatMs(bridge.stageMs)}, analysis ${formatMs(bridge.analysisMs)})`);
+  }
+  if (perception.summary) console.log(`Latest summary: ${truncate(perception.summary, 180)}`);
+}
+
 function latestBridgeTiming(inspection) {
+  const summarized = inspection?.timing?.bridge;
   const latest = inspection?.observations?.latest;
   const timings = latest?.data?.bridge?.timings;
   const latency = latest?.telemetry?.latencyMs;
-  const totalMs = timings?.totalMs ?? latency?.total;
-  const captureMs = timings?.captureMs ?? latency?.capture;
-  const stageMs = timings?.stageMs ?? latency?.stage;
-  const analysisMs = timings?.analysisMs ?? latency?.analysis;
+  const totalMs = summarized?.totalMs ?? timings?.totalMs ?? latency?.total;
+  const captureMs = summarized?.captureMs ?? timings?.captureMs ?? latency?.capture;
+  const stageMs = summarized?.stageMs ?? timings?.stageMs ?? latency?.stage;
+  const analysisMs = summarized?.analysisMs ?? timings?.analysisMs ?? latency?.analysis;
   if (![totalMs, captureMs, stageMs, analysisMs].some(isFiniteNumber)) return null;
   return { totalMs, captureMs, stageMs, analysisMs };
 }
@@ -470,6 +503,15 @@ function formatMs(value) {
   if (!isFiniteNumber(value)) return 'n/a';
   if (value < 1000) return `${Math.round(value)}ms`;
   return `${(value / 1000).toFixed(2)}s`;
+}
+
+function formatPercent(value) {
+  return isFiniteNumber(value) ? `${Math.round(value * 100)}%` : 'n/a';
+}
+
+function truncate(value, maxLength) {
+  if (typeof value !== 'string' || value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 1)}…`;
 }
 
 function helpText() {

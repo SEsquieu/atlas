@@ -34,6 +34,8 @@ export type RunUserTurnResult = {
   session: AtlasSessionState;
   plan: ReturnType<typeof planUserTurn>;
   refreshedObservation?: Observation;
+  refreshError?: string;
+  reusedLastObservationAfterRefreshFailure?: boolean;
   providerResult: NormalizedAgentResult;
 };
 
@@ -122,14 +124,29 @@ export class AtlasRunner {
     session = materializeSessionCheckpoint(session, [utteranceEvent]);
 
     let refreshedObservation: Observation | undefined;
+    let refreshError: string | undefined;
+    let reusedLastObservationAfterRefreshFailure = false;
     if (plan.shouldRefreshVisualContext) {
-      refreshedObservation = await this.captureCurrentView(session, plan.reason);
-      const captureEvent = await this.store.appendEvent(session.sessionId, {
-        type: 'observation.captured',
-        data: { observation: refreshedObservation, reason: plan.reason }
-      });
-      session = materializeSessionCheckpoint(session, [captureEvent]);
-      await this.store.saveState(session);
+      try {
+        refreshedObservation = await this.captureCurrentView(session, plan.reason);
+        const captureEvent = await this.store.appendEvent(session.sessionId, {
+          type: 'observation.captured',
+          data: { observation: refreshedObservation, reason: plan.reason }
+        });
+        session = materializeSessionCheckpoint(session, [captureEvent]);
+        await this.store.saveState(session);
+      } catch (error) {
+        refreshError = formatError(error);
+        const failureEvent = await this.store.appendEvent(session.sessionId, {
+          type: 'visual.refresh_failed',
+          data: { reason: plan.reason, error: refreshError, fallbackObservationId: session.recentObservations.at(-1)?.id }
+        });
+        session = materializeSessionCheckpoint(session, [failureEvent]);
+        await this.store.saveState(session);
+
+        if (!plan.needsVisualContext || session.recentObservations.length === 0) throw error;
+        reusedLastObservationAfterRefreshFailure = true;
+      }
     }
 
     const turn = buildUserSessionTurn({
@@ -139,6 +156,13 @@ export class AtlasRunner {
       visual: contextStatusFromSession(session),
       observations: session.recentObservations
     });
+
+    if (reusedLastObservationAfterRefreshFailure) {
+      turn.instructions.push(
+        `Atlas attempted to refresh visual context before answering, but refresh failed: ${refreshError}. ` +
+          'Answer from the latest available observation if it is useful, and explicitly mention that it may be stale.'
+      );
+    }
 
     turn.availableTools = CORE_PHYSICAL_TOOLS;
 
@@ -170,6 +194,8 @@ export class AtlasRunner {
       session: latestSession,
       plan,
       refreshedObservation,
+      refreshError,
+      reusedLastObservationAfterRefreshFailure,
       providerResult
     };
   }
@@ -208,6 +234,10 @@ export class AtlasRunner {
 
     return observation;
   }
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function contextStatusFromSession(session: AtlasSessionState): ContextStatus {
