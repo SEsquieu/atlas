@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const ambientLoopPath = path.join(repoRoot, 'examples', 'ambient-loop.mjs');
+const imageWorkerPath = path.join(repoRoot, 'examples', 'android-openclaw-basic', 'openclaw-image-worker.mjs');
 const configPath = path.join(repoRoot, 'examples', 'android-openclaw-basic', 'atlas-live.config.example.json');
 const args = parseArgs(process.argv.slice(2));
 const action = args._[0] ?? 'status';
@@ -134,15 +135,106 @@ async function askLoop() {
   if (!text) throw new Error('Usage: npm run loop:android -- ask "What am I looking at?"');
   await ensureConfiguredSession();
   process.env.ATLAS_OPENCLAW_PROVIDER_MODE = args.providerMode ?? 'summary';
-  const result = await atlasJson(['session', 'ask', session, '--text', text, '--config', configPath, '--store', store]);
-  const inspection = await atlasJson(['session', 'inspect', session, '--store', store]);
-  console.log(result.responseText ?? '(no response text)');
-  console.log('');
-  console.log(`- refreshed during ask: ${result.refreshedObservationId ?? 'no'}`);
-  console.log(`- user turn: ${formatMs(inspection.timing?.userTurnMs)}`);
-  console.log(`- capture round trip: ${formatMs(inspection.timing?.captureRoundTripMs)}`);
-  console.log(`- provider round trip: ${formatMs(inspection.timing?.providerRoundTripMs)}`);
-  console.log(`- latest observation: ${inspection.observations?.latest?.id ?? 'none'}`);
+  let imageWorker;
+  try {
+    imageWorker = await maybeStartImageWorker();
+    if (imageWorker?.url) console.log(`OpenClaw image worker: ${imageWorker.url}`);
+    const result = await atlasJson(['session', 'ask', session, '--text', text, '--config', configPath, '--store', store]);
+    const inspection = await atlasJson(['session', 'inspect', session, '--store', store]);
+    console.log(result.responseText ?? '(no response text)');
+    console.log('');
+    console.log(`- refreshed during ask: ${result.refreshedObservationId ?? 'no'}`);
+    console.log(`- user turn: ${formatMs(inspection.timing?.userTurnMs)}`);
+    console.log(`- capture round trip: ${formatMs(inspection.timing?.captureRoundTripMs)}`);
+    console.log(`- provider round trip: ${formatMs(inspection.timing?.providerRoundTripMs)}`);
+    console.log(`- latest observation: ${inspection.observations?.latest?.id ?? 'none'}`);
+  } finally {
+    imageWorker?.stop();
+  }
+}
+
+async function maybeStartImageWorker() {
+  if (args.imageWorker === 'false') return null;
+  const existingUrl = currentImageWorkerUrl();
+  if (existingUrl) return { url: existingUrl, stop: () => undefined };
+  if (process.env.ATLAS_LOOP_ASK_USE_IMAGE_WORKER === 'false') return null;
+  return await startImageWorker();
+}
+
+function currentImageWorkerUrl() {
+  return process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL ?? process.env.ATLAS_OPENCLAW_IMAGE_WORKER_URL;
+}
+
+async function startImageWorker() {
+  const workerEnv = {
+    ...process.env,
+    ATLAS_OPENCLAW_IMAGE_WORKER_MODEL: process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_MODEL ?? 'openai-codex/gpt-5.5',
+    ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM: process.env.ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM ?? '1'
+  };
+  const child = spawn(process.execPath, [imageWorkerPath], { cwd: repoRoot, env: sanitizeEnv(workerEnv), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const timeoutMs = Number(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_START_TIMEOUT_MS ?? 120000);
+  const { url } = await waitForWorkerReady(child, timeoutMs);
+  process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL = url;
+  process.env.ATLAS_OPENCLAW_IMAGE_WORKER_URL = url;
+  return { url, stop: () => stopChild(child) };
+}
+
+async function waitForWorkerReady(child, timeoutMs) {
+  return await new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    const timeout = setTimeout(() => {
+      stopChild(child);
+      reject(new Error(`OpenClaw image worker did not become ready after ${timeoutMs}ms.${stderr ? ` stderr: ${stderr.trim()}` : ''}`));
+    }, timeoutMs);
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.stdout.off('data', onStdout);
+      child.stderr.off('data', onStderr);
+      child.off('error', onError);
+      child.off('exit', onExit);
+    };
+    const onStdout = (chunk) => {
+      stdout += chunk;
+      for (const line of stdout.split(/\r?\n/)) {
+        if (!line.trim().startsWith('{')) continue;
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed.kind === 'atlas.openclaw-image-worker.ready' && parsed.url) {
+            cleanup();
+            resolve(parsed);
+            return;
+          }
+        } catch {
+          // Keep waiting for a JSON ready line.
+        }
+      }
+    };
+    const onStderr = (chunk) => {
+      stderr += chunk;
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onExit = (code) => {
+      cleanup();
+      reject(new Error(`OpenClaw image worker exited before ready with code ${code}.${stderr ? ` stderr: ${stderr.trim()}` : ''}`));
+    };
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', onStdout);
+    child.stderr.on('data', onStderr);
+    child.on('error', onError);
+    child.on('exit', onExit);
+  });
+}
+
+function stopChild(child) {
+  if (!child || child.killed) return;
+  child.kill();
 }
 
 async function ensureConfiguredSession() {
