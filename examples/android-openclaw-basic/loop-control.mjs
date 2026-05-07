@@ -129,14 +129,59 @@ async function printStatus() {
 }
 
 async function printSummary() {
-  const text = await readTextIfExists(summaryPath);
-  if (!text) {
-    console.log(`No loop summary found yet: ${summaryPath}`);
+  const entries = await readJsonlEntries(jsonlPath);
+  if (entries.length === 0) {
+    console.log(`No loop summary found yet: ${jsonlPath}`);
     return;
   }
-  const lines = text.trimEnd().split(/\r?\n/);
-  const tail = args.tail ?? 120;
-  console.log(lines.slice(-tail).join('\n'));
+
+  if (args.markdown === true) {
+    const text = await readTextIfExists(summaryPath);
+    if (!text) {
+      console.log(`No Markdown loop summary found yet: ${summaryPath}`);
+      return;
+    }
+    const lines = text.trimEnd().split(/\r?\n/);
+    const tail = args.tail ?? 120;
+    console.log(lines.slice(-tail).join('\n'));
+    return;
+  }
+
+  printParsedSummary(entries);
+}
+
+function printParsedSummary(entries) {
+  const captures = entries.filter((entry) => entry.captured).length;
+  const reuses = entries.length - captures;
+  const wallValues = entries.map((entry) => entry.wallMs).filter(isFiniteNumber);
+  const capturedWallValues = entries.filter((entry) => entry.captured).map((entry) => entry.wallMs).filter(isFiniteNumber);
+  const reuseWallValues = entries.filter((entry) => !entry.captured).map((entry) => entry.wallMs).filter(isFiniteNumber);
+  const bridgeTotalValues = entries.map((entry) => entry.timing?.bridge?.totalMs).filter(isFiniteNumber);
+  const captureValues = entries.map((entry) => entry.timing?.bridge?.captureMs).filter(isFiniteNumber);
+  const analysisValues = entries.map((entry) => entry.timing?.bridge?.analysisMs).filter(isFiniteNumber);
+  const latest = entries.at(-1);
+
+  console.log('Atlas loop summary');
+  console.log(`- ticks: ${entries.length}`);
+  console.log(`- captures: ${captures}`);
+  console.log(`- reuses: ${reuses}`);
+  console.log(`- avg wall: ${formatMs(avg(wallValues))}`);
+  if (capturedWallValues.length) console.log(`- avg captured wall: ${formatMs(avg(capturedWallValues))}`);
+  if (reuseWallValues.length) console.log(`- avg reuse wall: ${formatMs(avg(reuseWallValues))}`);
+  if (bridgeTotalValues.length) console.log(`- avg bridge: ${formatMs(avg(bridgeTotalValues))}`);
+  if (captureValues.length) console.log(`- avg camera/helper capture: ${formatMs(avg(captureValues))}`);
+  if (analysisValues.length) console.log(`- avg image analysis: ${formatMs(avg(analysisValues))}`);
+  console.log(`- significance: ${formatCounts(countBy(entries, (entry) => entry.significance?.level ?? 'none'))}`);
+  console.log(`- cadence: ${formatCounts(countBy(entries, (entry) => entry.cadence?.mode ?? 'unknown'))}`);
+  console.log(`- latest tick: ${latest?.tick ?? 'n/a'} at ${latest?.at ?? 'n/a'}`);
+  console.log(`- latest capture: ${latest?.captured ? 'yes' : 'no'}`);
+  console.log(`- latest significance: ${latest?.significance?.level ?? 'none'}${isFiniteNumber(latest?.significance?.score) ? ` score=${latest.significance.score.toFixed(2)}` : ''}`);
+  if (latest?.decision?.reason) console.log(`- latest decision: ${latest.decision.reason}`);
+  if (latest?.mediaRef) console.log(`- latest media: ${latest.mediaRef}`);
+  console.log(`- jsonl: ${jsonlPath}`);
+  console.log(`- markdown: ${summaryPath}`);
+  console.log('');
+  console.log(`Latest summary: ${latest?.summary ?? '(none)'}`);
 }
 
 async function readControl() {
@@ -194,6 +239,18 @@ async function countJsonlLines(filePath) {
   return text.split(/\r?\n/).filter(Boolean).length;
 }
 
+async function readJsonlEntries(filePath) {
+  const text = await readTextIfExists(filePath);
+  if (!text) return [];
+  return text.split(/\r?\n/).filter(Boolean).map((line, index) => {
+    try {
+      return JSON.parse(line);
+    } catch (error) {
+      throw new Error(`Invalid JSONL at ${filePath}:${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+}
+
 async function readTextIfExists(filePath) {
   if (!existsSync(filePath)) return '';
   return await readFile(filePath, 'utf8');
@@ -208,6 +265,7 @@ function parseArgs(raw) {
     else if (arg === '--session') parsed.session = raw[++index];
     else if (arg === '--store') parsed.store = raw[++index];
     else if (arg === '--tail') parsed.tail = readPositiveInteger(raw[++index], '--tail');
+    else if (arg === '--markdown') parsed.markdown = true;
     else if (arg === '--image-worker') parsed.imageWorker = readImageWorkerMode(raw[++index]);
     else parsed._.push(arg);
   }
@@ -229,6 +287,34 @@ function sanitizeEnv(env) {
   return Object.fromEntries(Object.entries(env).filter((entry) => typeof entry[1] === 'string'));
 }
 
+function isFiniteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function avg(values) {
+  if (!values.length) return undefined;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function countBy(values, keyFn) {
+  const counts = new Map();
+  for (const value of values) {
+    const key = keyFn(value);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function formatCounts(counts) {
+  return [...counts.entries()].map(([key, count]) => `${key}=${count}`).join(', ') || 'none';
+}
+
+function formatMs(value) {
+  if (!isFiniteNumber(value)) return 'n/a';
+  if (value < 1000) return `${Math.round(value)}ms`;
+  return `${(value / 1000).toFixed(2)}s`;
+}
+
 function helpText() {
-  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--tail 120]\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. Logs are written under <store>/<session>/.`;
+  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--markdown] [--tail 120]\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. summary parses ambient-loop.jsonl by default; use --markdown to tail ambient-loop.md. Logs are written under <store>/<session>/.`;
 }
