@@ -322,9 +322,13 @@ Pass criteria:
 
 Goal: make behavior inspectable and hard to fool ourselves about.
 
+Current slice:
+
+- `npm run demo:scenarios` runs a fake-safe scenario harness covering fresh visual capture, cached visual reuse, transitional place-confirmation refresh, unchanged heartbeat silence, meaningful heartbeat provider-review speech suppression, and actionable heartbeat escalation with permission.
+
 Deliverables:
 
-- Scenario scripts for core MVP cases.
+- Scenario scripts for core MVP cases. ✅ initial fake-safe harness landed
 - Event inspection command/output.
 - Replay/debug harness.
 - Fake device/provider fixtures.

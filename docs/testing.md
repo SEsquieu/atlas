@@ -5,6 +5,16 @@ Initial testing target:
 - upstream: OpenClaw
 - downstream: Android phone
 
+## Fake-safe scenario harness
+
+Run the current no-camera MVP scenario pass from the repo root:
+
+```bash
+npm run demo:scenarios
+```
+
+The harness writes temporary session state under `.atlas-runs/scenario-harness` and verifies the major user-loop and heartbeat cases without touching Android/OpenClaw. Use `--store <path>` to choose a different output location, or `--no-clean` to inspect a previous run alongside new state.
+
 ## MVP Test Scenarios
 
 1. **Fresh context required**
