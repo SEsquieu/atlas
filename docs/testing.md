@@ -39,6 +39,27 @@ npm run validate:ambient -- --store .atlas-runs/latest-ambient-android --require
 
 The ambient validator reads `.atlas-runs/latest-ambient-android/live-android-openclaw/ambient-loop.jsonl` by default. Use `--store <path>` plus optional `--session <id>` for loop stores, or `--jsonl <path>` / positional JSONL when validating a specific log file.
 
+## Live Android demo-readiness flow
+
+Before a live Android proof, run the no-camera preflight:
+
+```bash
+npm run loop:android -- preflight
+```
+
+Preflight checks the live config, runner scripts, built Atlas CLI output, current loop/session state, persistent image-worker registry health, and worker warm path. It does not touch the Android camera. Use `--no-warm` for a structural check that skips `/warm`.
+
+The live proof sequence after preflight is:
+
+```bash
+npm run loop:android -- fresh-start --ticks 1 --max-sleep-ms 15000
+npm run loop:android -- ask "What am I looking at?"
+npm run validate:ambient -- --store .atlas-runs/latest-ambient-android --require-capture
+npm run loop:android -- summary
+```
+
+Manual prerequisite: foreground the Android/OpenClaw app before the fresh-start tick. The expected shape is one live heartbeat capture, a cached ask with no ask-time refresh when context is fresh enough, and a passing ambient validator.
+
 ## MVP Test Scenarios
 
 1. **Fresh context required**
