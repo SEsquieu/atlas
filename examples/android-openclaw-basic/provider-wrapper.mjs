@@ -12,8 +12,10 @@ try {
 }
 
 async function runOpenClawAgent(turn) {
-  const providerMode = firstString(process.env.ATLAS_OPENCLAW_PROVIDER_MODE) ?? 'agent';
-  if (providerMode === 'summary' || providerMode === 'visual-summary') return summarizeLatestObservation(turn);
+  const providerMode = resolveProviderMode(turn);
+  if (providerMode === 'summary' || providerMode === 'visual-summary') {
+    return turn?.trigger?.type === 'heartbeat' ? summarizeHeartbeatReview(turn) : summarizeLatestObservation(turn);
+  }
 
   const openclaw = resolveOpenClawInvocation(firstString(process.env.ATLAS_OPENCLAW_BIN));
   const sessionPrefix = firstString(process.env.ATLAS_OPENCLAW_AGENT_SESSION_PREFIX) ?? 'atlas';
@@ -34,6 +36,25 @@ async function runOpenClawAgent(turn) {
   return {
     turnId: turn.turnId,
     responseText: extractOpenClawText(output.stdout) || output.stdout.trim() || undefined
+  };
+}
+
+function resolveProviderMode(turn) {
+  if (turn?.trigger?.type === 'heartbeat') {
+    return firstString(process.env.ATLAS_OPENCLAW_HEARTBEAT_PROVIDER_MODE, process.env.ATLAS_OPENCLAW_PROVIDER_MODE) ?? 'summary';
+  }
+  return firstString(process.env.ATLAS_OPENCLAW_PROVIDER_MODE) ?? 'agent';
+}
+
+function summarizeHeartbeatReview(turn) {
+  const observations = Array.isArray(turn?.observations) ? turn.observations : [];
+  const latest = observations.at(-1);
+  const summary = latestObservationSummary(latest);
+  return {
+    turnId: turn?.turnId,
+    responseText: summary
+      ? `Ambient review: ${summary}`
+      : 'Ambient review: no usable visual summary is available.'
   };
 }
 

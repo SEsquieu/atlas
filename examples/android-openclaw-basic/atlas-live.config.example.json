@@ -14,7 +14,8 @@
           "timeoutMs": 610000,
           "env": {
             "ATLAS_OPENCLAW_AGENT_SESSION_PREFIX": "atlas-live",
-            "ATLAS_OPENCLAW_AGENT_TIMEOUT_SECONDS": "600"
+            "ATLAS_OPENCLAW_AGENT_TIMEOUT_SECONDS": "600",
+            "ATLAS_OPENCLAW_HEARTBEAT_PROVIDER_MODE": "summary"
           }
         }
       },

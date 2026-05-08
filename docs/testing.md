@@ -62,6 +62,8 @@ Manual prerequisite: foreground the Android/OpenClaw app before the fresh-start 
 
 The Android bridge wrapper serializes phone camera access with an inter-process capture lock at `.atlas-runs/android-camera-bridge.lock` by default. This prevents overlapping snaps from a heartbeat, ask-time refresh, or second loop process. If a contention test is needed without touching the phone, pre-create the lock directory and run the wrapper with a tiny `ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK_TIMEOUT_MS`; it should fail before invoking camera capture.
 
+Heartbeat-triggered provider reviews in the live Android config use `ATLAS_OPENCLAW_HEARTBEAT_PROVIDER_MODE=summary` by default. This keeps ambient review on the fast path; full `openclaw agent` provider turns are still available for explicit user asks or deliberate heartbeat-provider tests.
+
 ## MVP Test Scenarios
 
 1. **Fresh context required**

@@ -29,7 +29,7 @@ This example now includes command wrappers for the first local live path:
 
 - `bridge-wrapper.mjs` calls `openclaw nodes camera snap`, stages the image into `.atlas-cache/images`, optionally asks OpenClaw/Codex or Ollama for a visual summary, and prints Android bridge result JSON.
 - `openclaw-image-worker.mjs` keeps OpenClaw image understanding warm in one Node process, avoiding the ~20–30s cold provider/model-runtime load on every capture.
-- `provider-wrapper.mjs` converts a normalized Atlas turn into an `openclaw agent --json` call and prints a normalized provider result.
+- `provider-wrapper.mjs` converts a normalized Atlas turn into an `openclaw agent --json` call and prints a normalized provider result. Heartbeat-triggered provider reviews default to a summary fast path so ambient review cannot block the freshness loop on a full agent turn; set `ATLAS_OPENCLAW_HEARTBEAT_PROVIDER_MODE=agent` when deliberately testing the full provider path.
 - `atlas-live.config.example.json` wires both wrappers into the Atlas CLI.
 
 After building from the Atlas repo root:
@@ -157,4 +157,4 @@ The example assumes:
 - A paired Android node is available to OpenClaw.
 - OpenClaw image understanding is configured; the live example defaults to `openai-codex/gpt-5.5` via `analysisMode=openclaw`.
 
-Override wrapper behavior through the device config and `env` blocks, for example `maxWidth`, `quality`, `ATLAS_ANDROID_BRIDGE_NODE`, `ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN`, `ATLAS_ANDROID_BRIDGE_OLLAMA_MODEL`, `ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL`, `ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK_TIMEOUT_MS`, `ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK_STALE_MS`, `ATLAS_OPENCLAW_AGENT_ID`, or `ATLAS_OPENCLAW_PROVIDER_MODE=summary`. The live example defaults to `maxWidth=1024` and `quality=0.7`, which keeps enough detail for visual summaries while avoiding the full-resolution capture/analysis tax.
+Override wrapper behavior through the device config and `env` blocks, for example `maxWidth`, `quality`, `ATLAS_ANDROID_BRIDGE_NODE`, `ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN`, `ATLAS_ANDROID_BRIDGE_OLLAMA_MODEL`, `ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL`, `ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK_TIMEOUT_MS`, `ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK_STALE_MS`, `ATLAS_OPENCLAW_AGENT_ID`, `ATLAS_OPENCLAW_PROVIDER_MODE=summary`, or `ATLAS_OPENCLAW_HEARTBEAT_PROVIDER_MODE=agent`. The live example defaults to `maxWidth=1024` and `quality=0.7`, which keeps enough detail for visual summaries while avoiding the full-resolution capture/analysis tax.
