@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { AtlasRunner } from './atlas-runner.js';
 import { createSessionState } from '../session/index.js';
 import { FileSessionStore } from '../store/file-session-store.js';
-import { createFakeCameraDevice, createFakeProvider, createFakeVisualAnalyzer } from '../testing/fakes.js';
+import { createFakeCameraDevice, createFakeProvider, createFakeSpeakerDevice, createFakeVisualAnalyzer } from '../testing/fakes.js';
 
 test('runUserTurn falls back to the latest observation when ask-time refresh fails', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-runner-'));
@@ -155,6 +155,96 @@ test('runUserTurn refreshes stale/missing visual context before provider call', 
         'agent.speech'
       ]
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('runUserTurn delivers response through a bound speaker when available', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-runner-speaker-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const session = createSessionState({
+      sessionId: 'speaker-session',
+      provider: { id: 'fake-provider', adapter: '@atlas/core/testing' },
+      devices: [
+        { id: 'fake-camera', adapter: '@atlas/core/testing', capabilities: ['camera.capture'] },
+        { id: 'fake-speaker', adapter: '@atlas/core/testing', capabilities: ['audio.speak'] }
+      ]
+    });
+
+    await store.create(session);
+    await store.appendEvent(session.sessionId, { type: 'session.started' });
+
+    const spoken: string[] = [];
+    const runner = new AtlasRunner({
+      store,
+      devices: [createFakeCameraDevice(), createFakeSpeakerDevice({ onSpeak: (text) => { spoken.push(text); } })],
+      provider: createFakeProvider({ responseText: 'You are looking at the workbench.' })
+    });
+
+    const result = await runner.runUserTurn({
+      sessionId: session.sessionId,
+      text: 'What am I looking at?',
+      mode: 'voice'
+    });
+
+    assert.equal(result.providerResult.responseText, 'You are looking at the workbench.');
+    assert.deepEqual(spoken, ['You are looking at the workbench.']);
+
+    const events = await store.loadEvents(session.sessionId);
+    assert.deepEqual(
+      events.slice(-3).map((event) => event.type),
+      ['agent.speech', 'audio.speech_requested', 'audio.speech_completed']
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('runUserTurn preserves text fallback when bound speaker fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-runner-speaker-fallback-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const session = createSessionState({
+      sessionId: 'speaker-fallback-session',
+      provider: { id: 'fake-provider', adapter: '@atlas/core/testing' },
+      devices: [
+        { id: 'fake-camera', adapter: '@atlas/core/testing', capabilities: ['camera.capture'] },
+        { id: 'fake-speaker', adapter: '@atlas/core/testing', capabilities: ['audio.speak'] }
+      ]
+    });
+
+    await store.create(session);
+    await store.appendEvent(session.sessionId, { type: 'session.started' });
+
+    const runner = new AtlasRunner({
+      store,
+      devices: [
+        createFakeCameraDevice(),
+        createFakeSpeakerDevice({
+          onSpeak: () => {
+            throw new Error('speaker offline');
+          }
+        })
+      ],
+      provider: createFakeProvider({ responseText: 'Text response is still available.' })
+    });
+
+    const result = await runner.runUserTurn({
+      sessionId: session.sessionId,
+      text: 'What am I looking at?',
+      mode: 'voice'
+    });
+
+    assert.equal(result.providerResult.responseText, 'Text response is still available.');
+
+    const events = await store.loadEvents(session.sessionId);
+    assert.equal(events.some((event) => event.type === 'agent.speech'), true);
+    const failed = events.find((event) => event.type === 'audio.speech_failed');
+    assert.ok(failed);
+    assert.match(JSON.stringify(failed.data), /speaker offline/);
+    assert.match(JSON.stringify(failed.data), /textFallbackPreserved/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

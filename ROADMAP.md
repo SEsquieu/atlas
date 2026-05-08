@@ -354,13 +354,17 @@ Required scenarios:
 
 Goal: turn the text/image MVP into a natural real-world loop.
 
+Current slice:
+
+- Atlas now emits text responses as `agent.speech` and, when a bound device exposes `speak`, mirrors them to `DeviceAdapter.speak()` with `audio.speech_requested`, `audio.speech_completed`, or `audio.speech_failed` audit events. Speaker failure preserves the text response as fallback. Live phone speech testing is intentionally deferred until Seth is home from work.
+
 Deliverables:
 
 - STT input interface.
-- TTS/speak interface.
+- TTS/speak interface. ✅ fake-safe device hook landed
 - Android speaker output path.
 - Interrupt/stop behavior.
-- Text fallback preserved.
+- Text fallback preserved. ✅ fake-safe fallback landed
 
 Pass criteria:
 

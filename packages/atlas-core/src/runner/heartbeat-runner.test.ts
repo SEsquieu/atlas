@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { AtlasRunner } from './atlas-runner.js';
 import { createSessionState } from '../session/index.js';
 import { FileSessionStore } from '../store/file-session-store.js';
-import { createFakeCameraDevice, createFakeProvider } from '../testing/fakes.js';
+import { createFakeCameraDevice, createFakeProvider, createFakeSpeakerDevice } from '../testing/fakes.js';
 import type { AuditEvent } from '../audit/event-log.js';
 import { planHeartbeatTick } from '../loops/heartbeat.js';
 
@@ -266,9 +266,13 @@ test('runHeartbeatTick only speaks proactively for actionable significance with 
       }
     });
 
+    const spoken: string[] = [];
     const runner = new AtlasRunner({
       store,
-      devices: [createFakeCameraDevice({ imageSummary: 'Smoke and sparks are coming from a power supply on the bench.' })],
+      devices: [
+        createFakeCameraDevice({ imageSummary: 'Smoke and sparks are coming from a power supply on the bench.' }),
+        createFakeSpeakerDevice({ onSpeak: (text) => { spoken.push(text); } })
+      ],
       provider: createFakeProvider({ responseText: 'Heads up: I see smoke or sparks near the bench power supply.' })
     });
 
@@ -279,11 +283,12 @@ test('runHeartbeatTick only speaks proactively for actionable significance with 
     assert.equal(result.significance?.shouldNotifyUser, true);
     assert.equal(result.providerResult?.responseText, 'Heads up: I see smoke or sparks near the bench power supply.');
     assert.equal(result.proactiveSpeechSuppressed, false);
+    assert.deepEqual(spoken, ['Heads up: I see smoke or sparks near the bench power supply.']);
 
     const events = await store.loadEvents(session.sessionId);
     assert.deepEqual(
-      events.slice(-4).map((event) => event.type),
-      ['perception.significance', 'provider.requested', 'provider.responded', 'agent.speech']
+      events.slice(-6).map((event) => event.type),
+      ['perception.significance', 'provider.requested', 'provider.responded', 'agent.speech', 'audio.speech_requested', 'audio.speech_completed']
     );
   } finally {
     await rm(root, { recursive: true, force: true });

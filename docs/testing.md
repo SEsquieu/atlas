@@ -21,7 +21,7 @@ Validate the generated report contract:
 npm run validate:scenarios
 ```
 
-The validator fails with nonzero exit if the report is missing required scenarios, if any scenario failed, or if required event patterns regress. For example, unchanged heartbeat must not have provider/speech events, meaningful heartbeat must include provider review plus speech suppression, repeated meaningful heartbeat must skip duplicate provider review for the same scene, actionable heartbeat must include proactive speech when permission allows it, and provider swap must show the alternate provider receiving the same materialized physical session shape.
+The validator fails with nonzero exit if the report is missing required scenarios, if any scenario failed, or if required event patterns regress. For example, unchanged heartbeat must not have provider/speech events, meaningful heartbeat must include provider review plus speech suppression, repeated meaningful heartbeat must skip duplicate provider review for the same scene, actionable heartbeat must include proactive speech when permission allows it, provider swap must show the alternate provider receiving the same materialized physical session shape, and voice output must request/complete fake speaker delivery while preserving the text response.
 
 Replay a saved session from its event log and compare replayed materialized state with saved state:
 
@@ -108,7 +108,11 @@ Heartbeat-triggered provider reviews in the live Android config use `ATLAS_OPENC
    - Run a heartbeat that detects a safety/action cue.
    - Expected: Atlas records `perception.significance` as `actionable`; this is the only v0 level that may pass the future proactive notification hard gate.
 
-8. **Capture budget / device pressure**
+8. **Voice output speaker path**
+   - Bind a fake `audio.speak` device and run a voice-mode user turn.
+   - Expected: Atlas preserves the text response, emits `agent.speech`, then records `audio.speech_requested` and `audio.speech_completed`. Speaker failures should emit `audio.speech_failed` without losing the text fallback.
+
+9. **Capture budget / device pressure**
    - Seed recent capture events or run repeated heartbeats.
    - Expected: heartbeat decisions include `captureBudget`; stale stable context can be deferred when budget is `constrained` or `cooldown`.
 

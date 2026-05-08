@@ -17,6 +17,12 @@ export type FakeDeviceOptions = {
   includeSummary?: boolean;
 };
 
+export type FakeSpeakerOptions = {
+  id?: string;
+  name?: string;
+  onSpeak?: (text: string) => void | Promise<void>;
+};
+
 export function createFakeCameraDevice(options: FakeDeviceOptions = {}): DeviceAdapter {
   const capabilities: DeviceCapability[] = ['camera.capture'];
 
@@ -63,6 +69,19 @@ export function createFakeVisualAnalyzer(options: FakeAnalyzerOptions = {}): Per
         summary: options.summary ?? 'Fake visual analyzer summary.'
       }
     ]
+  };
+}
+
+export function createFakeSpeakerDevice(options: FakeSpeakerOptions = {}): DeviceAdapter {
+  const capabilities: DeviceCapability[] = ['audio.speak'];
+
+  return {
+    id: options.id ?? 'fake-speaker',
+    name: options.name ?? 'Fake Speaker',
+    capabilities: async () => capabilities,
+    speak: async (text) => {
+      await options.onSpeak?.(text);
+    }
   };
 }
 

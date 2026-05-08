@@ -50,6 +50,12 @@ const REQUIRED_SCENARIOS = [
     mustHaveEvents: ['user.utterance', 'tool.requested', 'tool.completed', 'observation.captured', 'provider.requested', 'provider.responded', 'agent.speech'],
     latestObservationId: 'provider-swap-image',
     providerTextIncludes: 'provider=alternate-provider'
+  },
+  {
+    name: 'voice output uses bound speaker while preserving text response',
+    mustHaveEvents: ['user.utterance', 'provider.requested', 'provider.responded', 'agent.speech', 'audio.speech_requested', 'audio.speech_completed'],
+    maxEventCounts: { 'audio.speech_failed': 0 },
+    providerTextIncludes: 'Voice output:'
   }
 ];
 

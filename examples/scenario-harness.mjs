@@ -33,6 +33,7 @@ try {
   results.push(await runHeartbeatRepeatedMeaningfulReviewCooldownScenario());
   results.push(await runHeartbeatActionablePermissionScenario());
   results.push(await runProviderSwapScenario());
+  results.push(await runVoiceOutputSpeakerScenario());
 
   for (const result of results) printResult(result);
   await writeScenarioReports(results);
@@ -360,6 +361,38 @@ async function runProviderSwapScenario() {
   });
 }
 
+async function runVoiceOutputSpeakerScenario() {
+  const sessionId = 'voice-output-speaker';
+  const store = new FileSessionStore({ rootDir: storeRoot });
+  await createStartedSession(store, {
+    sessionId,
+    observation: fakeImage({ id: 'voice-context', ageMs: 2_000, summary: 'Fresh fake observation: a workbench with a soldering iron.' })
+  });
+
+  const spoken = [];
+  const runner = new AtlasRunner({
+    store,
+    devices: [cameraDevice(() => fakeImage({ id: 'unexpected-voice-refresh', summary: 'This should not be captured.' })), speakerDevice((text) => spoken.push(text))],
+    provider: providerFor('voice output', undefined, 'Voice output: you are at the soldering workbench.')
+  });
+
+  const result = await runner.runUserTurn({ sessionId, text: 'What am I looking at?', mode: 'voice' });
+  const events = await store.loadEvents(sessionId);
+
+  assert.deepEqual(spoken, ['Voice output: you are at the soldering workbench.']);
+  assert.equal(result.providerResult.responseText, 'Voice output: you are at the soldering workbench.');
+  assert.equal(events.some((event) => event.type === 'audio.speech_requested'), true);
+  assert.equal(events.some((event) => event.type === 'audio.speech_completed'), true);
+
+  return await withAudit(store, {
+    name: 'voice output uses bound speaker while preserving text response',
+    sessionId,
+    kind: 'voice-layer',
+    passed: true,
+    details: [`spoken=${spoken.length}`, `response=${result.providerResult.responseText}`]
+  });
+}
+
 async function createStartedSession(store, input) {
   const session = createSessionState({
     sessionId: input.sessionId,
@@ -483,6 +516,15 @@ function cameraDevice(onCapture, options = {}) {
     name: options.name ?? 'Fake no-camera device',
     capabilities: async () => ['camera.capture'],
     captureImage: async () => onCapture()
+  };
+}
+
+function speakerDevice(onSpeak, options = {}) {
+  return {
+    id: options.id ?? 'fake-speaker',
+    name: options.name ?? 'Fake no-camera speaker',
+    capabilities: async () => ['audio.speak'],
+    speak: async (text) => onSpeak(text)
   };
 }
 
