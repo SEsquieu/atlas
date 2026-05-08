@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -13,6 +13,8 @@ import {
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const args = parseArgs(process.argv.slice(2));
 const storeRoot = path.resolve(repoRoot, args.store ?? path.join('.atlas-runs', 'scenario-harness'));
+const jsonReportPath = path.resolve(repoRoot, args.json ?? path.join(storeRoot, 'scenario-report.json'));
+const markdownReportPath = path.resolve(repoRoot, args.markdown ?? path.join(storeRoot, 'scenario-report.md'));
 
 try {
   if (args.clean !== false) await rm(storeRoot, { recursive: true, force: true });
@@ -31,7 +33,9 @@ try {
   results.push(await runHeartbeatActionablePermissionScenario());
 
   for (const result of results) printResult(result);
+  await writeScenarioReports(results);
 
+  console.log(`Reports:\n- ${jsonReportPath}\n- ${markdownReportPath}`);
   console.log('All scenario harness checks passed.');
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
@@ -59,13 +63,13 @@ async function runFreshCaptureScenario() {
   assert.equal(result.refreshedObservation?.id, 'fresh-workbench');
   assert.equal(captureCount, 1);
 
-  return {
+  return await withAudit(store, {
     name: 'fresh visual ask captures when context is missing',
     sessionId,
     kind: 'user-loop',
     passed: true,
     details: [`refresh=${result.plan.shouldRefreshVisualContext}`, `captures=${captureCount}`, `response=${result.providerResult.responseText}`]
-  };
+  });
 }
 
 async function runFreshReuseScenario() {
@@ -92,13 +96,13 @@ async function runFreshReuseScenario() {
   assert.equal(result.refreshedObservation, undefined);
   assert.equal(captureCount, 0);
 
-  return {
+  return await withAudit(store, {
     name: 'fresh stable context reuses cached observation',
     sessionId,
     kind: 'user-loop',
     passed: true,
     details: [`refresh=${result.plan.shouldRefreshVisualContext}`, `captures=${captureCount}`, `response=${result.providerResult.responseText}`]
-  };
+  });
 }
 
 async function runTransitionalPlaceRefreshScenario() {
@@ -131,13 +135,13 @@ async function runTransitionalPlaceRefreshScenario() {
   assert.equal(result.refreshedObservation?.id, 'stable-room-sign');
   assert.equal(captureCount, 1);
 
-  return {
+  return await withAudit(store, {
     name: 'place confirmation rejects transitional context',
     sessionId,
     kind: 'user-loop',
     passed: true,
     details: [`refresh=${result.plan.shouldRefreshVisualContext}`, `captures=${captureCount}`, `response=${result.providerResult.responseText}`]
-  };
+  });
 }
 
 async function runHeartbeatUnchangedSilenceScenario() {
@@ -166,13 +170,13 @@ async function runHeartbeatUnchangedSilenceScenario() {
   assert.equal(providerCount, 0);
   assert.equal(events.some((event) => event.type === 'agent.speech'), false);
 
-  return {
+  return await withAudit(store, {
     name: 'unchanged heartbeat stays silent and avoids provider',
     sessionId,
     kind: 'heartbeat',
     passed: true,
     details: [`significance=${result.significance?.level}`, `providerCalls=${providerCount}`, 'speech=no']
-  };
+  });
 }
 
 async function runHeartbeatMeaningfulProviderSuppressionScenario() {
@@ -203,13 +207,13 @@ async function runHeartbeatMeaningfulProviderSuppressionScenario() {
   assert.equal(events.some((event) => event.type === 'agent.speech'), false);
   assert.equal(events.some((event) => event.type === 'agent.speech_suppressed'), true);
 
-  return {
+  return await withAudit(store, {
     name: 'meaningful heartbeat gets provider review but suppresses speech',
     sessionId,
     kind: 'heartbeat',
     passed: true,
     details: [`significance=${result.significance?.level}`, `providerCalls=${providerCount}`, `speechSuppressed=${result.proactiveSpeechSuppressed}`]
-  };
+  });
 }
 
 async function runHeartbeatActionablePermissionScenario() {
@@ -239,13 +243,13 @@ async function runHeartbeatActionablePermissionScenario() {
   assert.equal(result.proactiveSpeechSuppressed, false);
   assert.equal(events.some((event) => event.type === 'agent.speech'), true);
 
-  return {
+  return await withAudit(store, {
     name: 'actionable heartbeat can escalate when speech is permitted',
     sessionId,
     kind: 'heartbeat',
     passed: true,
     details: [`significance=${result.significance?.level}`, `providerCalls=${providerCount}`, 'speech=yes']
-  };
+  });
 }
 
 async function createStartedSession(store, input) {
@@ -271,6 +275,98 @@ async function createStartedSession(store, input) {
   const record = await store.load(input.sessionId);
   assert.ok(record);
   await store.saveState(materializeSessionCheckpoint(record.state, record.events));
+}
+
+async function withAudit(store, result) {
+  const events = await store.loadEvents(result.sessionId);
+  return {
+    ...result,
+    audit: summarizeEvents(events)
+  };
+}
+
+function summarizeEvents(events) {
+  const eventTypes = events.map((event) => event.type);
+  const counts = Object.fromEntries(countBy(eventTypes).entries());
+  const latestObservationEvent = [...events].reverse().find((event) => event.type === 'observation.captured');
+  const latestSignificanceEvent = [...events].reverse().find((event) => event.type === 'perception.significance');
+  const latestProviderEvent = [...events].reverse().find((event) => event.type === 'provider.responded');
+
+  return {
+    eventCount: events.length,
+    eventTypes,
+    counts,
+    latestObservationId: dataObject(latestObservationEvent)?.observation?.id,
+    latestSignificance: dataObject(latestSignificanceEvent)?.decision?.level,
+    providerResponded: counts['provider.responded'] ?? 0,
+    speech: counts['agent.speech'] ?? 0,
+    speechSuppressed: counts['agent.speech_suppressed'] ?? 0,
+    latestProviderText: dataObject(latestProviderEvent)?.result?.responseText
+  };
+}
+
+async function writeScenarioReports(results) {
+  const report = {
+    kind: 'atlas.scenario-report.v1',
+    generatedAt: new Date().toISOString(),
+    storeRoot,
+    phoneCameraUsed: false,
+    passed: results.every((result) => result.passed),
+    scenarioCount: results.length,
+    results
+  };
+
+  await mkdir(path.dirname(jsonReportPath), { recursive: true });
+  await mkdir(path.dirname(markdownReportPath), { recursive: true });
+  await writeFile(jsonReportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+  await writeFile(markdownReportPath, formatMarkdownReport(report), 'utf8');
+}
+
+function formatMarkdownReport(report) {
+  const lines = [
+    '# Atlas Scenario Harness Report',
+    '',
+    `- generated: ${report.generatedAt}`,
+    `- result: ${report.passed ? 'PASS' : 'FAIL'}`,
+    `- scenarios: ${report.scenarioCount}`,
+    `- phone/camera used: ${report.phoneCameraUsed ? 'yes' : 'no'}`,
+    `- store: ${report.storeRoot}`,
+    ''
+  ];
+
+  for (const result of report.results) {
+    lines.push(
+      `## ${result.passed ? 'PASS' : 'FAIL'} — ${result.name}`,
+      '',
+      `- kind: ${result.kind}`,
+      `- session: ${result.sessionId}`,
+      `- events: ${result.audit.eventCount}`,
+      `- event counts: ${formatCounts(result.audit.counts)}`,
+      result.audit.latestObservationId ? `- latest observation: ${result.audit.latestObservationId}` : undefined,
+      result.audit.latestSignificance ? `- latest significance: ${result.audit.latestSignificance}` : undefined,
+      result.audit.latestProviderText ? `- latest provider text: ${result.audit.latestProviderText}` : undefined,
+      '',
+      ...result.details.map((detail) => `- ${detail}`),
+      '',
+      ''
+    );
+  }
+
+  return `${lines.filter((line) => line !== undefined).join('\n')}`;
+}
+
+function countBy(values) {
+  const counts = new Map();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return counts;
+}
+
+function formatCounts(counts) {
+  return Object.entries(counts).map(([key, count]) => `${key}=${count}`).join(', ') || 'none';
+}
+
+function dataObject(event) {
+  return typeof event?.data === 'object' && event.data !== null ? event.data : undefined;
 }
 
 function cameraDevice(onCapture) {
@@ -349,9 +445,11 @@ function parseArgs(raw) {
   for (let index = 0; index < raw.length; index += 1) {
     const arg = raw[index];
     if (arg === '--store') parsed.store = raw[++index];
+    else if (arg === '--json') parsed.json = raw[++index];
+    else if (arg === '--markdown') parsed.markdown = raw[++index];
     else if (arg === '--no-clean') parsed.clean = false;
     else if (arg === '--help' || arg === '-h') {
-      console.log('Usage: npm run demo:scenarios -- [--store .atlas-runs/scenario-harness] [--no-clean]');
+      console.log('Usage: npm run demo:scenarios -- [--store .atlas-runs/scenario-harness] [--json path] [--markdown path] [--no-clean]');
       process.exit(0);
     } else {
       throw new Error(`Unknown argument: ${arg}`);

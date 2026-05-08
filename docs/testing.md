@@ -13,7 +13,7 @@ Run the current no-camera MVP scenario pass from the repo root:
 npm run demo:scenarios
 ```
 
-The harness writes temporary session state under `.atlas-runs/scenario-harness` and verifies the major user-loop and heartbeat cases without touching Android/OpenClaw. Use `--store <path>` to choose a different output location, or `--no-clean` to inspect a previous run alongside new state.
+The harness writes temporary session state under `.atlas-runs/scenario-harness` and verifies the major user-loop and heartbeat cases without touching Android/OpenClaw. It also emits `scenario-report.json` and `scenario-report.md` with per-scenario pass/fail status, details, event type timelines, event counts, latest observation/significance/provider text, and speech/suppression counts. Use `--store <path>` to choose a different output location, `--json <path>` / `--markdown <path>` to override report paths, or `--no-clean` to inspect a previous run alongside new state.
 
 ## MVP Test Scenarios
 
