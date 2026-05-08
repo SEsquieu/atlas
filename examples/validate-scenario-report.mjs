@@ -56,6 +56,13 @@ const REQUIRED_SCENARIOS = [
     mustHaveEvents: ['user.utterance', 'provider.requested', 'provider.responded', 'agent.speech', 'audio.speech_requested', 'audio.speech_completed'],
     maxEventCounts: { 'audio.speech_failed': 0 },
     providerTextIncludes: 'Voice output:'
+  },
+  {
+    name: 'voice transcript input routes through normal visual user turn',
+    mustHaveEvents: ['audio.transcript_received', 'user.utterance', 'tool.requested', 'tool.completed', 'observation.captured', 'provider.requested', 'provider.responded', 'agent.speech', 'audio.speech_requested', 'audio.speech_completed'],
+    maxEventCounts: { 'audio.speech_failed': 0 },
+    latestObservationId: 'voice-transcript-view',
+    providerTextIncludes: 'Voice transcript:'
   }
 ];
 

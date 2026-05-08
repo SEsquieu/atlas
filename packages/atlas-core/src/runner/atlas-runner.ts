@@ -36,6 +36,15 @@ export type RunUserTurnInput = {
   mode?: 'text' | 'voice';
 };
 
+export type RunTranscriptTurnInput = {
+  sessionId: string;
+  transcript: string;
+  turnId?: string;
+  source?: string;
+  confidence?: number;
+  language?: string;
+};
+
 export type RunUserTurnResult = {
   session: AtlasSessionState;
   plan: ReturnType<typeof planUserTurn>;
@@ -170,6 +179,35 @@ export class AtlasRunner {
     }
 
     return { session, decision, observation, significance, providerResult, providerReviewSkipped, proactiveSpeechSuppressed };
+  }
+
+  async runTranscriptTurn(input: RunTranscriptTurnInput): Promise<RunUserTurnResult> {
+    const text = input.transcript.trim();
+    if (!text) throw new Error('Transcript text is required.');
+
+    const record = await this.store.load(input.sessionId);
+    if (!record) throw new Error(`Session not found: ${input.sessionId}`);
+    let session = materializeSessionCheckpoint(record.state, record.events);
+
+    const transcriptEvent = await this.store.appendEvent(session.sessionId, {
+      type: 'audio.transcript_received',
+      data: {
+        text,
+        source: input.source ?? 'stt',
+        confidence: input.confidence,
+        language: input.language,
+        turnId: input.turnId
+      }
+    });
+    session = materializeSessionCheckpoint(session, [transcriptEvent]);
+    await this.store.saveState(session);
+
+    return await this.runUserTurn({
+      sessionId: input.sessionId,
+      text,
+      turnId: input.turnId,
+      mode: 'voice'
+    });
   }
 
   async runUserTurn(input: RunUserTurnInput): Promise<RunUserTurnResult> {

@@ -249,3 +249,69 @@ test('runUserTurn preserves text fallback when bound speaker fails', async () =>
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('runTranscriptTurn records transcript and routes through voice user turn', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-runner-transcript-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const session = createSessionState({
+      sessionId: 'transcript-session',
+      provider: { id: 'fake-provider', adapter: '@atlas/core/testing' },
+      devices: [
+        { id: 'fake-camera', adapter: '@atlas/core/testing', capabilities: ['camera.capture'] },
+        { id: 'fake-speaker', adapter: '@atlas/core/testing', capabilities: ['audio.speak'] }
+      ]
+    });
+
+    await store.create(session);
+    await store.appendEvent(session.sessionId, { type: 'session.started' });
+
+    const spoken: string[] = [];
+    const runner = new AtlasRunner({
+      store,
+      devices: [
+        createFakeCameraDevice({ imageSummary: 'A current fake workbench view.' }),
+        createFakeSpeakerDevice({ onSpeak: (text) => { spoken.push(text); } })
+      ],
+      provider: createFakeProvider({ responseText: 'Voice transcript response.' })
+    });
+
+    const result = await runner.runTranscriptTurn({
+      sessionId: session.sessionId,
+      transcript: '  What am I looking at?  ',
+      source: 'fake-stt',
+      confidence: 0.93,
+      language: 'en-US',
+      turnId: 'voice-transcript-turn'
+    });
+
+    assert.equal(result.providerResult.responseText, 'Voice transcript response.');
+    assert.equal(result.plan.shouldRefreshVisualContext, true);
+    assert.deepEqual(spoken, ['Voice transcript response.']);
+
+    const events = await store.loadEvents(session.sessionId);
+    assert.deepEqual(
+      events.map((event) => event.type),
+      [
+        'session.started',
+        'audio.transcript_received',
+        'user.utterance',
+        'tool.requested',
+        'tool.completed',
+        'observation.captured',
+        'provider.requested',
+        'provider.responded',
+        'agent.speech',
+        'audio.speech_requested',
+        'audio.speech_completed'
+      ]
+    );
+    const transcriptEvent = events.find((event) => event.type === 'audio.transcript_received');
+    assert.match(JSON.stringify(transcriptEvent?.data), /fake-stt/);
+    assert.match(JSON.stringify(transcriptEvent?.data), /0.93/);
+    const utteranceEvent = events.find((event) => event.type === 'user.utterance');
+    assert.match(JSON.stringify(utteranceEvent?.data), /"mode":"voice"/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

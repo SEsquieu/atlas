@@ -34,6 +34,7 @@ try {
   results.push(await runHeartbeatActionablePermissionScenario());
   results.push(await runProviderSwapScenario());
   results.push(await runVoiceOutputSpeakerScenario());
+  results.push(await runVoiceTranscriptScenario());
 
   for (const result of results) printResult(result);
   await writeScenarioReports(results);
@@ -390,6 +391,49 @@ async function runVoiceOutputSpeakerScenario() {
     kind: 'voice-layer',
     passed: true,
     details: [`spoken=${spoken.length}`, `response=${result.providerResult.responseText}`]
+  });
+}
+
+async function runVoiceTranscriptScenario() {
+  const sessionId = 'voice-transcript-input';
+  const store = new FileSessionStore({ rootDir: storeRoot });
+  await createStartedSession(store, { sessionId });
+
+  const spoken = [];
+  let captureCount = 0;
+  const runner = new AtlasRunner({
+    store,
+    devices: [
+      cameraDevice(() => {
+        captureCount += 1;
+        return fakeImage({ id: 'voice-transcript-view', summary: 'Fresh fake observation: a labeled storage shelf.' });
+      }),
+      speakerDevice((text) => spoken.push(text))
+    ],
+    provider: providerFor('voice transcript', undefined, 'Voice transcript: you are looking at a labeled storage shelf.')
+  });
+
+  const result = await runner.runTranscriptTurn({
+    sessionId,
+    transcript: 'What am I looking at?',
+    source: 'fake-stt',
+    confidence: 0.94,
+    language: 'en-US'
+  });
+  const events = await store.loadEvents(sessionId);
+
+  assert.equal(result.plan.shouldRefreshVisualContext, true);
+  assert.equal(captureCount, 1);
+  assert.deepEqual(spoken, ['Voice transcript: you are looking at a labeled storage shelf.']);
+  assert.equal(events.some((event) => event.type === 'audio.transcript_received'), true);
+  assert.equal(events.some((event) => event.type === 'user.utterance' && dataObject(event)?.mode === 'voice'), true);
+
+  return await withAudit(store, {
+    name: 'voice transcript input routes through normal visual user turn',
+    sessionId,
+    kind: 'voice-layer',
+    passed: true,
+    details: [`captures=${captureCount}`, `spoken=${spoken.length}`, `response=${result.providerResult.responseText}`]
   });
 }
 
