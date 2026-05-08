@@ -295,6 +295,7 @@ Current slice:
 - `npm run demo:ambient-loop -- --ticks 1 --ask-text "What am I looking at?"` appends a cached-ask proof entry after heartbeat ticks, showing user-turn wall time, plan/reason, refresh/no-refresh, latest context summary, and provider response without invoking the phone camera unless a live config is passed.
 - `npm run loop:android -- summary` now separates heartbeat tick entries from cached-ask entries so ambient-loop scorecards do not miscount explicit asks as heartbeat reuses.
 - `npm run validate:ambient -- <ambient-loop.jsonl>` provides a nonzero-exit regression gate for ambient logs. It requires heartbeat ticks by default, fails on stale-context reuse, and can require captures/cached asks/no ask-time refreshes/max ask wall time.
+- Heartbeat captures now optionally call the provider when significance is `meaningful` or `actionable`. Provider review text is recorded in audit/log output, but proactive speech is hard-gated: meaningful changes are suppressed by default, and actionable notifications only become `agent.speech` when session speak permission is `proactive_allowed`.
 - The ambient loop runner auto-starts the warm OpenClaw image worker for the live Android/OpenClaw bridge config, preventing cold image-analysis timeouts during live loop tests.
 
 Deliverables:
@@ -308,8 +309,8 @@ Deliverables:
 - Cached-context ask proof in ambient loop logs. ✅ fake-safe runner landed
 - Nonzero-exit ambient loop validator for regression/demo gates. ✅ initial fake-safe validator landed
 - Capture budget / device health placeholder to avoid runaway camera pressure. ✅ v0 landed
-- Optional provider call for meaningful scene changes.
-- Hard gate for proactive speech.
+- Optional provider call for meaningful scene changes. ✅ fake-safe gate landed
+- Hard gate for proactive speech. ✅ permission gate landed
 
 Pass criteria:
 

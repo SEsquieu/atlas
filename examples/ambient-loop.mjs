@@ -134,6 +134,13 @@ function buildEntry({ tick, wallMs, heartbeat, inspection }) {
           signals: significance.signals
         }
       : undefined,
+    providerReview: heartbeat.providerResult
+      ? {
+          responseText: heartbeat.providerResult.responseText,
+          done: heartbeat.providerResult.done,
+          proactiveSpeechSuppressed: heartbeat.proactiveSpeechSuppressed
+        }
+      : undefined,
     timing: inspection.timing,
     mediaRef: latest?.mediaRef
   };
@@ -334,10 +341,12 @@ function formatMarkdownEntry(entry) {
     `- capture: ${entry.captured ? `yes (${entry.observationId})` : 'no'}`,
     `- decision: ${entry.decision.reason ?? 'n/a'}`,
     `- significance: ${entry.significance ? `${entry.significance.level} score=${formatScore(entry.significance.score)} provider=${entry.significance.shouldCallProvider} notify=${entry.significance.shouldNotifyUser}` : 'not assessed'}`,
+    entry.providerReview ? `- provider review: yes${entry.providerReview.proactiveSpeechSuppressed ? ' (speech suppressed)' : ''}` : undefined,
     `- wall time: ${formatMs(entry.wallMs)}`,
     entry.mediaRef ? `- media: ${entry.mediaRef}` : undefined,
     '',
     entry.summary ? `summary: ${entry.summary}` : 'summary: (none)',
+    entry.providerReview?.responseText ? `provider review: ${entry.providerReview.responseText}` : undefined,
     '',
     ''
   ].filter((line) => line !== undefined);
@@ -376,6 +385,7 @@ function printEntry(entry) {
       `budget=${entry.captureBudget?.status ?? 'n/a'}`,
       `capture=${entry.captured ? 'yes' : 'no'}`,
       `significance=${entry.significance?.level ?? 'n/a'}`,
+      `provider=${entry.providerReview ? 'yes' : 'no'}`,
       `wall=${formatMs(entry.wallMs)}`,
       entry.summary ? `summary=${truncate(entry.summary, 120)}` : 'summary=(none)'
     ].join(' | ')

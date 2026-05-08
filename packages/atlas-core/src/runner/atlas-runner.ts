@@ -3,6 +3,7 @@ import type {
   AtlasSessionState,
   ContextStatus,
   DeviceAdapter,
+  NormalizedSessionTurn,
   NormalizedAgentResult,
   Observation,
   PerceptionAnalyzerAdapter
@@ -49,6 +50,8 @@ export type RunHeartbeatTickResult = {
   decision: HeartbeatDecision;
   observation?: Observation;
   significance?: SceneSignificanceDecision;
+  providerResult?: NormalizedAgentResult;
+  proactiveSpeechSuppressed?: boolean;
 };
 
 export class AtlasRunner {
@@ -81,6 +84,8 @@ export class AtlasRunner {
 
     let observation: Observation | undefined;
     let significance: SceneSignificanceDecision | undefined;
+    let providerResult: NormalizedAgentResult | undefined;
+    let proactiveSpeechSuppressed = false;
     if (decision.shouldCapture) {
       const previousObservation = session.recentObservations.at(-1);
       observation = await this.captureCurrentView(session, decision.reason);
@@ -101,12 +106,20 @@ export class AtlasRunner {
         }
       });
       session = materializeSessionCheckpoint(session, [significanceEvent]);
+
+      if (significance.shouldCallProvider) {
+        const review = await this.runHeartbeatProviderReview(session, significance);
+        providerResult = review.providerResult;
+        proactiveSpeechSuppressed = review.proactiveSpeechSuppressed;
+        session = review.session;
+      }
+
       await this.store.saveState(session);
     } else {
       await this.store.saveState(session);
     }
 
-    return { session, decision, observation, significance };
+    return { session, decision, observation, significance, providerResult, proactiveSpeechSuppressed };
   }
 
   async runUserTurn(input: RunUserTurnInput): Promise<RunUserTurnResult> {
@@ -234,6 +247,83 @@ export class AtlasRunner {
 
     return observation;
   }
+
+  private async runHeartbeatProviderReview(
+    session: AtlasSessionState,
+    significance: SceneSignificanceDecision
+  ): Promise<{ session: AtlasSessionState; providerResult: NormalizedAgentResult; proactiveSpeechSuppressed: boolean }> {
+    const turnId = crypto.randomUUID();
+    const turn = buildHeartbeatSessionTurn({ turnId, session, significance });
+
+    await this.store.appendEvent(session.sessionId, {
+      type: 'provider.requested',
+      data: {
+        provider: this.provider.id,
+        turnId,
+        source: 'heartbeat',
+        significance
+      }
+    });
+
+    const providerResult = await this.provider.step(turn);
+
+    await this.store.appendEvent(session.sessionId, {
+      type: 'provider.responded',
+      data: { provider: this.provider.id, turnId, source: 'heartbeat', result: providerResult }
+    });
+
+    const maySpeakProactively = significance.shouldNotifyUser && session.permissions.speak === 'proactive_allowed';
+    const proactiveSpeechSuppressed = Boolean(providerResult.responseText && !maySpeakProactively);
+    if (providerResult.responseText && maySpeakProactively) {
+      await this.store.appendEvent(session.sessionId, {
+        type: 'agent.speech',
+        data: { text: providerResult.responseText, source: 'heartbeat', significance }
+      });
+    } else if (proactiveSpeechSuppressed) {
+      await this.store.appendEvent(session.sessionId, {
+        type: 'agent.speech_suppressed',
+        data: {
+          text: providerResult.responseText,
+          source: 'heartbeat',
+          reason: significance.shouldNotifyUser
+            ? `proactive speech permission is ${session.permissions.speak}`
+            : 'scene significance requests provider review but not user notification',
+          significance
+        }
+      });
+    }
+
+    const latestRecord = await this.store.load(session.sessionId);
+    if (!latestRecord) throw new Error(`Session disappeared while running heartbeat provider review: ${session.sessionId}`);
+    return {
+      session: materializeSessionCheckpoint(latestRecord.state, latestRecord.events),
+      providerResult,
+      proactiveSpeechSuppressed
+    };
+  }
+}
+
+function buildHeartbeatSessionTurn(input: {
+  turnId: string;
+  session: AtlasSessionState;
+  significance: SceneSignificanceDecision;
+}): NormalizedSessionTurn {
+  return {
+    turnId: input.turnId,
+    session: input.session,
+    trigger: { type: 'heartbeat', reason: input.significance.reason },
+    contextStatus: { visual: contextStatusFromSession(input.session) },
+    observations: input.session.recentObservations,
+    availableTools: [],
+    instructions: [
+      'Atlas heartbeat detected a physical scene change during ambient perception.',
+      `Significance level: ${input.significance.level}; score: ${input.significance.score.toFixed(2)}; reason: ${input.significance.reason}.`,
+      'Review the latest observation and decide whether there is anything useful to know. Do not assume the user asked a question.',
+      input.significance.shouldNotifyUser
+        ? 'If the scene appears actionable or safety-relevant, provide a concise notification-worthy response.'
+        : 'Return concise internal review text if useful, but this response is not automatically spoken to the user.'
+    ]
+  };
 }
 
 function formatError(error: unknown): string {

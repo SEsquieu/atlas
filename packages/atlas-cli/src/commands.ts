@@ -207,6 +207,13 @@ async function heartbeatSessionCommand(sessionId: string, args: string[], option
           decision: result.decision,
           observationId: result.observation?.id,
           significance: result.significance,
+          providerResult: result.providerResult
+            ? {
+                responseText: result.providerResult.responseText,
+                done: result.providerResult.done
+              }
+            : undefined,
+          proactiveSpeechSuppressed: result.proactiveSpeechSuppressed,
           status: result.session.status
         },
         null,

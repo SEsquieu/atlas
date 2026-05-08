@@ -62,6 +62,7 @@ test('runHeartbeatTick records meaningful significance when heartbeat capture ch
   const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-significance-'));
   try {
     const store = new FileSessionStore({ rootDir: root });
+    let providerReviewCount = 0;
     const nowMs = Date.now();
     const previousObservation = {
       id: 'previous-desk',
@@ -96,7 +97,15 @@ test('runHeartbeatTick records meaningful significance when heartbeat capture ch
     const runner = new AtlasRunner({
       store,
       devices: [createFakeCameraDevice({ imageSummary: 'A grocery aisle with shelves of cereal and a hanging price sign.' })],
-      provider: createFakeProvider()
+      provider: createFakeProvider({
+        responseText: 'Scene changed, but no user interruption is needed.',
+        onTurn: async (turn) => {
+          providerReviewCount += 1;
+          assert.equal(turn.trigger.type, 'heartbeat');
+          assert.match(turn.instructions.join('\n'), /not automatically spoken/);
+          return { turnId: turn.turnId, responseText: 'Scene changed, but no user interruption is needed.' };
+        }
+      })
     });
 
     const result = await runner.runHeartbeatTick({ sessionId: session.sessionId, now: nowMs });
@@ -105,9 +114,78 @@ test('runHeartbeatTick records meaningful significance when heartbeat capture ch
     assert.equal(result.significance?.level, 'meaningful');
     assert.equal(result.significance?.shouldCallProvider, true);
     assert.equal(result.significance?.shouldNotifyUser, false);
+    assert.equal(providerReviewCount, 1);
+    assert.equal(result.providerResult?.responseText, 'Scene changed, but no user interruption is needed.');
+    assert.equal(result.proactiveSpeechSuppressed, true);
 
     const events = await store.loadEvents(session.sessionId);
-    assert.equal(events.at(-1)?.type, 'perception.significance');
+    assert.deepEqual(
+      events.slice(-4).map((event) => event.type),
+      ['perception.significance', 'provider.requested', 'provider.responded', 'agent.speech_suppressed']
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('runHeartbeatTick only speaks proactively for actionable significance with permission', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-actionable-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const nowMs = Date.now();
+    const previousObservation = {
+      id: 'previous-desk',
+      type: 'image' as const,
+      capturedAt: new Date(nowMs - 90_000).toISOString(),
+      deviceId: 'fake-camera',
+      summary: 'A quiet desk with a laptop and coffee mug.',
+      quality: { confidence: 0.9, motion: false }
+    };
+    const session = createSessionState({
+      sessionId: 'actionable-session',
+      now: new Date(nowMs - 90_000).toISOString(),
+      provider: { id: 'fake-provider', adapter: '@atlas/core/testing' }
+    });
+
+    await store.create({
+      ...session,
+      status: 'active',
+      permissions: {
+        ...session.permissions,
+        speak: 'proactive_allowed'
+      },
+      recentObservations: [previousObservation],
+      perception: {
+        ...session.perception,
+        latestObservationAt: previousObservation.capturedAt,
+        latestImageId: previousObservation.id,
+        summary: previousObservation.summary,
+        confidence: 0.9,
+        freshnessMs: 90_000,
+        stability: 'stable',
+        motionState: 'stationary'
+      }
+    });
+
+    const runner = new AtlasRunner({
+      store,
+      devices: [createFakeCameraDevice({ imageSummary: 'Smoke and sparks are coming from a power supply on the bench.' })],
+      provider: createFakeProvider({ responseText: 'Heads up: I see smoke or sparks near the bench power supply.' })
+    });
+
+    const result = await runner.runHeartbeatTick({ sessionId: session.sessionId, now: nowMs });
+
+    assert.equal(result.significance?.level, 'actionable');
+    assert.equal(result.significance?.shouldCallProvider, true);
+    assert.equal(result.significance?.shouldNotifyUser, true);
+    assert.equal(result.providerResult?.responseText, 'Heads up: I see smoke or sparks near the bench power supply.');
+    assert.equal(result.proactiveSpeechSuppressed, false);
+
+    const events = await store.loadEvents(session.sessionId);
+    assert.deepEqual(
+      events.slice(-4).map((event) => event.type),
+      ['perception.significance', 'provider.requested', 'provider.responded', 'agent.speech']
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
