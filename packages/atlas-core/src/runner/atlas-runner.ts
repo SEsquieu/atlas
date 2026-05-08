@@ -60,6 +60,20 @@ export type RunHeartbeatTickInput = {
   heartbeatPolicy?: Omit<HeartbeatPolicyOptions, 'captureBudget'>;
 };
 
+export type InterruptSpeechInput = {
+  sessionId: string;
+  reason?: string;
+  speechId?: string;
+};
+
+export type InterruptSpeechResult = {
+  session: AtlasSessionState;
+  interrupted: boolean;
+  activeSpeechId?: string;
+  deviceId?: string;
+  error?: string;
+};
+
 export type RunHeartbeatTickResult = {
   session: AtlasSessionState;
   decision: HeartbeatDecision;
@@ -81,12 +95,21 @@ export type HeartbeatProviderReviewSkip = {
   };
 };
 
+type ActiveSpeech = {
+  speechId: string;
+  sessionId: string;
+  deviceId: string;
+  source: 'user-turn' | 'heartbeat';
+  interrupted: boolean;
+};
+
 export class AtlasRunner {
   private readonly store: SessionStore;
   private readonly provider: AgentProviderAdapter;
   private readonly devices: DeviceAdapter[];
   private readonly analyzers: PerceptionAnalyzerAdapter[];
   private readonly heartbeatPolicy: Omit<HeartbeatPolicyOptions, 'captureBudget'> | undefined;
+  private readonly activeSpeech = new Map<string, ActiveSpeech>();
 
   constructor(options: AtlasRunnerOptions) {
     this.store = options.store;
@@ -298,6 +321,66 @@ export class AtlasRunner {
     };
   }
 
+  async interruptSpeech(input: InterruptSpeechInput): Promise<InterruptSpeechResult> {
+    const record = await this.store.load(input.sessionId);
+    if (!record) throw new Error(`Session not found: ${input.sessionId}`);
+    let session = materializeSessionCheckpoint(record.state, record.events);
+
+    const active = this.findActiveSpeech(input.sessionId, input.speechId);
+    const speaker = this.devices.find((candidate) => typeof candidate.stopSpeaking === 'function');
+    const deviceId = active?.deviceId ?? speaker?.id;
+    const reason = input.reason ?? 'user requested speech interrupt';
+
+    const requestedEvent = await this.store.appendEvent(session.sessionId, {
+      type: 'audio.speech_interrupt_requested',
+      data: {
+        deviceId,
+        speechId: input.speechId ?? active?.speechId,
+        active: Boolean(active),
+        reason
+      }
+    });
+    session = materializeSessionCheckpoint(session, [requestedEvent]);
+
+    if (!speaker?.stopSpeaking) {
+      const error = 'No bound device can stop speech.';
+      const failedEvent = await this.store.appendEvent(session.sessionId, {
+        type: 'audio.speech_interrupt_failed',
+        data: { deviceId, speechId: input.speechId ?? active?.speechId, active: Boolean(active), reason, error }
+      });
+      session = materializeSessionCheckpoint(session, [failedEvent]);
+      await this.store.saveState(session);
+      return { session, interrupted: false, activeSpeechId: active?.speechId, deviceId, error };
+    }
+
+    try {
+      if (active) active.interrupted = true;
+      await speaker.stopSpeaking({ reason, speechId: input.speechId ?? active?.speechId });
+      const interruptedEvent = await this.store.appendEvent(session.sessionId, {
+        type: 'audio.speech_interrupted',
+        data: {
+          deviceId: speaker.id,
+          speechId: input.speechId ?? active?.speechId,
+          active: Boolean(active),
+          reason
+        }
+      });
+      session = materializeSessionCheckpoint(session, [interruptedEvent]);
+      await this.store.saveState(session);
+      return { session, interrupted: true, activeSpeechId: active?.speechId, deviceId: speaker.id };
+    } catch (error) {
+      if (active) active.interrupted = false;
+      const formatted = formatError(error);
+      const failedEvent = await this.store.appendEvent(session.sessionId, {
+        type: 'audio.speech_interrupt_failed',
+        data: { deviceId: speaker.id, speechId: input.speechId ?? active?.speechId, active: Boolean(active), reason, error: formatted }
+      });
+      session = materializeSessionCheckpoint(session, [failedEvent]);
+      await this.store.saveState(session);
+      return { session, interrupted: false, activeSpeechId: active?.speechId, deviceId: speaker.id, error: formatted };
+    }
+  }
+
   private async captureCurrentView(session: AtlasSessionState, reason: string): Promise<Observation> {
     if (session.permissions.captureImage === 'never') {
       throw new Error('Image capture is not permitted for this session.');
@@ -391,9 +474,10 @@ export class AtlasRunner {
     text: string,
     input: { source: 'user-turn' | 'heartbeat'; significance?: SceneSignificanceDecision }
   ): Promise<AtlasSessionState> {
+    const speechId = crypto.randomUUID();
     const speechEvent = await this.store.appendEvent(session.sessionId, {
       type: 'agent.speech',
-      data: { text, source: input.source, significance: input.significance }
+      data: { speechId, text, source: input.source, significance: input.significance }
     });
     let nextSession = materializeSessionCheckpoint(session, [speechEvent]);
 
@@ -402,26 +486,44 @@ export class AtlasRunner {
 
     const requestedEvent = await this.store.appendEvent(session.sessionId, {
       type: 'audio.speech_requested',
-      data: { deviceId: speaker.id, source: input.source, text }
+      data: { deviceId: speaker.id, speechId, source: input.source, text, interruptExistingSpeech: input.source === 'heartbeat' }
     });
     nextSession = materializeSessionCheckpoint(nextSession, [requestedEvent]);
 
+    const active: ActiveSpeech = { speechId, sessionId: session.sessionId, deviceId: speaker.id, source: input.source, interrupted: false };
+    this.activeSpeech.set(speechId, active);
+
     try {
-      await speaker.speak(text, { interrupt: input.source === 'heartbeat' });
+      await speaker.speak(text, { interrupt: input.source === 'heartbeat', speechId });
+      if (active.interrupted) {
+        const latestRecord = await this.store.load(session.sessionId);
+        return latestRecord ? materializeSessionCheckpoint(latestRecord.state, latestRecord.events) : nextSession;
+      }
       const completedEvent = await this.store.appendEvent(session.sessionId, {
         type: 'audio.speech_completed',
-        data: { deviceId: speaker.id, source: input.source }
+        data: { deviceId: speaker.id, speechId, source: input.source }
       });
       nextSession = materializeSessionCheckpoint(nextSession, [completedEvent]);
     } catch (error) {
+      if (active.interrupted) {
+        const latestRecord = await this.store.load(session.sessionId);
+        return latestRecord ? materializeSessionCheckpoint(latestRecord.state, latestRecord.events) : nextSession;
+      }
       const failedEvent = await this.store.appendEvent(session.sessionId, {
         type: 'audio.speech_failed',
-        data: { deviceId: speaker.id, source: input.source, error: formatError(error), textFallbackPreserved: true }
+        data: { deviceId: speaker.id, speechId, source: input.source, error: formatError(error), textFallbackPreserved: true }
       });
       nextSession = materializeSessionCheckpoint(nextSession, [failedEvent]);
+    } finally {
+      this.activeSpeech.delete(speechId);
     }
 
     return nextSession;
+  }
+
+  private findActiveSpeech(sessionId: string, speechId?: string): ActiveSpeech | undefined {
+    const matches = [...this.activeSpeech.values()].filter((active) => active.sessionId === sessionId && (!speechId || active.speechId === speechId));
+    return matches.at(-1);
   }
 }
 

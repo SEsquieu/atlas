@@ -35,6 +35,7 @@ try {
   results.push(await runProviderSwapScenario());
   results.push(await runVoiceOutputSpeakerScenario());
   results.push(await runVoiceTranscriptScenario());
+  results.push(await runVoiceInterruptScenario());
 
   for (const result of results) printResult(result);
   await writeScenarioReports(results);
@@ -437,6 +438,61 @@ async function runVoiceTranscriptScenario() {
   });
 }
 
+async function runVoiceInterruptScenario() {
+  const sessionId = 'voice-interrupt-stop';
+  const store = new FileSessionStore({ rootDir: storeRoot });
+  await createStartedSession(store, {
+    sessionId,
+    observation: fakeImage({ id: 'voice-interrupt-context', ageMs: 2_000, summary: 'Fresh fake observation: a quiet bench.' })
+  });
+
+  let activeSpeechId;
+  const speechStarted = deferred();
+  const speechStopped = deferred();
+  const runner = new AtlasRunner({
+    store,
+    devices: [
+      cameraDevice(() => fakeImage({ id: 'unexpected-interrupt-refresh', summary: 'This should not be captured.' })),
+      speakerDevice(
+        (_text, options) => {
+          activeSpeechId = options?.speechId;
+          speechStarted.resolve();
+          return speechStopped.promise;
+        },
+        {
+          onStopSpeaking: (options) => {
+            assert.equal(options?.speechId, activeSpeechId);
+            speechStopped.resolve();
+          }
+        }
+      )
+    ],
+    provider: providerFor('voice interrupt', undefined, 'Voice interrupt: this fake speech is intentionally long.')
+  });
+
+  const turnPromise = runner.runUserTurn({ sessionId, text: 'What am I looking at?', mode: 'voice' });
+  await speechStarted.promise;
+  const interrupt = await runner.interruptSpeech({ sessionId, reason: 'fake scenario barge-in' });
+  const result = await turnPromise;
+  const events = await store.loadEvents(sessionId);
+
+  assert.equal(interrupt.interrupted, true);
+  assert.equal(interrupt.activeSpeechId, activeSpeechId);
+  assert.equal(result.providerResult.responseText, 'Voice interrupt: this fake speech is intentionally long.');
+  assert.equal(events.some((event) => event.type === 'audio.speech_interrupt_requested'), true);
+  assert.equal(events.some((event) => event.type === 'audio.speech_interrupted'), true);
+  assert.equal(events.some((event) => event.type === 'audio.speech_completed'), false);
+  assert.equal(events.some((event) => event.type === 'audio.speech_failed'), false);
+
+  return await withAudit(store, {
+    name: 'voice interrupt stops active speaker output without fallback failure',
+    sessionId,
+    kind: 'voice-layer',
+    passed: true,
+    details: [`speechId=${activeSpeechId}`, `interrupted=${interrupt.interrupted}`, `response=${result.providerResult.responseText}`]
+  });
+}
+
 async function createStartedSession(store, input) {
   const session = createSessionState({
     sessionId: input.sessionId,
@@ -568,8 +624,19 @@ function speakerDevice(onSpeak, options = {}) {
     id: options.id ?? 'fake-speaker',
     name: options.name ?? 'Fake no-camera speaker',
     capabilities: async () => ['audio.speak'],
-    speak: async (text) => onSpeak(text)
+    speak: async (text, speakOptions) => onSpeak(text, speakOptions),
+    stopSpeaking: options.onStopSpeaking ? async (stopOptions) => options.onStopSpeaking(stopOptions) : undefined
   };
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+  return { promise, resolve, reject };
 }
 
 function providerFor(label, onTurn, responseText) {

@@ -63,6 +63,12 @@ const REQUIRED_SCENARIOS = [
     maxEventCounts: { 'audio.speech_failed': 0 },
     latestObservationId: 'voice-transcript-view',
     providerTextIncludes: 'Voice transcript:'
+  },
+  {
+    name: 'voice interrupt stops active speaker output without fallback failure',
+    mustHaveEvents: ['user.utterance', 'provider.requested', 'provider.responded', 'agent.speech', 'audio.speech_requested', 'audio.speech_interrupt_requested', 'audio.speech_interrupted'],
+    maxEventCounts: { 'audio.speech_completed': 0, 'audio.speech_failed': 0, 'audio.speech_interrupt_failed': 0 },
+    providerTextIncludes: 'Voice interrupt:'
   }
 ];
 

@@ -7,7 +7,9 @@ import type {
   NormalizedSessionTurn,
   Observation,
   ObservationAnalysis,
-  PerceptionAnalyzerAdapter
+  PerceptionAnalyzerAdapter,
+  SpeakOptions,
+  StopSpeakingOptions
 } from '../types.js';
 
 export type FakeDeviceOptions = {
@@ -20,7 +22,8 @@ export type FakeDeviceOptions = {
 export type FakeSpeakerOptions = {
   id?: string;
   name?: string;
-  onSpeak?: (text: string) => void | Promise<void>;
+  onSpeak?: (text: string, options?: SpeakOptions) => void | Promise<void>;
+  onStopSpeaking?: (options?: StopSpeakingOptions) => void | Promise<void>;
 };
 
 export function createFakeCameraDevice(options: FakeDeviceOptions = {}): DeviceAdapter {
@@ -79,9 +82,14 @@ export function createFakeSpeakerDevice(options: FakeSpeakerOptions = {}): Devic
     id: options.id ?? 'fake-speaker',
     name: options.name ?? 'Fake Speaker',
     capabilities: async () => capabilities,
-    speak: async (text) => {
-      await options.onSpeak?.(text);
-    }
+    speak: async (text, speakOptions) => {
+      await options.onSpeak?.(text, speakOptions);
+    },
+    stopSpeaking: options.onStopSpeaking
+      ? async (stopOptions) => {
+          await options.onStopSpeaking?.(stopOptions);
+        }
+      : undefined
   };
 }
 

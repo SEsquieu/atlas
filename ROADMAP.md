@@ -358,13 +358,14 @@ Current slice:
 
 - Atlas now emits text responses as `agent.speech` and, when a bound device exposes `speak`, mirrors them to `DeviceAdapter.speak()` with `audio.speech_requested`, `audio.speech_completed`, or `audio.speech_failed` audit events. Speaker failure preserves the text response as fallback. Live phone speech testing is intentionally deferred until Seth is home from work.
 - Fake STT transcript ingestion now records `audio.transcript_received` and routes the transcript through the normal voice-mode user turn path, preserving the same visual refresh/provider/speaker behavior as typed asks.
+- Fake-safe speech interrupt wiring now tracks active speech with `speechId`, exposes `AtlasRunner.interruptSpeech(...)`, calls optional `DeviceAdapter.stopSpeaking(...)`, and records `audio.speech_interrupt_requested`, `audio.speech_interrupted`, or `audio.speech_interrupt_failed` without treating intentional interruption as speaker failure.
 
 Deliverables:
 
 - STT input interface. ✅ fake-safe transcript hook landed
 - TTS/speak interface. ✅ fake-safe device hook landed
 - Android speaker output path.
-- Interrupt/stop behavior.
+- Interrupt/stop behavior. ✅ fake-safe runner/device hook landed
 - Text fallback preserved. ✅ fake-safe fallback landed
 
 Pass criteria:

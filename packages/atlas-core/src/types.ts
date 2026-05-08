@@ -240,6 +240,12 @@ export type LocationOptions = {
 export type SpeakOptions = {
   voice?: string;
   interrupt?: boolean;
+  speechId?: string;
+};
+
+export type StopSpeakingOptions = {
+  reason?: string;
+  speechId?: string;
 };
 
 export type AnalyzeObservationOptions = {
@@ -254,6 +260,7 @@ export interface DeviceAdapter {
   captureImage?(options?: CaptureImageOptions): Promise<Observation>;
   getLocation?(options?: LocationOptions): Promise<Observation>;
   speak?(text: string, options?: SpeakOptions): Promise<void>;
+  stopSpeaking?(options?: StopSpeakingOptions): Promise<void>;
 }
 
 export interface PerceptionAnalyzerAdapter {

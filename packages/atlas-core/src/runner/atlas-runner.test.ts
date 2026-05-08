@@ -250,6 +250,69 @@ test('runUserTurn preserves text fallback when bound speaker fails', async () =>
   }
 });
 
+test('interruptSpeech stops active speaker output and suppresses completed audio event', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-runner-speaker-interrupt-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const session = createSessionState({
+      sessionId: 'speaker-interrupt-session',
+      provider: { id: 'fake-provider', adapter: '@atlas/core/testing' },
+      devices: [
+        { id: 'fake-camera', adapter: '@atlas/core/testing', capabilities: ['camera.capture'] },
+        { id: 'fake-speaker', adapter: '@atlas/core/testing', capabilities: ['audio.speak'] }
+      ]
+    });
+
+    await store.create(session);
+    await store.appendEvent(session.sessionId, { type: 'session.started' });
+
+    let activeSpeechId: string | undefined;
+    const speechStarted = deferred<void>();
+    const speechStopped = deferred<void>();
+    const runner = new AtlasRunner({
+      store,
+      devices: [
+        createFakeCameraDevice(),
+        createFakeSpeakerDevice({
+          onSpeak: (_text, options) => {
+            activeSpeechId = options?.speechId;
+            speechStarted.resolve();
+            return speechStopped.promise;
+          },
+          onStopSpeaking: (options) => {
+            assert.equal(options?.speechId, activeSpeechId);
+            speechStopped.resolve();
+          }
+        })
+      ],
+      provider: createFakeProvider({ responseText: 'This long fake speech can be interrupted.' })
+    });
+
+    const turnPromise = runner.runUserTurn({
+      sessionId: session.sessionId,
+      text: 'What am I looking at?',
+      mode: 'voice'
+    });
+    await speechStarted.promise;
+
+    const interrupt = await runner.interruptSpeech({ sessionId: session.sessionId, reason: 'fake barge-in' });
+    const result = await turnPromise;
+
+    assert.equal(interrupt.interrupted, true);
+    assert.equal(interrupt.activeSpeechId, activeSpeechId);
+    assert.equal(result.providerResult.responseText, 'This long fake speech can be interrupted.');
+
+    const events = await store.loadEvents(session.sessionId);
+    assert.equal(events.some((event) => event.type === 'audio.speech_requested'), true);
+    assert.equal(events.some((event) => event.type === 'audio.speech_interrupt_requested'), true);
+    assert.equal(events.some((event) => event.type === 'audio.speech_interrupted'), true);
+    assert.equal(events.some((event) => event.type === 'audio.speech_completed'), false);
+    assert.equal(events.some((event) => event.type === 'audio.speech_failed'), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('runTranscriptTurn records transcript and routes through voice user turn', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-runner-transcript-'));
   try {
@@ -315,3 +378,13 @@ test('runTranscriptTurn records transcript and routes through voice user turn', 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+  return { promise, resolve, reject };
+}
