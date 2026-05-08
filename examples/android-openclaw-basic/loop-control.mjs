@@ -744,6 +744,7 @@ function printParsedSummary(entries) {
   const captureValues = heartbeatEntries.map((entry) => entry.timing?.bridge?.captureMs).filter(isFiniteNumber);
   const analysisValues = heartbeatEntries.map((entry) => entry.timing?.bridge?.analysisMs).filter(isFiniteNumber);
   const providerReviews = heartbeatEntries.filter((entry) => entry.providerReview).length;
+  const providerReviewSkips = heartbeatEntries.filter((entry) => entry.providerReviewSkipped).length;
   const suppressedProviderReviews = heartbeatEntries.filter((entry) => entry.providerReview?.proactiveSpeechSuppressed).length;
   const latest = heartbeatEntries.at(-1);
 
@@ -759,7 +760,7 @@ function printParsedSummary(entries) {
   if (captureValues.length) console.log(`- avg camera/helper capture: ${formatMs(avg(captureValues))}`);
   if (analysisValues.length) console.log(`- avg image analysis: ${formatMs(avg(analysisValues))}`);
   console.log(`- significance: ${formatCounts(countBy(heartbeatEntries, (entry) => entry.significance?.level ?? 'none'))}`);
-  console.log(`- provider reviews: ${providerReviews}${suppressedProviderReviews ? ` (${suppressedProviderReviews} speech suppressed)` : ''}`);
+  console.log(`- provider reviews: ${providerReviews}${suppressedProviderReviews ? ` (${suppressedProviderReviews} speech suppressed)` : ''}${providerReviewSkips ? `, ${providerReviewSkips} skipped` : ''}`);
   console.log(`- cadence: ${formatCounts(countBy(heartbeatEntries, (entry) => entry.cadence?.mode ?? 'unknown'))}`);
   printFreshnessScorecard(freshness);
   printCachedAskSummary(cachedAskEntries);

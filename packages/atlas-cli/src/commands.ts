@@ -215,6 +215,7 @@ async function heartbeatSessionCommand(sessionId: string, args: string[], option
                 done: result.providerResult.done
               }
             : undefined,
+          providerReviewSkipped: result.providerReviewSkipped,
           proactiveSpeechSuppressed: result.proactiveSpeechSuppressed,
           status: result.session.status
         },
@@ -262,7 +263,8 @@ function heartbeatPolicyFromConfig(config: AtlasHeartbeatPolicyConfig | undefine
     minExpectedRefreshLatencyMs: config.minExpectedRefreshLatencyMs,
     maxExpectedRefreshLatencyMs: config.maxExpectedRefreshLatencyMs,
     refreshSafetyMarginMs: config.refreshSafetyMarginMs,
-    refreshFailureRetryMs: config.refreshFailureRetryMs
+    refreshFailureRetryMs: config.refreshFailureRetryMs,
+    providerReviewCooldownMs: config.providerReviewCooldownMs
   };
 }
 

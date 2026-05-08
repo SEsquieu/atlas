@@ -56,6 +56,7 @@ export type HeartbeatPolicyOptions = {
   maxExpectedRefreshLatencyMs?: number;
   refreshSafetyMarginMs?: number;
   refreshFailureRetryMs?: number;
+  providerReviewCooldownMs?: number;
   captureBudget?: CaptureBudgetDecision;
 };
 

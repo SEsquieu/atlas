@@ -21,7 +21,7 @@ Validate the generated report contract:
 npm run validate:scenarios
 ```
 
-The validator fails with nonzero exit if the report is missing required scenarios, if any scenario failed, or if required event patterns regress. For example, unchanged heartbeat must not have provider/speech events, meaningful heartbeat must include provider review plus speech suppression, actionable heartbeat must include proactive speech when permission allows it, and provider swap must show the alternate provider receiving the same materialized physical session shape.
+The validator fails with nonzero exit if the report is missing required scenarios, if any scenario failed, or if required event patterns regress. For example, unchanged heartbeat must not have provider/speech events, meaningful heartbeat must include provider review plus speech suppression, repeated meaningful heartbeat must skip duplicate provider review for the same scene, actionable heartbeat must include proactive speech when permission allows it, and provider swap must show the alternate provider receiving the same materialized physical session shape.
 
 Replay a saved session from its event log and compare replayed materialized state with saved state:
 
@@ -100,11 +100,15 @@ Heartbeat-triggered provider reviews in the live Android config use `ATLAS_OPENC
    - Run a heartbeat after the scene meaningfully changes.
    - Expected: Atlas records `perception.significance` as `meaningful` and marks the observation eligible for provider review without proactive speech.
 
-6. **Actionable ambient change**
+6. **Repeated meaningful ambient change**
+   - Keep seeing the same meaningful scene with small summary wording changes.
+   - Expected: Atlas records significance but skips duplicate provider review inside the review cooldown.
+
+7. **Actionable ambient change**
    - Run a heartbeat that detects a safety/action cue.
    - Expected: Atlas records `perception.significance` as `actionable`; this is the only v0 level that may pass the future proactive notification hard gate.
 
-7. **Capture budget / device pressure**
+8. **Capture budget / device pressure**
    - Seed recent capture events or run repeated heartbeats.
    - Expected: heartbeat decisions include `captureBudget`; stale stable context can be deferred when budget is `constrained` or `cooldown`.
 

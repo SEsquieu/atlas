@@ -296,6 +296,7 @@ Current slice:
 - `npm run loop:android -- summary` now separates heartbeat tick entries from cached-ask entries so ambient-loop scorecards do not miscount explicit asks as heartbeat reuses.
 - `npm run validate:ambient -- <ambient-loop.jsonl>` provides a nonzero-exit regression gate for ambient logs. It requires heartbeat ticks by default, fails on stale-context reuse, and can require captures/cached asks/no ask-time refreshes/max ask wall time.
 - Heartbeat captures now optionally call the provider when significance is `meaningful` or `actionable`. Provider review text is recorded in audit/log output, but proactive speech is hard-gated: meaningful changes are suppressed by default, and actionable notifications only become `agent.speech` when session speak permission is `proactive_allowed`.
+- Repeated meaningful heartbeat scenes are de-duplicated with a recent-review cooldown so small wording shifts in the same physical scene do not spam provider review; actionable scenes still bypass this duplicate-review suppression.
 - The ambient loop runner auto-starts the warm OpenClaw image worker for the live Android/OpenClaw bridge config, preventing cold image-analysis timeouts during live loop tests. Worker startup now reports ready as soon as HTTP health/describe endpoints are listening, then initializes OpenClaw runtime in the background, so model/provider discovery no longer looks like a silent loop hang before tick 1. Short loops and one-off asks now leave spawned workers alive by default and rediscover them through the worker registry so OpenClaw initialization is paid once whenever possible.
 - Session config can now provide `heartbeat.policy` overrides for cadence, stale windows, expected refresh latency, safety margin, and refresh-failure retry windows; CLI heartbeat uses those policy values while still injecting live capture-budget pressure.
 - Refresh failure fallback is non-binding: stable low-risk stale context can be reused temporarily when refresh is degraded/unavailable, but Atlas marks the fallback, keeps cadence in active retry mode, and attempts capture again when the retry window elapses.
@@ -312,6 +313,7 @@ Deliverables:
 - Nonzero-exit ambient loop validator for regression/demo gates. ✅ initial fake-safe validator landed
 - Capture budget / device health placeholder to avoid runaway camera pressure. ✅ v0 landed
 - Optional provider call for meaningful scene changes. ✅ fake-safe gate landed
+- Duplicate-review suppression for repeated meaningful scenes. ✅ fake-safe cooldown landed
 - Hard gate for proactive speech. ✅ permission gate landed
 
 Pass criteria:
@@ -326,7 +328,7 @@ Goal: make behavior inspectable and hard to fool ourselves about.
 
 Current slice:
 
-- `npm run demo:scenarios` runs a fake-safe scenario harness covering fresh visual capture, cached visual reuse, transitional place-confirmation refresh, unchanged heartbeat silence, meaningful heartbeat provider-review speech suppression, actionable heartbeat escalation with permission, and provider adapter swap behavior.
+- `npm run demo:scenarios` runs a fake-safe scenario harness covering fresh visual capture, cached visual reuse, transitional place-confirmation refresh, unchanged heartbeat silence, meaningful heartbeat provider-review speech suppression, repeated meaningful-scene duplicate-review suppression, actionable heartbeat escalation with permission, and provider adapter swap behavior.
 - The scenario harness emits `scenario-report.json` / `scenario-report.md` with per-scenario details, event type timelines/counts, latest observation/significance/provider text, and speech/suppression counts.
 - `npm run validate:scenarios` validates the fake-safe scenario report contract and fails on missing scenarios, failed report status, or required event-pattern regressions.
 - `npm run replay:session -- <sessionId>` rebuilds a saved session from `events.jsonl`, compares replayed materialized state to saved `state.json`, and can emit JSON/Markdown replay reports.

@@ -35,6 +35,12 @@ const REQUIRED_SCENARIOS = [
     significance: 'meaningful'
   },
   {
+    name: 'repeated meaningful heartbeat avoids duplicate provider review',
+    mustHaveEvents: ['heartbeat.tick', 'observation.captured', 'perception.significance', 'provider.requested', 'provider.responded', 'provider.review_skipped', 'agent.speech_suppressed'],
+    maxEventCounts: { 'provider.requested': 1, 'provider.responded': 1, 'provider.review_skipped': 1, 'agent.speech': 0 },
+    significance: 'meaningful'
+  },
+  {
     name: 'actionable heartbeat can escalate when speech is permitted',
     mustHaveEvents: ['heartbeat.tick', 'observation.captured', 'perception.significance', 'provider.requested', 'provider.responded', 'agent.speech'],
     significance: 'actionable'

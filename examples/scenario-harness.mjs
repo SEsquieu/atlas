@@ -30,6 +30,7 @@ try {
   results.push(await runTransitionalPlaceRefreshScenario());
   results.push(await runHeartbeatUnchangedSilenceScenario());
   results.push(await runHeartbeatMeaningfulProviderSuppressionScenario());
+  results.push(await runHeartbeatRepeatedMeaningfulReviewCooldownScenario());
   results.push(await runHeartbeatActionablePermissionScenario());
   results.push(await runProviderSwapScenario());
 
@@ -214,6 +215,63 @@ async function runHeartbeatMeaningfulProviderSuppressionScenario() {
     kind: 'heartbeat',
     passed: true,
     details: [`significance=${result.significance?.level}`, `providerCalls=${providerCount}`, `speechSuppressed=${result.proactiveSpeechSuppressed}`]
+  });
+}
+
+async function runHeartbeatRepeatedMeaningfulReviewCooldownScenario() {
+  const sessionId = 'heartbeat-repeat-meaningful-review-cooldown';
+  const store = new FileSessionStore({ rootDir: storeRoot });
+  await createStartedSession(store, {
+    sessionId,
+    observation: fakeImage({ id: 'old-desk-repeat', ageMs: 90_000, summary: 'A quiet desk with a laptop and coffee mug.' })
+  });
+
+  const summaries = [
+    'A grocery aisle with shelves of cereal and a hanging price sign.',
+    'The same grocery aisle shows cereal boxes, breakfast shelves, and a bright sale sign.'
+  ];
+  let captureCount = 0;
+  let providerCount = 0;
+  const startedAt = Date.now();
+  const runner = new AtlasRunner({
+    store,
+    devices: [cameraDevice(() => {
+      const index = Math.min(captureCount, summaries.length - 1);
+      captureCount += 1;
+      return fakeImage({ id: `repeat-grocery-${captureCount}`, summary: summaries[index] });
+    })],
+    provider: providerFor('repeated meaningful heartbeat', () => {
+      providerCount += 1;
+    }),
+    heartbeatPolicy: { providerReviewCooldownMs: 300_000 }
+  });
+
+  const first = await runner.runHeartbeatTick({ sessionId, now: startedAt });
+  const second = await runner.runHeartbeatTick({ sessionId, now: startedAt + 90_000 });
+  const events = await store.loadEvents(sessionId);
+
+  assert.equal(first.significance?.level, 'meaningful');
+  assert.equal(first.providerResult?.responseText?.includes('repeated meaningful heartbeat'), true);
+  assert.equal(second.significance?.level, 'meaningful');
+  assert.equal(second.providerResult, undefined);
+  assert.match(second.providerReviewSkipped?.reason ?? '', /already received heartbeat provider review/);
+  assert.equal(captureCount, 2);
+  assert.equal(providerCount, 1);
+  assert.equal(events.filter((event) => event.type === 'provider.review_skipped').length, 1);
+  assert.equal(events.filter((event) => event.type === 'agent.speech').length, 0);
+
+  return await withAudit(store, {
+    name: 'repeated meaningful heartbeat avoids duplicate provider review',
+    sessionId,
+    kind: 'heartbeat',
+    passed: true,
+    details: [
+      `firstSignificance=${first.significance?.level}`,
+      `secondSignificance=${second.significance?.level}`,
+      `captures=${captureCount}`,
+      `providerCalls=${providerCount}`,
+      'speech=no'
+    ]
   });
 }
 

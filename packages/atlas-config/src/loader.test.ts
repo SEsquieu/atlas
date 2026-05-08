@@ -21,7 +21,8 @@ test('parseAtlasConfig validates and returns config object', () => {
               baseStaleAfterMs: 30_000,
               expectedRefreshLatencyMs: 8_000,
               refreshSafetyMarginMs: 1_500,
-              refreshFailureRetryMs: 120_000
+              refreshFailureRetryMs: 120_000,
+              providerReviewCooldownMs: 300_000
             }
           }
         }
@@ -32,6 +33,7 @@ test('parseAtlasConfig validates and returns config object', () => {
   assert.equal(config.sessions?.helper?.name, 'Helper');
   assert.equal(config.sessions?.helper?.heartbeat?.policy?.cadence?.['active-task'], 15_000);
   assert.equal(config.sessions?.helper?.heartbeat?.policy?.refreshFailureRetryMs, 120_000);
+  assert.equal(config.sessions?.helper?.heartbeat?.policy?.providerReviewCooldownMs, 300_000);
 });
 
 test('parseAtlasConfig rejects non-object config', () => {

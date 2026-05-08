@@ -128,6 +128,105 @@ test('runHeartbeatTick records meaningful significance when heartbeat capture ch
   }
 });
 
+test('runHeartbeatTick skips recently reviewed repeated meaningful scenes but permits review after cooldown', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-review-cooldown-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    let providerReviewCount = 0;
+    let captureCount = 0;
+    const nowMs = Date.now();
+    const previousObservation = {
+      id: 'previous-desk',
+      type: 'image' as const,
+      capturedAt: new Date(nowMs - 90_000).toISOString(),
+      deviceId: 'fake-camera',
+      summary: 'A quiet desk with a laptop and coffee mug.',
+      quality: { confidence: 0.9, motion: false }
+    };
+    const session = createSessionState({
+      sessionId: 'review-cooldown-session',
+      now: new Date(nowMs - 90_000).toISOString(),
+      provider: { id: 'fake-provider', adapter: '@atlas/core/testing' }
+    });
+
+    await store.create({
+      ...session,
+      status: 'active',
+      recentObservations: [previousObservation],
+      perception: {
+        ...session.perception,
+        latestObservationAt: previousObservation.capturedAt,
+        latestImageId: previousObservation.id,
+        summary: previousObservation.summary,
+        confidence: 0.9,
+        freshnessMs: 90_000,
+        stability: 'stable',
+        motionState: 'stationary'
+      }
+    });
+
+    const summaries = [
+      'A grocery aisle with shelves of cereal and a hanging price sign.',
+      'The same grocery aisle shows cereal boxes, breakfast shelves, and a bright sale sign.',
+      'A grocery aisle with cereal shelves and a large yellow clearance placard near breakfast boxes.'
+    ];
+    const runner = new AtlasRunner({
+      store,
+      devices: [
+        {
+          id: 'fake-camera',
+          name: 'Fake Camera',
+          capabilities: async () => ['camera.capture'],
+          captureImage: async () => {
+            const summary = summaries[captureCount] ?? summaries.at(-1)!;
+            captureCount += 1;
+            return {
+              id: `grocery-${captureCount}`,
+              type: 'image' as const,
+              capturedAt: new Date().toISOString(),
+              deviceId: 'fake-camera',
+              mediaRef: `fake://grocery-${captureCount}.jpg`,
+              summary,
+              quality: { confidence: 0.9, motion: false }
+            };
+          }
+        }
+      ],
+      provider: createFakeProvider({
+        onTurn: async (turn) => {
+          providerReviewCount += 1;
+          return { turnId: turn.turnId, responseText: `reviewed ${turn.observations.at(-1)?.id ?? 'none'}` };
+        }
+      }),
+      heartbeatPolicy: { providerReviewCooldownMs: 300_000 }
+    });
+
+    const first = await runner.runHeartbeatTick({ sessionId: session.sessionId, now: nowMs });
+    const second = await runner.runHeartbeatTick({ sessionId: session.sessionId, now: nowMs + 90_000 });
+    const third = await runner.runHeartbeatTick({ sessionId: session.sessionId, now: nowMs + 360_000 });
+
+    assert.equal(first.significance?.level, 'meaningful');
+    assert.equal(first.providerResult?.responseText, 'reviewed grocery-1');
+    assert.equal(second.significance?.level, 'meaningful');
+    assert.equal(second.providerResult, undefined);
+    assert.match(second.providerReviewSkipped?.reason ?? '', /already received heartbeat provider review/);
+    assert.equal(third.significance?.level, 'meaningful');
+    assert.equal(third.providerResult?.responseText, 'reviewed grocery-3');
+    assert.equal(providerReviewCount, 2);
+
+    const events = await store.loadEvents(session.sessionId);
+    assert.equal(events.filter((event) => event.type === 'provider.requested').length, 2);
+    assert.equal(events.filter((event) => event.type === 'provider.responded').length, 2);
+    assert.equal(events.filter((event) => event.type === 'provider.review_skipped').length, 1);
+    assert.match(
+      JSON.stringify(events.find((event) => event.type === 'provider.review_skipped')?.data ?? {}),
+      /already received heartbeat provider review/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('runHeartbeatTick only speaks proactively for actionable significance with permission', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-actionable-'));
   try {

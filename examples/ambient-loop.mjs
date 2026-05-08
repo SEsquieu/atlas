@@ -149,6 +149,7 @@ function buildEntry({ tick, wallMs, heartbeat, inspection }) {
           proactiveSpeechSuppressed: heartbeat.proactiveSpeechSuppressed
         }
       : undefined,
+    providerReviewSkipped: heartbeat.providerReviewSkipped,
     timing: inspection.timing,
     mediaRef: latest?.mediaRef
   };
@@ -423,6 +424,7 @@ function formatMarkdownEntry(entry) {
     `- decision: ${entry.decision.reason ?? 'n/a'}`,
     `- significance: ${entry.significance ? `${entry.significance.level} score=${formatScore(entry.significance.score)} provider=${entry.significance.shouldCallProvider} notify=${entry.significance.shouldNotifyUser}` : 'not assessed'}`,
     entry.providerReview ? `- provider review: yes${entry.providerReview.proactiveSpeechSuppressed ? ' (speech suppressed)' : ''}` : undefined,
+    entry.providerReviewSkipped ? `- provider review skipped: ${entry.providerReviewSkipped.reason}` : undefined,
     `- wall time: ${formatMs(entry.wallMs)}`,
     entry.mediaRef ? `- media: ${entry.mediaRef}` : undefined,
     '',

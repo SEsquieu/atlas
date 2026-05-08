@@ -17,6 +17,10 @@ import { CORE_PHYSICAL_TOOLS } from '../tools/registry.js';
 import { materializeSessionCheckpoint } from '../store/materialize.js';
 import type { SessionStore } from '../store/types.js';
 
+const DEFAULT_HEARTBEAT_PROVIDER_REVIEW_COOLDOWN_MS = 5 * 60_000;
+const DUPLICATE_SCENE_MIN_TOKEN_OVERLAP = 3;
+const DUPLICATE_SCENE_MIN_SIMILARITY = 0.25;
+
 export type AtlasRunnerOptions = {
   store: SessionStore;
   provider: AgentProviderAdapter;
@@ -53,7 +57,19 @@ export type RunHeartbeatTickResult = {
   observation?: Observation;
   significance?: SceneSignificanceDecision;
   providerResult?: NormalizedAgentResult;
+  providerReviewSkipped?: HeartbeatProviderReviewSkip;
   proactiveSpeechSuppressed?: boolean;
+};
+
+export type HeartbeatProviderReviewSkip = {
+  reason: string;
+  matchedReview?: {
+    eventId: string;
+    eventAt: string;
+    ageMs: number;
+    similarity: number;
+    tokenOverlap: number;
+  };
 };
 
 export class AtlasRunner {
@@ -92,6 +108,7 @@ export class AtlasRunner {
     let observation: Observation | undefined;
     let significance: SceneSignificanceDecision | undefined;
     let providerResult: NormalizedAgentResult | undefined;
+    let providerReviewSkipped: HeartbeatProviderReviewSkip | undefined;
     let proactiveSpeechSuppressed = false;
     if (decision.shouldCapture) {
       const previousObservation = session.recentObservations.at(-1);
@@ -115,10 +132,36 @@ export class AtlasRunner {
       session = materializeSessionCheckpoint(session, [significanceEvent]);
 
       if (significance.shouldCallProvider) {
-        const review = await this.runHeartbeatProviderReview(session, significance);
-        providerResult = review.providerResult;
-        proactiveSpeechSuppressed = review.proactiveSpeechSuppressed;
-        session = review.session;
+        const reviewPlan = planHeartbeatProviderReview({
+          events: record.events,
+          observation,
+          significance,
+          now,
+          policy: mergeHeartbeatPolicy(this.heartbeatPolicy, input.heartbeatPolicy)
+        });
+        if (reviewPlan.shouldReview) {
+          const review = await this.runHeartbeatProviderReview(session, significance, reviewPlan.scene);
+          providerResult = review.providerResult;
+          proactiveSpeechSuppressed = review.proactiveSpeechSuppressed;
+          session = review.session;
+        } else {
+          providerReviewSkipped = {
+            reason: reviewPlan.reason,
+            matchedReview: reviewPlan.matchedReview
+          };
+          const skippedEvent = await this.store.appendEvent(session.sessionId, {
+            type: 'provider.review_skipped',
+            data: {
+              provider: this.provider.id,
+              source: 'heartbeat',
+              significance,
+              review: { scene: reviewPlan.scene },
+              reason: reviewPlan.reason,
+              matchedReview: reviewPlan.matchedReview
+            }
+          });
+          session = materializeSessionCheckpoint(session, [skippedEvent]);
+        }
       }
 
       await this.store.saveState(session);
@@ -126,7 +169,7 @@ export class AtlasRunner {
       await this.store.saveState(session);
     }
 
-    return { session, decision, observation, significance, providerResult, proactiveSpeechSuppressed };
+    return { session, decision, observation, significance, providerResult, providerReviewSkipped, proactiveSpeechSuppressed };
   }
 
   async runUserTurn(input: RunUserTurnInput): Promise<RunUserTurnResult> {
@@ -257,7 +300,8 @@ export class AtlasRunner {
 
   private async runHeartbeatProviderReview(
     session: AtlasSessionState,
-    significance: SceneSignificanceDecision
+    significance: SceneSignificanceDecision,
+    scene: HeartbeatSceneFingerprint
   ): Promise<{ session: AtlasSessionState; providerResult: NormalizedAgentResult; proactiveSpeechSuppressed: boolean }> {
     const turnId = crypto.randomUUID();
     const turn = buildHeartbeatSessionTurn({ turnId, session, significance });
@@ -268,7 +312,8 @@ export class AtlasRunner {
         provider: this.provider.id,
         turnId,
         source: 'heartbeat',
-        significance
+        significance,
+        review: { scene }
       }
     });
 
@@ -276,7 +321,7 @@ export class AtlasRunner {
 
     await this.store.appendEvent(session.sessionId, {
       type: 'provider.responded',
-      data: { provider: this.provider.id, turnId, source: 'heartbeat', result: providerResult }
+      data: { provider: this.provider.id, turnId, source: 'heartbeat', result: providerResult, review: { scene } }
     });
 
     const maySpeakProactively = significance.shouldNotifyUser && session.permissions.speak === 'proactive_allowed';
@@ -333,8 +378,142 @@ function buildHeartbeatSessionTurn(input: {
   };
 }
 
+type HeartbeatSceneFingerprint = {
+  observationId?: string;
+  summary?: string;
+  tokens: string[];
+};
+
+type HeartbeatProviderReviewPlan =
+  | {
+      shouldReview: true;
+      scene: HeartbeatSceneFingerprint;
+    }
+  | {
+      shouldReview: false;
+      scene: HeartbeatSceneFingerprint;
+      reason: string;
+      matchedReview?: {
+        eventId: string;
+        eventAt: string;
+        ageMs: number;
+        similarity: number;
+        tokenOverlap: number;
+      };
+    };
+
+function planHeartbeatProviderReview(input: {
+  events: { id: string; type: string; at: string; data?: unknown }[];
+  observation: Observation;
+  significance: SceneSignificanceDecision;
+  now: number;
+  policy: Omit<HeartbeatPolicyOptions, 'captureBudget'>;
+}): HeartbeatProviderReviewPlan {
+  const scene = heartbeatSceneFingerprint(input.observation);
+  if (input.significance.shouldNotifyUser) return { shouldReview: true, scene };
+
+  const cooldownMs = finiteOrUndefined(input.policy.providerReviewCooldownMs) ?? DEFAULT_HEARTBEAT_PROVIDER_REVIEW_COOLDOWN_MS;
+  if (cooldownMs <= 0 || scene.tokens.length < DUPLICATE_SCENE_MIN_TOKEN_OVERLAP) return { shouldReview: true, scene };
+
+  for (const event of [...input.events].reverse()) {
+    if (event.type !== 'provider.responded') continue;
+    const data = dataObject(event.data);
+    if (data?.source !== 'heartbeat') continue;
+    const previousScene = sceneFromReview(data.review);
+    if (!previousScene || previousScene.tokens.length < DUPLICATE_SCENE_MIN_TOKEN_OVERLAP) continue;
+
+    const eventAtMs = Date.parse(event.at);
+    if (!Number.isFinite(eventAtMs)) continue;
+    const ageMs = Math.max(0, input.now - eventAtMs);
+    if (ageMs > cooldownMs) continue;
+
+    const similarity = tokenSimilarity(scene.tokens, previousScene.tokens);
+    const tokenOverlap = tokenIntersectionCount(scene.tokens, previousScene.tokens);
+    if (tokenOverlap >= DUPLICATE_SCENE_MIN_TOKEN_OVERLAP && similarity >= DUPLICATE_SCENE_MIN_SIMILARITY) {
+      return {
+        shouldReview: false,
+        scene,
+        reason: `meaningful scene already received heartbeat provider review ${formatMs(ageMs)} ago`,
+        matchedReview: {
+          eventId: event.id,
+          eventAt: event.at,
+          ageMs,
+          similarity,
+          tokenOverlap
+        }
+      };
+    }
+  }
+
+  return { shouldReview: true, scene };
+}
+
+function heartbeatSceneFingerprint(observation: Observation): HeartbeatSceneFingerprint {
+  const summary = observation.summary ?? observation.analyses?.find((analysis) => analysis.summary?.trim())?.summary;
+  return {
+    observationId: observation.id,
+    summary,
+    tokens: [...tokenizeScene(summary)].sort()
+  };
+}
+
+function sceneFromReview(value: unknown): HeartbeatSceneFingerprint | undefined {
+  const review = dataObject(value);
+  const scene = dataObject(review?.scene);
+  const tokens = Array.isArray(scene?.tokens) ? scene.tokens.filter((token): token is string => typeof token === 'string') : [];
+  if (!tokens.length) return undefined;
+  return {
+    observationId: typeof scene?.observationId === 'string' ? scene.observationId : undefined,
+    summary: typeof scene?.summary === 'string' ? scene.summary : undefined,
+    tokens
+  };
+}
+
+function tokenizeScene(text: string | undefined): Set<string> {
+  const stopwords = new Set(['a', 'an', 'and', 'are', 'at', 'from', 'in', 'is', 'near', 'of', 'on', 'the', 'to', 'with', 'you', 'your']);
+  return new Set(
+    (text ?? '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, ' ')
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length > 2 && !stopwords.has(token))
+  );
+}
+
+function tokenSimilarity(left: string[], right: string[]): number {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  if (leftSet.size === 0 && rightSet.size === 0) return 1;
+  if (leftSet.size === 0 || rightSet.size === 0) return 0;
+  return tokenIntersectionCount(left, right) / new Set([...leftSet, ...rightSet]).size;
+}
+
+function tokenIntersectionCount(left: string[], right: string[]): number {
+  const rightSet = new Set(right);
+  let count = 0;
+  for (const token of new Set(left)) {
+    if (rightSet.has(token)) count += 1;
+  }
+  return count;
+}
+
+function dataObject(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : undefined;
+}
+
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatMs(value: number): string {
+  if (value < 1000) return `${Math.round(value)}ms`;
+  if (value < 60_000) return `${Math.round(value / 1000)}s`;
+  return `${Math.round(value / 60_000)}m`;
+}
+
+function finiteOrUndefined(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 function mergeHeartbeatPolicy(
