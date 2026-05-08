@@ -23,6 +23,14 @@ npm run validate:scenarios
 
 The validator fails with nonzero exit if the report is missing required scenarios, if any scenario failed, or if required event patterns regress. For example, unchanged heartbeat must not have provider/speech events, meaningful heartbeat must include provider review plus speech suppression, and actionable heartbeat must include proactive speech when permission allows it.
 
+Replay a saved session from its event log and compare replayed materialized state with saved state:
+
+```bash
+npm run replay:session -- heartbeat-actionable-escalation --store .atlas-runs/scenario-harness
+```
+
+The replay command prints event counts, checkpoint/cursor status, and state comparison results. It exits nonzero if the replayed state diverges from the saved materialized state. Add `--json <path>` and/or `--markdown <path>` for durable replay reports.
+
 ## MVP Test Scenarios
 
 1. **Fresh context required**

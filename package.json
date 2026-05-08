@@ -20,6 +20,7 @@
     "demo:scenarios": "node examples/scenario-harness.mjs",
     "validate:ambient": "node examples/validate-ambient-run.mjs",
     "validate:scenarios": "node examples/validate-scenario-report.mjs",
+    "replay:session": "node examples/replay-session.mjs",
     "loop:android": "node examples/android-openclaw-basic/loop-control.mjs",
     "openclaw:image-worker": "node examples/android-openclaw-basic/openclaw-image-worker.mjs",
     "bench:image-openclaw": "node examples/android-openclaw-basic/benchmark-image-analysis.mjs",
