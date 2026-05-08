@@ -64,4 +64,48 @@ function validateAtlasConfig(config: AtlasConfig): void {
   if (config.sessions !== undefined && (typeof config.sessions !== 'object' || config.sessions === null || Array.isArray(config.sessions))) {
     throw new Error('Atlas config sessions must be an object.');
   }
+  for (const [sessionId, sessionConfig] of Object.entries(config.sessions ?? {})) {
+    validateSessionHeartbeatConfig(sessionId, sessionConfig);
+  }
+}
+
+function validateSessionHeartbeatConfig(sessionId: string, sessionConfig: AtlasSessionConfig): void {
+  const heartbeat = sessionConfig.heartbeat;
+  if (heartbeat === undefined) return;
+  if (typeof heartbeat !== 'object' || heartbeat === null || Array.isArray(heartbeat)) {
+    throw new Error(`Atlas config session ${sessionId} heartbeat must be an object.`);
+  }
+  validateOptionalFiniteNumber(heartbeat.intervalMs, `session ${sessionId} heartbeat.intervalMs`);
+  const policy = heartbeat.policy;
+  if (policy === undefined) return;
+  if (typeof policy !== 'object' || policy === null || Array.isArray(policy)) {
+    throw new Error(`Atlas config session ${sessionId} heartbeat.policy must be an object.`);
+  }
+  validateOptionalFiniteNumber(policy.minDelayMs, `session ${sessionId} heartbeat.policy.minDelayMs`);
+  validateOptionalFiniteNumber(policy.maxDelayMs, `session ${sessionId} heartbeat.policy.maxDelayMs`);
+  validateOptionalFiniteNumber(policy.baseStaleAfterMs, `session ${sessionId} heartbeat.policy.baseStaleAfterMs`);
+  validateOptionalFiniteNumber(policy.minStaleAfterMs, `session ${sessionId} heartbeat.policy.minStaleAfterMs`);
+  validateOptionalFiniteNumber(policy.maxStaleAfterMs, `session ${sessionId} heartbeat.policy.maxStaleAfterMs`);
+  validateOptionalFiniteNumber(policy.expectedRefreshLatencyMs, `session ${sessionId} heartbeat.policy.expectedRefreshLatencyMs`);
+  validateOptionalFiniteNumber(policy.minExpectedRefreshLatencyMs, `session ${sessionId} heartbeat.policy.minExpectedRefreshLatencyMs`);
+  validateOptionalFiniteNumber(policy.maxExpectedRefreshLatencyMs, `session ${sessionId} heartbeat.policy.maxExpectedRefreshLatencyMs`);
+  validateOptionalFiniteNumber(policy.refreshSafetyMarginMs, `session ${sessionId} heartbeat.policy.refreshSafetyMarginMs`);
+  if (policy.cadence !== undefined) {
+    if (typeof policy.cadence !== 'object' || policy.cadence === null || Array.isArray(policy.cadence)) {
+      throw new Error(`Atlas config session ${sessionId} heartbeat.policy.cadence must be an object.`);
+    }
+    for (const [mode, delay] of Object.entries(policy.cadence)) {
+      if (!['idle', 'stable-scene', 'active-task', 'unstable-scene', 'high-risk'].includes(mode)) {
+        throw new Error(`Atlas config session ${sessionId} heartbeat.policy.cadence has unknown mode: ${mode}`);
+      }
+      validateOptionalFiniteNumber(delay, `session ${sessionId} heartbeat.policy.cadence.${mode}`);
+    }
+  }
+}
+
+function validateOptionalFiniteNumber(value: unknown, label: string): void {
+  if (value === undefined) return;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(`Atlas config ${label} must be a non-negative finite number.`);
+  }
 }

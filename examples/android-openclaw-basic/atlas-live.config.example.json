@@ -41,7 +41,20 @@
       "analyzers": [],
       "heartbeat": {
         "enabled": false,
-        "intervalMs": 30000
+        "intervalMs": 30000,
+        "policy": {
+          "cadence": {
+            "idle": 300000,
+            "stable-scene": 60000,
+            "active-task": 30000,
+            "unstable-scene": 10000,
+            "high-risk": 5000
+          },
+          "minDelayMs": 5000,
+          "maxDelayMs": 300000,
+          "expectedRefreshLatencyMs": 11000,
+          "refreshSafetyMarginMs": 2500
+        }
       }
     }
   }

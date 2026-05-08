@@ -202,7 +202,16 @@ test('session ask and heartbeat can resolve fake adapters selected by config', a
           'configured-runner': {
             provider: { id: 'config-provider', adapter: '@atlas/core/testing' },
             devices: [{ id: 'config-camera', adapter: '@atlas/core/testing', capabilities: ['camera.capture'] }],
-            analyzers: ['config-analyzer']
+            analyzers: ['config-analyzer'],
+            heartbeat: {
+              policy: {
+                cadence: { 'active-task': 12_345 },
+                minDelayMs: 2_000,
+                maxDelayMs: 60_000,
+                expectedRefreshLatencyMs: 8_000,
+                refreshSafetyMarginMs: 1_000
+              }
+            }
           }
         }
       }),
@@ -217,6 +226,11 @@ test('session ask and heartbeat can resolve fake adapters selected by config', a
       { cwd: root, env: {} }
     );
     assert.equal(heartbeat.exitCode, 0);
+    const heartbeatJson = JSON.parse(heartbeat.stdout ?? '{}');
+    assert.equal(heartbeatJson.decision.cadence.mode, 'active-task');
+    assert.equal(heartbeatJson.decision.cadence.nextDelayMs, 12_345);
+    assert.equal(heartbeatJson.decision.freshness.expectedRefreshLatencyMs, 8_000);
+    assert.equal(heartbeatJson.decision.freshness.safetyMarginMs, 1_000);
 
     const ask = await runAtlasCli(
       ['session', 'ask', 'configured-runner', '--text', 'Am I in the right place?', '--store', storeRoot, '--config', configPath],

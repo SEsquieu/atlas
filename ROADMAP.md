@@ -297,10 +297,11 @@ Current slice:
 - `npm run validate:ambient -- <ambient-loop.jsonl>` provides a nonzero-exit regression gate for ambient logs. It requires heartbeat ticks by default, fails on stale-context reuse, and can require captures/cached asks/no ask-time refreshes/max ask wall time.
 - Heartbeat captures now optionally call the provider when significance is `meaningful` or `actionable`. Provider review text is recorded in audit/log output, but proactive speech is hard-gated: meaningful changes are suppressed by default, and actionable notifications only become `agent.speech` when session speak permission is `proactive_allowed`.
 - The ambient loop runner auto-starts the warm OpenClaw image worker for the live Android/OpenClaw bridge config, preventing cold image-analysis timeouts during live loop tests.
+- Session config can now provide `heartbeat.policy` overrides for cadence, stale windows, expected refresh latency, and safety margin; CLI heartbeat uses those policy values while still injecting live capture-budget pressure.
 
 Deliverables:
 
-- Configurable heartbeat cadence.
+- Configurable heartbeat cadence. ✅ config policy landed
 - Dynamic cadence policy hook: idle/stable slows down; unstable/moving/active/high-risk speeds up within limits. ✅ initial hook landed
 - Capture/update context on heartbeat.
 - Cheap significance gate. ✅ v0 landed

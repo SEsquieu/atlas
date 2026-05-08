@@ -5,6 +5,7 @@ import {
   sessionStateFromConfig,
   sessionStatesFromConfig,
   type AtlasConfig,
+  type AtlasHeartbeatPolicyConfig,
   type AtlasSessionConfig
 } from '@atlas/config';
 import {
@@ -21,6 +22,7 @@ import {
   type DeviceAdapter,
   type DeviceBinding,
   type DeviceCapability,
+  type HeartbeatPolicyOptions,
   type ProviderBinding,
   type SessionStatus
 } from '@atlas/core';
@@ -241,8 +243,25 @@ async function createCliRunner(sessionId: string, store: FileSessionStore, confi
       store,
       provider,
       devices: registry.resolveDevices(deviceBindings),
-      analyzers: registry.resolveAnalyzers?.(sessionConfig?.analyzers)
+      analyzers: registry.resolveAnalyzers?.(sessionConfig?.analyzers),
+      heartbeatPolicy: heartbeatPolicyFromConfig(sessionConfig?.heartbeat?.policy)
     })
+  };
+}
+
+function heartbeatPolicyFromConfig(config: AtlasHeartbeatPolicyConfig | undefined): Omit<HeartbeatPolicyOptions, 'captureBudget'> | undefined {
+  if (!config) return undefined;
+  return {
+    cadence: config.cadence,
+    minDelayMs: config.minDelayMs,
+    maxDelayMs: config.maxDelayMs,
+    baseStaleAfterMs: config.baseStaleAfterMs,
+    minStaleAfterMs: config.minStaleAfterMs,
+    maxStaleAfterMs: config.maxStaleAfterMs,
+    expectedRefreshLatencyMs: config.expectedRefreshLatencyMs,
+    minExpectedRefreshLatencyMs: config.minExpectedRefreshLatencyMs,
+    maxExpectedRefreshLatencyMs: config.maxExpectedRefreshLatencyMs,
+    refreshSafetyMarginMs: config.refreshSafetyMarginMs
   };
 }
 

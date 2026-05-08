@@ -12,17 +12,39 @@ test('parseAtlasConfig validates and returns config object', () => {
       sessions: {
         helper: {
           name: 'Helper',
-          goal: 'Help with physical tasks.'
+          goal: 'Help with physical tasks.',
+          heartbeat: {
+            policy: {
+              cadence: { 'active-task': 15_000 },
+              minDelayMs: 2_000,
+              maxDelayMs: 120_000,
+              baseStaleAfterMs: 30_000,
+              expectedRefreshLatencyMs: 8_000,
+              refreshSafetyMarginMs: 1_500
+            }
+          }
         }
       }
     })
   );
 
   assert.equal(config.sessions?.helper?.name, 'Helper');
+  assert.equal(config.sessions?.helper?.heartbeat?.policy?.cadence?.['active-task'], 15_000);
 });
 
 test('parseAtlasConfig rejects non-object config', () => {
   assert.throws(() => parseAtlasConfig('[]'), /JSON object/);
+});
+
+test('parseAtlasConfig rejects invalid heartbeat policy numbers and cadence modes', () => {
+  assert.throws(
+    () => parseAtlasConfig(JSON.stringify({ sessions: { demo: { heartbeat: { policy: { minDelayMs: -1 } } } } })),
+    /heartbeat\.policy\.minDelayMs/
+  );
+  assert.throws(
+    () => parseAtlasConfig(JSON.stringify({ sessions: { demo: { heartbeat: { policy: { cadence: { frantic: 1000 } } } } } })),
+    /unknown mode: frantic/
+  );
 });
 
 test('resolveAtlasConfigPath defaults to atlas.config.json', () => {

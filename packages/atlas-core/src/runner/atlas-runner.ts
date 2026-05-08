@@ -9,7 +9,7 @@ import type {
   PerceptionAnalyzerAdapter
 } from '../types.js';
 import { assessCaptureBudget } from '../loops/capture-budget.js';
-import { planHeartbeatTick, type HeartbeatDecision } from '../loops/heartbeat.js';
+import { planHeartbeatTick, type HeartbeatDecision, type HeartbeatPolicyOptions } from '../loops/heartbeat.js';
 import { buildUserSessionTurn, planUserTurn } from '../loops/user-loop.js';
 import { analyzeObservationWithPipeline } from '../perception/analysis.js';
 import { assessObservationSignificance, type SceneSignificanceDecision } from '../perception/significance.js';
@@ -22,6 +22,7 @@ export type AtlasRunnerOptions = {
   provider: AgentProviderAdapter;
   devices: DeviceAdapter[];
   analyzers?: PerceptionAnalyzerAdapter[];
+  heartbeatPolicy?: Omit<HeartbeatPolicyOptions, 'captureBudget'>;
 };
 
 export type RunUserTurnInput = {
@@ -43,6 +44,7 @@ export type RunUserTurnResult = {
 export type RunHeartbeatTickInput = {
   sessionId: string;
   now?: number;
+  heartbeatPolicy?: Omit<HeartbeatPolicyOptions, 'captureBudget'>;
 };
 
 export type RunHeartbeatTickResult = {
@@ -59,12 +61,14 @@ export class AtlasRunner {
   private readonly provider: AgentProviderAdapter;
   private readonly devices: DeviceAdapter[];
   private readonly analyzers: PerceptionAnalyzerAdapter[];
+  private readonly heartbeatPolicy: Omit<HeartbeatPolicyOptions, 'captureBudget'> | undefined;
 
   constructor(options: AtlasRunnerOptions) {
     this.store = options.store;
     this.provider = options.provider;
     this.devices = options.devices;
     this.analyzers = options.analyzers ?? [];
+    this.heartbeatPolicy = options.heartbeatPolicy;
   }
 
   async runHeartbeatTick(input: RunHeartbeatTickInput): Promise<RunHeartbeatTickResult> {
@@ -74,7 +78,10 @@ export class AtlasRunner {
     let session = materializeSessionCheckpoint(record.state, record.events);
     const now = input.now ?? Date.now();
     const captureBudget = assessCaptureBudget(record.events, now);
-    const decision = planHeartbeatTick(session, now, { captureBudget });
+    const decision = planHeartbeatTick(session, now, {
+      ...mergeHeartbeatPolicy(this.heartbeatPolicy, input.heartbeatPolicy),
+      captureBudget
+    });
 
     const heartbeatEvent = await this.store.appendEvent(session.sessionId, {
       type: 'heartbeat.tick',
@@ -328,6 +335,20 @@ function buildHeartbeatSessionTurn(input: {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function mergeHeartbeatPolicy(
+  base: Omit<HeartbeatPolicyOptions, 'captureBudget'> | undefined,
+  override: Omit<HeartbeatPolicyOptions, 'captureBudget'> | undefined
+): Omit<HeartbeatPolicyOptions, 'captureBudget'> {
+  return {
+    ...base,
+    ...override,
+    cadence: {
+      ...base?.cadence,
+      ...override?.cadence
+    }
+  };
 }
 
 export function contextStatusFromSession(session: AtlasSessionState): ContextStatus {

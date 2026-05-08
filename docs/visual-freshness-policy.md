@@ -148,3 +148,29 @@ type HeartbeatCadenceMode =
 ```
 
 The cadence decision explains why the next heartbeat should be slower or faster, so CLI output and session inspection can show whether Atlas is conserving resources, tracking a live task, or reacting to unstable context. The first hook maps idle/non-observable sessions to `idle`, stale/missing-but-otherwise-steady context to `active-task`, fresh high-confidence stable context to `stable-scene`, moving/transitioning/low-confidence context to `unstable-scene`, and explicit high-risk relevance to `high-risk`.
+
+Session config can override heartbeat policy without changing runner code:
+
+```json
+{
+  "heartbeat": {
+    "enabled": false,
+    "intervalMs": 30000,
+    "policy": {
+      "cadence": {
+        "idle": 300000,
+        "stable-scene": 60000,
+        "active-task": 30000,
+        "unstable-scene": 10000,
+        "high-risk": 5000
+      },
+      "minDelayMs": 5000,
+      "maxDelayMs": 300000,
+      "expectedRefreshLatencyMs": 11000,
+      "refreshSafetyMarginMs": 2500
+    }
+  }
+}
+```
+
+`intervalMs` remains a scheduler hint for external loop services. The runtime heartbeat decision uses `policy`, combines it with live capture-budget pressure, then emits the concrete `decision.cadence.nextDelayMs` that ambient runners should sleep against.
