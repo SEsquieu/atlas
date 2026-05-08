@@ -40,6 +40,12 @@ try {
   if (args.config) console.log(`Config: ${args.config}`);
   else console.log('Config: none (uses built-in fake adapters; no phone camera)');
 
+  const existingImageWorkerUrl = await discoverExistingImageWorkerUrl();
+  if (existingImageWorkerUrl) {
+    process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL = existingImageWorkerUrl;
+    process.env.ATLAS_OPENCLAW_IMAGE_WORKER_URL = existingImageWorkerUrl;
+  }
+
   const shouldUseImageWorker = await shouldStartImageWorker(args);
   if (shouldUseImageWorker) {
     imageWorker = await startImageWorker();
@@ -201,6 +207,40 @@ async function shouldStartImageWorker(parsedArgs) {
 
 function currentImageWorkerUrl() {
   return process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL ?? process.env.ATLAS_OPENCLAW_IMAGE_WORKER_URL;
+}
+
+async function discoverExistingImageWorkerUrl() {
+  const existing = currentImageWorkerUrl();
+  if (existing && await imageWorkerHealthy(existing)) return existing;
+
+  try {
+    const registryPath = resolveImageWorkerRegistryPath();
+    const registry = JSON.parse(await readFile(registryPath, 'utf8'));
+    const url = typeof registry?.url === 'string' ? registry.url : undefined;
+    if (url && await imageWorkerHealthy(url)) return url;
+  } catch {
+    // No reusable worker registry yet.
+  }
+  return undefined;
+}
+
+function resolveImageWorkerRegistryPath() {
+  return path.resolve(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_REGISTRY ?? path.join(repoRoot, '.atlas-runs', 'openclaw-image-worker.json'));
+}
+
+async function imageWorkerHealthy(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error('image worker health check timed out')), 1500);
+  try {
+    const response = await fetch(new URL('/health', url), { signal: controller.signal });
+    if (!response.ok) return false;
+    const json = await response.json().catch(() => ({}));
+    return json?.ok === true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function configUsesOpenClawImageBridge(configPath) {

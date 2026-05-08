@@ -57,6 +57,7 @@ The first cheap significance gate compares consecutive observations using summar
 ### Analysis-side optimizations
 
 - Keep upstream vision/runtime warm.
+- Start long-lived image workers before expensive OpenClaw model/provider discovery, and report readiness once the local HTTP worker is listening. Otherwise a cold `ensureOpenClawModelsJson` pass can look like the ambient loop hung before tick 1 even though it is only initializing OpenClaw internals.
 - Use cheaper background analyzers for ambient ticks.
 - Run high-quality provider vision only for explicit questions, uncertainty, or significant changes.
 - Cache the latest scene summary and ask for deltas where supported.

@@ -170,14 +170,51 @@ async function askLoop() {
 
 async function maybeStartImageWorker() {
   if (args.imageWorker === 'false') return null;
-  const existingUrl = currentImageWorkerUrl();
-  if (existingUrl) return { url: existingUrl, stop: () => undefined };
+  const existingUrl = await discoverExistingImageWorkerUrl();
+  if (existingUrl) {
+    process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL = existingUrl;
+    process.env.ATLAS_OPENCLAW_IMAGE_WORKER_URL = existingUrl;
+    return { url: existingUrl, stop: () => undefined };
+  }
   if (process.env.ATLAS_LOOP_ASK_USE_IMAGE_WORKER === 'false') return null;
   return await startImageWorker();
 }
 
 function currentImageWorkerUrl() {
   return process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL ?? process.env.ATLAS_OPENCLAW_IMAGE_WORKER_URL;
+}
+
+async function discoverExistingImageWorkerUrl() {
+  const existing = currentImageWorkerUrl();
+  if (existing && await imageWorkerHealthy(existing)) return existing;
+
+  try {
+    const registry = JSON.parse(await readFile(resolveImageWorkerRegistryPath(), 'utf8'));
+    const url = typeof registry?.url === 'string' ? registry.url : undefined;
+    if (url && await imageWorkerHealthy(url)) return url;
+  } catch {
+    // No reusable worker registry yet.
+  }
+  return undefined;
+}
+
+function resolveImageWorkerRegistryPath() {
+  return path.resolve(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_REGISTRY ?? path.join(repoRoot, '.atlas-runs', 'openclaw-image-worker.json'));
+}
+
+async function imageWorkerHealthy(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error('image worker health check timed out')), 1500);
+  try {
+    const response = await fetch(new URL('/health', url), { signal: controller.signal });
+    if (!response.ok) return false;
+    const json = await response.json().catch(() => ({}));
+    return json?.ok === true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function startImageWorker() {

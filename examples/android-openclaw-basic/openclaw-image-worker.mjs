@@ -24,20 +24,39 @@ let lastError;
 let warmState = { status: 'idle' };
 
 try {
-  logProgress('initializing OpenClaw image runtime');
-  await initializeRuntime();
-  logProgress('OpenClaw image runtime initialized');
   const server = http.createServer(handleRequest);
   await listen(server, port, host);
   const address = server.address();
   const actualPort = typeof address === 'object' && address ? address.port : port;
   const url = `http://${host}:${actualPort}`;
+  warmState = { status: 'initializing', startedAt: new Date().toISOString() };
   process.stdout.write(`${JSON.stringify({ kind: 'atlas.openclaw-image-worker.ready', url, pid: process.pid, warm: warmState })}\n`);
+  await writeWorkerRegistry({ url, pid: process.pid, warm: warmState });
+
+  void initializeRuntime().then(
+    async () => {
+      warmState = { status: 'idle', initializedAt: new Date().toISOString() };
+      await writeWorkerRegistry({ url, pid: process.pid, warm: warmState }).catch(() => undefined);
+      logProgress('OpenClaw image runtime initialized');
+    },
+    async (error) => {
+      lastError = formatError(error);
+      warmState = { status: 'failed', error: lastError, completedAt: new Date().toISOString() };
+      await writeWorkerRegistry({ url, pid: process.pid, warm: warmState }).catch(() => undefined);
+      logProgress(`OpenClaw image runtime initialization failed: ${lastError}`);
+    }
+  );
 
   if (prewarmEnabled) {
     void enqueue(() => warmRuntime()).then(
-      () => logProgress('OpenClaw image runtime prewarm complete'),
-      (error) => logProgress(`OpenClaw image runtime prewarm failed: ${formatError(error)}`)
+      async () => {
+        await writeWorkerRegistry({ url, pid: process.pid, warm: warmState }).catch(() => undefined);
+        logProgress('OpenClaw image runtime prewarm complete');
+      },
+      async (error) => {
+        await writeWorkerRegistry({ url, pid: process.pid, warm: warmState }).catch(() => undefined);
+        logProgress(`OpenClaw image runtime prewarm failed: ${formatError(error)}`);
+      }
     );
   }
 
@@ -52,7 +71,6 @@ try {
 async function handleRequest(req, res) {
   try {
     if (req.method === 'GET' && req.url === '/health') {
-      await initializeRuntime();
       sendJson(res, 200, { ok: true, requestCount, lastError, warm: warmState });
       return;
     }
@@ -175,6 +193,20 @@ async function ensureTinyPrewarmPng() {
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, createSolidPng(32, 32, [24, 96, 192]));
   return outputPath;
+}
+
+async function writeWorkerRegistry(entry) {
+  const registryPath = resolveWorkerRegistryPath();
+  await fs.mkdir(path.dirname(registryPath), { recursive: true });
+  await fs.writeFile(
+    registryPath,
+    `${JSON.stringify({ ...entry, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+    'utf8'
+  );
+}
+
+function resolveWorkerRegistryPath() {
+  return path.resolve(firstString(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_REGISTRY) ?? path.join(repoRoot, '.atlas-runs', 'openclaw-image-worker.json'));
 }
 
 function createSolidPng(width, height, [red, green, blue]) {
