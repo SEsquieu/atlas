@@ -326,11 +326,13 @@ Current slice:
 
 - `npm run demo:scenarios` runs a fake-safe scenario harness covering fresh visual capture, cached visual reuse, transitional place-confirmation refresh, unchanged heartbeat silence, meaningful heartbeat provider-review speech suppression, and actionable heartbeat escalation with permission.
 - The scenario harness emits `scenario-report.json` / `scenario-report.md` with per-scenario details, event type timelines/counts, latest observation/significance/provider text, and speech/suppression counts.
+- `npm run validate:scenarios` validates the fake-safe scenario report contract and fails on missing scenarios, failed report status, or required event-pattern regressions.
 
 Deliverables:
 
 - Scenario scripts for core MVP cases. ✅ initial fake-safe harness landed
 - Event inspection command/output. ✅ scenario report event summaries landed
+- Scenario report validator. ✅ initial validator landed
 - Replay/debug harness.
 - Fake device/provider fixtures.
 - Android/OpenClaw integration test path.

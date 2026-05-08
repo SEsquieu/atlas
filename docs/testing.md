@@ -15,6 +15,14 @@ npm run demo:scenarios
 
 The harness writes temporary session state under `.atlas-runs/scenario-harness` and verifies the major user-loop and heartbeat cases without touching Android/OpenClaw. It also emits `scenario-report.json` and `scenario-report.md` with per-scenario pass/fail status, details, event type timelines, event counts, latest observation/significance/provider text, and speech/suppression counts. Use `--store <path>` to choose a different output location, `--json <path>` / `--markdown <path>` to override report paths, or `--no-clean` to inspect a previous run alongside new state.
 
+Validate the generated report contract:
+
+```bash
+npm run validate:scenarios
+```
+
+The validator fails with nonzero exit if the report is missing required scenarios, if any scenario failed, or if required event patterns regress. For example, unchanged heartbeat must not have provider/speech events, meaningful heartbeat must include provider review plus speech suppression, and actionable heartbeat must include proactive speech when permission allows it.
+
 ## MVP Test Scenarios
 
 1. **Fresh context required**
