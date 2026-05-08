@@ -37,4 +37,5 @@ export type AtlasHeartbeatPolicyConfig = {
   minExpectedRefreshLatencyMs?: number;
   maxExpectedRefreshLatencyMs?: number;
   refreshSafetyMarginMs?: number;
+  refreshFailureRetryMs?: number;
 };

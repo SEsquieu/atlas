@@ -124,6 +124,7 @@ function buildEntry({ tick, wallMs, heartbeat, inspection }) {
       reason: heartbeat.decision?.cadence?.reason
     },
     captureBudget: heartbeat.decision?.captureBudget,
+    fallback: heartbeat.decision?.fallback,
     significance: significance
       ? {
           level: significance.level,
@@ -338,6 +339,7 @@ function formatMarkdownEntry(entry) {
     `- refresh deadline: dueAt=${formatTimeMs(entry.freshness?.refreshDueAtMs)} staleAt=${formatTimeMs(entry.freshness?.staleAtMs)} expectedLatency=${formatMs(entry.freshness?.expectedRefreshLatencyMs)} safety=${formatMs(entry.freshness?.safetyMarginMs)}`,
     entry.freshness?.signals?.length ? `- freshness signals: ${entry.freshness.signals.join(', ')}` : undefined,
     `- capture budget: ${entry.captureBudget ? `${entry.captureBudget.status} (${entry.captureBudget.capturesLastMinute}/min, ${entry.captureBudget.capturesLastFiveMinutes}/5min${entry.captureBudget.averageCaptureLatencyMs ? `, avg ${formatMs(entry.captureBudget.averageCaptureLatencyMs)}` : ''})` : 'n/a'}`,
+    entry.fallback ? `- fallback: ${entry.fallback.kind} refresh=${entry.fallback.refreshHealth} retryDue=${entry.fallback.retryDue} retryAfter=${formatMs(entry.fallback.retryAfterMs)}` : undefined,
     `- capture: ${entry.captured ? `yes (${entry.observationId})` : 'no'}`,
     `- decision: ${entry.decision.reason ?? 'n/a'}`,
     `- significance: ${entry.significance ? `${entry.significance.level} score=${formatScore(entry.significance.score)} provider=${entry.significance.shouldCallProvider} notify=${entry.significance.shouldNotifyUser}` : 'not assessed'}`,

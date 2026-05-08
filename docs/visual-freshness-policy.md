@@ -167,10 +167,13 @@ Session config can override heartbeat policy without changing runner code:
       "minDelayMs": 5000,
       "maxDelayMs": 300000,
       "expectedRefreshLatencyMs": 11000,
-      "refreshSafetyMarginMs": 2500
+      "refreshSafetyMarginMs": 2500,
+      "refreshFailureRetryMs": 120000
     }
   }
 }
 ```
 
 `intervalMs` remains a scheduler hint for external loop services. The runtime heartbeat decision uses `policy`, combines it with live capture-budget pressure, then emits the concrete `decision.cadence.nextDelayMs` that ambient runners should sleep against.
+
+Refresh failure fallback is deliberately non-binding. When visual refresh is degraded or unavailable, Atlas may temporarily reuse stable low-risk context with an explicit fallback marker, but it keeps the context stale/degraded, schedules a retry using `refreshFailureRetryMs`, and attempts capture again once the retry window elapses. High-risk, moving, low-confidence, or transitioning contexts do not get this degraded fallback.

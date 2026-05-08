@@ -261,7 +261,8 @@ function heartbeatPolicyFromConfig(config: AtlasHeartbeatPolicyConfig | undefine
     expectedRefreshLatencyMs: config.expectedRefreshLatencyMs,
     minExpectedRefreshLatencyMs: config.minExpectedRefreshLatencyMs,
     maxExpectedRefreshLatencyMs: config.maxExpectedRefreshLatencyMs,
-    refreshSafetyMarginMs: config.refreshSafetyMarginMs
+    refreshSafetyMarginMs: config.refreshSafetyMarginMs,
+    refreshFailureRetryMs: config.refreshFailureRetryMs
   };
 }
 

@@ -209,7 +209,8 @@ test('session ask and heartbeat can resolve fake adapters selected by config', a
                 minDelayMs: 2_000,
                 maxDelayMs: 60_000,
                 expectedRefreshLatencyMs: 8_000,
-                refreshSafetyMarginMs: 1_000
+                refreshSafetyMarginMs: 1_000,
+                refreshFailureRetryMs: 90_000
               }
             }
           }

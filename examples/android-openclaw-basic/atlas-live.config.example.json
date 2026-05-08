@@ -55,7 +55,8 @@
           "minDelayMs": 5000,
           "maxDelayMs": 300000,
           "expectedRefreshLatencyMs": 11000,
-          "refreshSafetyMarginMs": 2500
+          "refreshSafetyMarginMs": 2500,
+          "refreshFailureRetryMs": 120000
         }
       }
     }

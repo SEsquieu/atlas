@@ -90,6 +90,7 @@ function validateSessionHeartbeatConfig(sessionId: string, sessionConfig: AtlasS
   validateOptionalFiniteNumber(policy.minExpectedRefreshLatencyMs, `session ${sessionId} heartbeat.policy.minExpectedRefreshLatencyMs`);
   validateOptionalFiniteNumber(policy.maxExpectedRefreshLatencyMs, `session ${sessionId} heartbeat.policy.maxExpectedRefreshLatencyMs`);
   validateOptionalFiniteNumber(policy.refreshSafetyMarginMs, `session ${sessionId} heartbeat.policy.refreshSafetyMarginMs`);
+  validateOptionalFiniteNumber(policy.refreshFailureRetryMs, `session ${sessionId} heartbeat.policy.refreshFailureRetryMs`);
   if (policy.cadence !== undefined) {
     if (typeof policy.cadence !== 'object' || policy.cadence === null || Array.isArray(policy.cadence)) {
       throw new Error(`Atlas config session ${sessionId} heartbeat.policy.cadence must be an object.`);

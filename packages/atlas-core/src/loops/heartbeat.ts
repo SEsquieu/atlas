@@ -32,6 +32,16 @@ export type HeartbeatDecision = {
   freshness: HeartbeatFreshnessAssessment;
   captureBudget?: CaptureBudgetDecision;
   cadence: HeartbeatCadenceDecision;
+  fallback?: HeartbeatFallbackDecision;
+};
+
+export type HeartbeatFallbackDecision = {
+  kind: 'refresh-deferred';
+  reason: string;
+  refreshHealth: 'degraded' | 'unavailable';
+  retryable: true;
+  retryAfterMs: number;
+  retryDue: boolean;
 };
 
 export type HeartbeatPolicyOptions = {
@@ -45,6 +55,7 @@ export type HeartbeatPolicyOptions = {
   minExpectedRefreshLatencyMs?: number;
   maxExpectedRefreshLatencyMs?: number;
   refreshSafetyMarginMs?: number;
+  refreshFailureRetryMs?: number;
   captureBudget?: CaptureBudgetDecision;
 };
 
@@ -62,6 +73,7 @@ const DEFAULT_EXPECTED_REFRESH_LATENCY_MS = 10_000;
 const DEFAULT_MIN_EXPECTED_REFRESH_LATENCY_MS = 1_000;
 const DEFAULT_MAX_EXPECTED_REFRESH_LATENCY_MS = 30_000;
 const DEFAULT_REFRESH_SAFETY_MARGIN_MS = 2_000;
+const DEFAULT_REFRESH_FAILURE_RETRY_MS = 2 * 60_000;
 
 const UNSTABLE_MOTION_STATES = new Set<MotionState>(['turning', 'walking', 'vehicle']);
 
@@ -95,7 +107,19 @@ export function planHeartbeatTick(session: AtlasSessionState, now = Date.now(), 
   const refreshHealth = session.perception.health?.visualRefresh;
   const degradedRefresh = refreshHealth?.status === 'degraded' || refreshHealth?.status === 'unavailable';
   const needsRefresh = freshness.stale || freshness.refreshDue;
-  const shouldDeferForLatency = needsRefresh && degradedRefresh && session.perception.stability !== 'transitioning';
+  const fallback = degradedRefresh
+    ? buildRefreshFallbackDecision(refreshHealth, now, options)
+    : undefined;
+  const shouldDeferForLatency = Boolean(
+    needsRefresh &&
+      hasVisualContext &&
+      fallback &&
+      !fallback.retryDue &&
+      !highRisk &&
+      !unstable &&
+      !moving &&
+      !lowConfidence
+  );
   const initialShouldCapture = (needsRefresh && !shouldDeferForLatency) || unstable;
   const budgetDeferReason = budgetDeferCaptureReason(options.captureBudget, {
     shouldCapture: initialShouldCapture,
@@ -106,7 +130,17 @@ export function planHeartbeatTick(session: AtlasSessionState, now = Date.now(), 
   const cadence = capCadenceToRefreshDeadline(
     planHeartbeatCadence(
       session,
-      { stale: freshness.stale, refreshDue: freshness.refreshDue, unstable, lowConfidence, moving, highRisk, shouldDeferForLatency, budgetDeferred: Boolean(budgetDeferReason) },
+      {
+        stale: freshness.stale,
+        refreshDue: freshness.refreshDue,
+        unstable,
+        lowConfidence,
+        moving,
+        highRisk,
+        shouldDeferForLatency,
+        budgetDeferred: Boolean(budgetDeferReason),
+        fallback
+      },
       options
     ),
     freshness,
@@ -119,10 +153,13 @@ export function planHeartbeatTick(session: AtlasSessionState, now = Date.now(), 
     freshness,
     captureBudget: options.captureBudget,
     cadence,
+    fallback: shouldDeferForLatency ? fallback : undefined,
     reason: budgetDeferReason ?? (shouldDeferForLatency
-      ? `visual context needs refresh (${freshness.reason}), but refresh is ${refreshHealth?.status}; deferring capture to avoid churn`
+      ? `visual context needs refresh (${freshness.reason}), but refresh is ${refreshHealth?.status}; using degraded fallback temporarily and retrying after ${formatMs(fallback?.retryAfterMs ?? 0)}`
       : freshness.stale || freshness.refreshDue
-        ? freshness.reason
+        ? fallback?.retryDue
+          ? `${freshness.reason}; refresh fallback retry window elapsed, attempting a new capture`
+          : freshness.reason
         : unstable
           ? 'visual context is unstable'
           : freshness.reason)
@@ -190,6 +227,7 @@ type CadenceSignals = {
   highRisk: boolean;
   shouldDeferForLatency: boolean;
   budgetDeferred: boolean;
+  fallback?: HeartbeatFallbackDecision;
 };
 
 function planHeartbeatCadence(
@@ -215,7 +253,12 @@ function planHeartbeatCadence(
   }
 
   if (signals.shouldDeferForLatency) {
-    return cadenceDecision('stable-scene', 'refresh path is degraded, so slow heartbeat to avoid churn', options);
+    return customCadenceDecision(
+      'active-task',
+      signals.fallback?.retryAfterMs ?? DEFAULT_CADENCE_MS['active-task'],
+      'refresh path is degraded; fallback is temporary, not accepted as stable context',
+      options
+    );
   }
 
   if (signals.stale || signals.refreshDue || !session.perception.latestImageId) {
@@ -324,6 +367,26 @@ function budgetDeferCaptureReason(
   return undefined;
 }
 
+function buildRefreshFallbackDecision(
+  refreshHealth: NonNullable<AtlasSessionState['perception']['health']>['visualRefresh'],
+  now: number,
+  options: HeartbeatPolicyOptions
+): HeartbeatFallbackDecision | undefined {
+  if (!refreshHealth || (refreshHealth.status !== 'degraded' && refreshHealth.status !== 'unavailable')) return undefined;
+  const retryWindowMs = finiteOrUndefined(options.refreshFailureRetryMs) ?? DEFAULT_REFRESH_FAILURE_RETRY_MS;
+  const sinceMs = refreshHealth.since ? Date.parse(refreshHealth.since) : undefined;
+  const ageMs = typeof sinceMs === 'number' && Number.isFinite(sinceMs) ? Math.max(0, now - sinceMs) : undefined;
+  const retryAfterMs = ageMs === undefined ? 0 : Math.max(0, retryWindowMs - ageMs);
+  return {
+    kind: 'refresh-deferred',
+    reason: refreshHealth.reason ?? `visual refresh is ${refreshHealth.status}`,
+    refreshHealth: refreshHealth.status,
+    retryable: true,
+    retryAfterMs,
+    retryDue: retryAfterMs === 0
+  };
+}
+
 function inactiveFreshnessAssessment(
   session: AtlasSessionState,
   options: HeartbeatPolicyOptions,
@@ -351,6 +414,10 @@ function cadenceDecision(mode: HeartbeatCadenceMode, reason: string, options: He
   const rawDelay = typeof configured === 'number' && Number.isFinite(configured) ? configured : DEFAULT_CADENCE_MS[mode];
   const nextDelayMs = clampDelay(rawDelay, options);
   return { mode, nextDelayMs, reason };
+}
+
+function customCadenceDecision(mode: HeartbeatCadenceMode, rawDelay: number, reason: string, options: HeartbeatPolicyOptions): HeartbeatCadenceDecision {
+  return { mode, nextDelayMs: clampDelay(rawDelay, options), reason };
 }
 
 function clampDelay(delayMs: number, options: HeartbeatPolicyOptions): number {

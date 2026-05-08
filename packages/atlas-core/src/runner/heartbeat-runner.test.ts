@@ -191,7 +191,7 @@ test('runHeartbeatTick only speaks proactively for actionable significance with 
   }
 });
 
-test('runHeartbeatTick defers stale stable context when refresh health is degraded', async () => {
+test('runHeartbeatTick treats degraded stale fallback as retryable, not stable', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-degraded-'));
   try {
     const store = new FileSessionStore({ rootDir: root });
@@ -228,16 +228,71 @@ test('runHeartbeatTick defers stale stable context when refresh health is degrad
     const runner = new AtlasRunner({
       store,
       devices: [createFakeCameraDevice()],
-      provider: createFakeProvider()
+      provider: createFakeProvider(),
+      heartbeatPolicy: { refreshFailureRetryMs: 120_000 }
     });
 
-    const result = await runner.runHeartbeatTick({ sessionId: session.sessionId });
+    const result = await runner.runHeartbeatTick({ sessionId: session.sessionId, now: nowMs });
 
     assert.equal(result.decision.shouldCapture, false);
-    assert.equal(result.decision.cadence.mode, 'stable-scene');
+    assert.equal(result.decision.cadence.mode, 'active-task');
+    assert.equal(result.decision.cadence.nextDelayMs, 120_000);
+    assert.equal(result.decision.fallback?.kind, 'refresh-deferred');
+    assert.equal(result.decision.fallback?.retryDue, false);
     assert.equal(result.decision.freshness.staleAfterMs, 112_500);
-    assert.match(result.decision.reason, /deferring capture/);
+    assert.match(result.decision.reason, /using degraded fallback temporarily/);
     assert.equal(result.observation, undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('runHeartbeatTick retries capture after degraded fallback retry window elapses', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-heartbeat-degraded-retry-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const nowMs = Date.now();
+    const session = createSessionState({
+      sessionId: 'degraded-retry-session',
+      now: new Date(nowMs - 180_000).toISOString(),
+      provider: { id: 'fake-provider', adapter: '@atlas/core/testing' }
+    });
+
+    await store.create({
+      ...session,
+      status: 'active',
+      perception: {
+        ...session.perception,
+        latestObservationAt: new Date(nowMs - 180_000).toISOString(),
+        latestImageId: 'old-slow-image',
+        confidence: 0.9,
+        freshnessMs: 180_000,
+        stability: 'stable',
+        motionState: 'stationary',
+        health: {
+          visualRefresh: {
+            status: 'unavailable',
+            analysisLatencyMs: 130_000,
+            since: new Date(nowMs - 130_000).toISOString(),
+            reason: 'visual refresh path appears unavailable'
+          }
+        }
+      }
+    });
+
+    const runner = new AtlasRunner({
+      store,
+      devices: [createFakeCameraDevice()],
+      provider: createFakeProvider(),
+      heartbeatPolicy: { refreshFailureRetryMs: 120_000 }
+    });
+
+    const result = await runner.runHeartbeatTick({ sessionId: session.sessionId, now: nowMs });
+
+    assert.equal(result.decision.shouldCapture, true);
+    assert.equal(result.decision.fallback, undefined);
+    assert.match(result.decision.reason, /fallback retry window elapsed/);
+    assert.ok(result.observation);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
