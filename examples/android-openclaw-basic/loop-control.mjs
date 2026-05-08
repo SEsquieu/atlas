@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import path from 'node:path';
@@ -20,6 +20,7 @@ const stdoutPath = path.join(runDir, 'loop.stdout.log');
 const stderrPath = path.join(runDir, 'loop.stderr.log');
 const summaryPath = path.join(runDir, 'ambient-loop.md');
 const jsonlPath = path.join(runDir, 'ambient-loop.jsonl');
+const imageWorkerStartupGraceMs = Number(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_STARTUP_GRACE_MS ?? 120000);
 
 try {
   if (action === 'start') await startLoop();
@@ -194,6 +195,7 @@ async function workerControl() {
   else if (workerAction === 'start') await startImageWorkerCommand();
   else if (workerAction === 'warm') await warmImageWorkerCommand();
   else if (workerAction === 'stop') await stopImageWorkerCommand();
+  else if (workerAction === 'clean') await cleanImageWorkerRegistryCommand();
   else throw new Error(`Unknown worker action: ${workerAction}\n\n${helpText()}`);
 }
 
@@ -201,15 +203,22 @@ async function printImageWorkerStatus() {
   const registryPath = resolveImageWorkerRegistryPath();
   const registry = await readImageWorkerRegistry();
   const envUrl = currentImageWorkerUrl();
-  const url = envUrl ?? registry?.url;
+  const registryUrl = typeof registry?.url === 'string' ? registry.url : undefined;
+  const url = envUrl ?? registryUrl;
   const health = url ? await readImageWorkerHealth(url) : undefined;
+  const assessment = await assessImageWorkerRegistry(registry, { health: url === registryUrl ? health : undefined });
 
   console.log('OpenClaw image worker status');
   console.log(`- registry: ${registryPath}`);
-  if (registry?.pid) console.log(`- registry pid: ${registry.pid}${isProcessAlive(registry.pid) ? ' alive' : ' stale'}`);
+  if (registry?.pid) {
+    console.log(`- registry pid: ${registry.pid}${assessment.pidAlive ? ' alive' : ' stale'}`);
+    if (assessment.processIdentity) console.log(`- process identity: ${assessment.processIdentity}`);
+  }
   if (registry?.updatedAt) console.log(`- registry updated: ${registry.updatedAt}`);
+  if (assessment.startupAgeMs !== undefined) console.log(`- startup age: ${formatMs(assessment.startupAgeMs)} / grace ${formatMs(imageWorkerStartupGraceMs)}`);
   console.log(`- url: ${url ?? 'none'}`);
   console.log(`- health: ${health ? 'healthy' : 'unavailable'}`);
+  console.log(`- registry state: ${assessment.state}`);
   if (health) {
     console.log(`- warm: ${formatWarmState(health.warm)}`);
     console.log(`- requests: ${health.requestCount ?? 0}`);
@@ -220,6 +229,7 @@ async function printImageWorkerStatus() {
 }
 
 async function startImageWorkerCommand() {
+  await cleanStaleImageWorkerRegistry({ stopExpiredKnownWorker: true });
   const existingUrl = await discoverExistingImageWorkerUrl();
   if (existingUrl) {
     const health = await readImageWorkerHealth(existingUrl);
@@ -235,6 +245,7 @@ async function startImageWorkerCommand() {
 }
 
 async function warmImageWorkerCommand() {
+  await cleanStaleImageWorkerRegistry({ stopExpiredKnownWorker: true });
   const existingUrl = await discoverExistingImageWorkerUrl();
   const worker = existingUrl ? { url: existingUrl } : await startImageWorker();
   console.log(`OpenClaw image worker: ${worker.url}`);
@@ -246,22 +257,33 @@ async function stopImageWorkerCommand() {
   const registryPath = resolveImageWorkerRegistryPath();
   const registry = await readImageWorkerRegistry();
   const url = registry?.url ?? currentImageWorkerUrl();
+  const assessment = await assessImageWorkerRegistry(registry);
   if (!registry?.pid) {
     console.log('OpenClaw image worker stop skipped: registry has no pid to stop safely.');
     if (url) console.log(`URL: ${url}`);
     return;
   }
 
-  if (!isProcessAlive(registry.pid)) {
+  if (!assessment.pidAlive) {
     console.log(`OpenClaw image worker is not running (stale pid=${registry.pid}).`);
     await rm(registryPath, { force: true });
     return;
+  }
+
+  if (assessment.processIdentity === 'not-worker' && !args.force) {
+    throw new Error(`Refusing to stop pid=${registry.pid}; registry PID is alive but does not look like openclaw-image-worker.mjs. Re-run with --force to override.`);
   }
 
   await stopProcess(registry.pid);
   await rm(registryPath, { force: true });
   console.log(`Stopped OpenClaw image worker: pid=${registry.pid}`);
   if (url) console.log(`URL: ${url}`);
+}
+
+async function cleanImageWorkerRegistryCommand() {
+  const cleaned = await cleanStaleImageWorkerRegistry({ stopExpiredKnownWorker: args.force });
+  if (cleaned) console.log(`Cleaned OpenClaw image worker registry: ${cleaned.reason}`);
+  else console.log('OpenClaw image worker registry is clean.');
 }
 
 function currentImageWorkerUrl() {
@@ -275,8 +297,10 @@ async function discoverExistingImageWorkerUrl() {
   const registry = await readImageWorkerRegistry();
   const url = typeof registry?.url === 'string' ? registry.url : undefined;
   if (!url) return undefined;
-  if (await imageWorkerHealthy(url)) return url;
-  if (registry?.pid && isProcessAlive(registry.pid) && isImageWorkerStarting(registry)) return url;
+  const health = await readImageWorkerHealth(url);
+  if (health) return url;
+  const assessment = await assessImageWorkerRegistry(registry, { health });
+  if (assessment.reusable) return url;
   return undefined;
 }
 
@@ -294,6 +318,87 @@ async function readImageWorkerRegistry() {
 
 function isImageWorkerStarting(registry) {
   return ['initializing', 'warming'].includes(registry?.warm?.status);
+}
+
+async function assessImageWorkerRegistry(registry, { health } = {}) {
+  if (!registry) return { state: 'missing', pidAlive: false, reusable: false };
+  const pidAlive = Boolean(registry.pid && isProcessAlive(registry.pid));
+  const processIdentity = registry.pid && pidAlive ? await identifyImageWorkerProcess(registry.pid) : undefined;
+  const effectiveWarm = health?.warm ?? registry.warm;
+  const starting = isImageWorkerStarting({ warm: effectiveWarm });
+  const startupAgeMs = starting ? imageWorkerStartupAgeMs(registry) : undefined;
+  const startupExpired = isFiniteNumber(startupAgeMs) && startupAgeMs > imageWorkerStartupGraceMs;
+
+  let state = 'stale';
+  if (health) state = 'healthy';
+  else if (!pidAlive) state = 'stale-pid';
+  else if (processIdentity === 'not-worker') state = 'pid-not-worker';
+  else if (starting && startupExpired) state = 'startup-expired';
+  else if (starting) state = 'starting';
+  else state = 'unhealthy';
+
+  return {
+    state,
+    pidAlive,
+    processIdentity,
+    startupAgeMs,
+    startupExpired,
+    reusable: state === 'healthy' || state === 'starting'
+  };
+}
+
+async function cleanStaleImageWorkerRegistry({ stopExpiredKnownWorker = false } = {}) {
+  const registryPath = resolveImageWorkerRegistryPath();
+  const registry = await readImageWorkerRegistry();
+  const assessment = await assessImageWorkerRegistry(registry);
+  if (!registry || assessment.reusable) return null;
+
+  if (assessment.state === 'startup-expired' && assessment.pidAlive && assessment.processIdentity === 'worker' && stopExpiredKnownWorker) {
+    await stopProcess(registry.pid);
+    await rm(registryPath, { force: true });
+    return { reason: `stopped expired startup worker pid=${registry.pid}` };
+  }
+
+  if (!assessment.pidAlive || assessment.state === 'pid-not-worker' || assessment.state === 'startup-expired' || assessment.state === 'unhealthy') {
+    await rm(registryPath, { force: true });
+    return { reason: `${assessment.state}${registry.pid ? ` pid=${registry.pid}` : ''}` };
+  }
+
+  return null;
+}
+
+function imageWorkerStartupAgeMs(registry) {
+  const at = firstDateMs(registry?.warm?.startedAt, registry?.warm?.requestedAt, registry?.updatedAt);
+  return isFiniteNumber(at) ? Date.now() - at : undefined;
+}
+
+function firstDateMs(...values) {
+  for (const value of values) {
+    const parsed = typeof value === 'string' ? Date.parse(value) : NaN;
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+async function identifyImageWorkerProcess(pid) {
+  const commandLine = readProcessCommandLine(pid);
+  if (!commandLine) return 'unknown';
+  return /openclaw-image-worker\.mjs/i.test(commandLine) ? 'worker' : 'not-worker';
+}
+
+function readProcessCommandLine(pid) {
+  if (process.platform === 'win32') {
+    const result = spawnSync('wmic', ['process', 'where', `ProcessId=${pid}`, 'get', 'CommandLine', '/value'], { encoding: 'utf8', windowsHide: true });
+    if (result.status !== 0 || !result.stdout) return undefined;
+    const match = result.stdout.match(/CommandLine=(.*)/s);
+    return match?.[1]?.trim();
+  }
+
+  try {
+    return readFileSync(path.join('/proc', String(pid), 'cmdline'), 'utf8').replace(/\0/g, ' ').trim();
+  } catch {
+    return undefined;
+  }
 }
 
 async function imageWorkerHealthy(url) {
@@ -759,6 +864,7 @@ function parseArgs(raw) {
     else if (arg === '--text') parsed.text = raw[++index] ?? '';
     else if (arg === '--provider-mode') parsed.providerMode = raw[++index] ?? '';
     else if (arg === '--image-worker') parsed.imageWorker = readImageWorkerMode(raw[++index]);
+    else if (arg === '--force') parsed.force = true;
     else parsed._.push(arg);
   }
   return parsed;
@@ -883,5 +989,5 @@ function truncate(value, maxLength) {
 }
 
 function helpText() {
-  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--markdown] [--tail 120]\n  npm run loop:android -- ask \"What am I looking at?\"\n  npm run loop:android -- worker status\n  npm run loop:android -- worker start\n  npm run loop:android -- worker warm\n  npm run loop:android -- worker stop\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. summary parses ambient-loop.jsonl by default; use --markdown to tail ambient-loop.md. ask uses the stable session/store and summary provider mode by default. worker commands manage the persistent OpenClaw image worker registry/health/warm state. Logs are written under <store>/<session>/.`;
+  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--markdown] [--tail 120]\n  npm run loop:android -- ask \"What am I looking at?\"\n  npm run loop:android -- worker status\n  npm run loop:android -- worker start\n  npm run loop:android -- worker warm\n  npm run loop:android -- worker clean\n  npm run loop:android -- worker stop\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. summary parses ambient-loop.jsonl by default; use --markdown to tail ambient-loop.md. ask uses the stable session/store and summary provider mode by default. worker commands manage the persistent OpenClaw image worker registry/health/warm state. Logs are written under <store>/<session>/.`;
 }
