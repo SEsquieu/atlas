@@ -35,7 +35,9 @@
               "ATLAS_ANDROID_BRIDGE_IMAGES_DIR": ".atlas-cache/images",
               "ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_MODEL": "openai-codex/gpt-5.5",
               "ATLAS_ANDROID_BRIDGE_CAPTURE_TIMEOUT_MS": "60000",
-              "ATLAS_ANDROID_BRIDGE_ANALYSIS_TIMEOUT_MS": "180000"
+              "ATLAS_ANDROID_BRIDGE_ANALYSIS_TIMEOUT_MS": "180000",
+              "ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK_TIMEOUT_MS": "120000",
+              "ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK_STALE_MS": "300000"
             }
           }
         }

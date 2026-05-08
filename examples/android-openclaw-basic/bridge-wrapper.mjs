@@ -9,11 +9,91 @@ const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 
 try {
   const options = await readJsonInput('ATLAS_ANDROID_BRIDGE_OPTIONS');
-  const result = await captureWithOpenClaw(options);
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  const releaseLock = await acquireCaptureLock();
+  try {
+    const result = await captureWithOpenClaw(options);
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } finally {
+    await releaseLock();
+  }
 } catch (error) {
   process.stderr.write(`${formatError(error)}\n`);
   process.exitCode = 1;
+}
+
+async function acquireCaptureLock() {
+  if (process.env.ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK === 'false') return async () => undefined;
+
+  const lockPath = path.resolve(firstString(process.env.ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK_PATH) ?? path.join('.atlas-runs', 'android-camera-bridge.lock'));
+  const timeoutMs = readNumberEnv('ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK_TIMEOUT_MS') ?? 120000;
+  const staleMs = readNumberEnv('ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK_STALE_MS') ?? 300000;
+  const startedAt = Date.now();
+  let attempts = 0;
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    attempts += 1;
+    try {
+      await fs.mkdir(lockPath, { recursive: false });
+      const metadata = {
+        pid: process.pid,
+        acquiredAt: new Date().toISOString(),
+        lockPath,
+        timeoutMs,
+        staleMs
+      };
+      await fs.writeFile(path.join(lockPath, 'owner.json'), `${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
+      return async () => {
+        await fs.rm(lockPath, { recursive: true, force: true });
+      };
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      const stale = await isStaleCaptureLock(lockPath, staleMs);
+      if (stale) {
+        await fs.rm(lockPath, { recursive: true, force: true });
+        continue;
+      }
+      await sleep(Math.min(1000, 100 + attempts * 50));
+    }
+  }
+
+  const owner = await readCaptureLockOwner(lockPath);
+  throw new Error(`Android bridge capture lock timed out after ${timeoutMs}ms.${owner ? ` Owner: ${owner}` : ''}`);
+}
+
+async function isStaleCaptureLock(lockPath, staleMs) {
+  const ownerPath = path.join(lockPath, 'owner.json');
+  try {
+    const stat = await fs.stat(ownerPath);
+    if (Date.now() - stat.mtimeMs > staleMs) return true;
+    const owner = JSON.parse(await fs.readFile(ownerPath, 'utf8'));
+    if (owner?.pid && !isProcessAlive(owner.pid) && Date.now() - Date.parse(owner.acquiredAt ?? '') > 5000) return true;
+    return false;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return true;
+    return false;
+  }
+}
+
+async function readCaptureLockOwner(lockPath) {
+  try {
+    const owner = JSON.parse(await fs.readFile(path.join(lockPath, 'owner.json'), 'utf8'));
+    return `pid=${owner.pid ?? 'unknown'} acquiredAt=${owner.acquiredAt ?? 'unknown'}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function captureWithOpenClaw(options) {

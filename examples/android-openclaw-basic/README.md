@@ -149,10 +149,12 @@ node packages/atlas-cli/dist/index.js session ask live-android-openclaw --text "
 node packages/atlas-cli/dist/index.js session inspect live-android-openclaw
 ```
 
+The live bridge wrapper also takes an inter-process capture lock before invoking the Android camera helper. By default the lock lives at `.atlas-runs/android-camera-bridge.lock`, waits up to `ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK_TIMEOUT_MS` (default 120s), and treats abandoned locks older than `ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK_STALE_MS` (default 300s) as stale. This keeps a manual ask refresh, heartbeat tick, or second loop process from overlapping phone camera capture. Set `ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK=false` only for deliberate low-level debugging.
+
 The example assumes:
 
 - `openclaw` is on PATH.
 - A paired Android node is available to OpenClaw.
 - OpenClaw image understanding is configured; the live example defaults to `openai-codex/gpt-5.5` via `analysisMode=openclaw`.
 
-Override wrapper behavior through the device config and `env` blocks, for example `maxWidth`, `quality`, `ATLAS_ANDROID_BRIDGE_NODE`, `ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN`, `ATLAS_ANDROID_BRIDGE_OLLAMA_MODEL`, `ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL`, `ATLAS_OPENCLAW_AGENT_ID`, or `ATLAS_OPENCLAW_PROVIDER_MODE=summary`. The live example defaults to `maxWidth=1024` and `quality=0.7`, which keeps enough detail for visual summaries while avoiding the full-resolution capture/analysis tax.
+Override wrapper behavior through the device config and `env` blocks, for example `maxWidth`, `quality`, `ATLAS_ANDROID_BRIDGE_NODE`, `ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN`, `ATLAS_ANDROID_BRIDGE_OLLAMA_MODEL`, `ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL`, `ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK_TIMEOUT_MS`, `ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK_STALE_MS`, `ATLAS_OPENCLAW_AGENT_ID`, or `ATLAS_OPENCLAW_PROVIDER_MODE=summary`. The live example defaults to `maxWidth=1024` and `quality=0.7`, which keeps enough detail for visual summaries while avoiding the full-resolution capture/analysis tax.

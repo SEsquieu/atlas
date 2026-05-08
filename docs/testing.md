@@ -60,6 +60,8 @@ npm run loop:android -- summary
 
 Manual prerequisite: foreground the Android/OpenClaw app before the fresh-start tick. The expected shape is one live heartbeat capture, a cached ask with no ask-time refresh when context is fresh enough, and a passing ambient validator.
 
+The Android bridge wrapper serializes phone camera access with an inter-process capture lock at `.atlas-runs/android-camera-bridge.lock` by default. This prevents overlapping snaps from a heartbeat, ask-time refresh, or second loop process. If a contention test is needed without touching the phone, pre-create the lock directory and run the wrapper with a tiny `ATLAS_ANDROID_BRIDGE_CAPTURE_LOCK_TIMEOUT_MS`; it should fail before invoking camera capture.
+
 ## MVP Test Scenarios
 
 1. **Fresh context required**
