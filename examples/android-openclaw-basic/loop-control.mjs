@@ -28,6 +28,7 @@ try {
   else if (action === 'summary') await printSummary();
   else if (action === 'ask') await askLoop();
   else if (action === 'fresh-start') await freshStartLoop();
+  else if (action === 'worker') await workerControl();
   else if (action === '--help' || action === '-h' || action === 'help') console.log(helpText());
   else throw new Error(`Unknown action: ${action}\n\n${helpText()}`);
 } catch (error) {
@@ -187,6 +188,82 @@ async function maybeStartImageWorker() {
   return await startImageWorker();
 }
 
+async function workerControl() {
+  const workerAction = args._[1] ?? 'status';
+  if (workerAction === 'status') await printImageWorkerStatus();
+  else if (workerAction === 'start') await startImageWorkerCommand();
+  else if (workerAction === 'warm') await warmImageWorkerCommand();
+  else if (workerAction === 'stop') await stopImageWorkerCommand();
+  else throw new Error(`Unknown worker action: ${workerAction}\n\n${helpText()}`);
+}
+
+async function printImageWorkerStatus() {
+  const registryPath = resolveImageWorkerRegistryPath();
+  const registry = await readImageWorkerRegistry();
+  const envUrl = currentImageWorkerUrl();
+  const url = envUrl ?? registry?.url;
+  const health = url ? await readImageWorkerHealth(url) : undefined;
+
+  console.log('OpenClaw image worker status');
+  console.log(`- registry: ${registryPath}`);
+  if (registry?.pid) console.log(`- registry pid: ${registry.pid}${isProcessAlive(registry.pid) ? ' alive' : ' stale'}`);
+  if (registry?.updatedAt) console.log(`- registry updated: ${registry.updatedAt}`);
+  console.log(`- url: ${url ?? 'none'}`);
+  console.log(`- health: ${health ? 'healthy' : 'unavailable'}`);
+  if (health) {
+    console.log(`- warm: ${formatWarmState(health.warm)}`);
+    console.log(`- requests: ${health.requestCount ?? 0}`);
+    if (health.lastError) console.log(`- last error: ${health.lastError}`);
+  } else if (registry?.warm) {
+    console.log(`- last known warm: ${formatWarmState(registry.warm)}`);
+  }
+}
+
+async function startImageWorkerCommand() {
+  const existingUrl = await discoverExistingImageWorkerUrl();
+  if (existingUrl) {
+    const health = await readImageWorkerHealth(existingUrl);
+    console.log(`OpenClaw image worker already available: ${existingUrl}`);
+    console.log(`Health: ${health ? 'healthy' : 'starting/unavailable'}`);
+    console.log(`Warm: ${formatWarmState(health?.warm)} requests=${health?.requestCount ?? '?'}`);
+    return;
+  }
+
+  const worker = await startImageWorker();
+  console.log(`Started OpenClaw image worker: ${worker.url}`);
+  console.log(`Warm: ${formatWarmState(worker.warm)}`);
+}
+
+async function warmImageWorkerCommand() {
+  const existingUrl = await discoverExistingImageWorkerUrl();
+  const worker = existingUrl ? { url: existingUrl } : await startImageWorker();
+  console.log(`OpenClaw image worker: ${worker.url}`);
+  const result = await warmImageWorker(worker.url, buildImageWorkerEnv());
+  console.log(`Warm: ${formatWarmState(result)}`);
+}
+
+async function stopImageWorkerCommand() {
+  const registryPath = resolveImageWorkerRegistryPath();
+  const registry = await readImageWorkerRegistry();
+  const url = registry?.url ?? currentImageWorkerUrl();
+  if (!registry?.pid) {
+    console.log('OpenClaw image worker stop skipped: registry has no pid to stop safely.');
+    if (url) console.log(`URL: ${url}`);
+    return;
+  }
+
+  if (!isProcessAlive(registry.pid)) {
+    console.log(`OpenClaw image worker is not running (stale pid=${registry.pid}).`);
+    await rm(registryPath, { force: true });
+    return;
+  }
+
+  await stopProcess(registry.pid);
+  await rm(registryPath, { force: true });
+  console.log(`Stopped OpenClaw image worker: pid=${registry.pid}`);
+  if (url) console.log(`URL: ${url}`);
+}
+
 function currentImageWorkerUrl() {
   return process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL ?? process.env.ATLAS_OPENCLAW_IMAGE_WORKER_URL;
 }
@@ -195,18 +272,28 @@ async function discoverExistingImageWorkerUrl() {
   const existing = currentImageWorkerUrl();
   if (existing && await imageWorkerHealthy(existing)) return existing;
 
-  try {
-    const registry = JSON.parse(await readFile(resolveImageWorkerRegistryPath(), 'utf8'));
-    const url = typeof registry?.url === 'string' ? registry.url : undefined;
-    if (url && await imageWorkerHealthy(url)) return url;
-  } catch {
-    // No reusable worker registry yet.
-  }
+  const registry = await readImageWorkerRegistry();
+  const url = typeof registry?.url === 'string' ? registry.url : undefined;
+  if (!url) return undefined;
+  if (await imageWorkerHealthy(url)) return url;
+  if (registry?.pid && isProcessAlive(registry.pid) && isImageWorkerStarting(registry)) return url;
   return undefined;
 }
 
 function resolveImageWorkerRegistryPath() {
   return path.resolve(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_REGISTRY ?? path.join(repoRoot, '.atlas-runs', 'openclaw-image-worker.json'));
+}
+
+async function readImageWorkerRegistry() {
+  try {
+    return JSON.parse(await readFile(resolveImageWorkerRegistryPath(), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function isImageWorkerStarting(registry) {
+  return ['initializing', 'warming'].includes(registry?.warm?.status);
 }
 
 async function imageWorkerHealthy(url) {
@@ -232,11 +319,7 @@ async function startImageWorker() {
   const shouldPrewarm = parseBoolean(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM, true);
   const shouldWaitForWarm = parseBoolean(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_WAIT_FOR_WARM, false);
   const shouldPersist = parseBoolean(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_PERSIST, true);
-  const workerEnv = {
-    ...process.env,
-    ATLAS_OPENCLAW_IMAGE_WORKER_MODEL: process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_MODEL ?? 'openai-codex/gpt-5.5',
-    ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM: shouldPrewarm ? '1' : '0'
-  };
+  const workerEnv = buildImageWorkerEnv({ prewarm: shouldPrewarm });
   const timeoutMs = Number(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_START_TIMEOUT_MS ?? 180000);
   if (shouldPersist) {
     const port = await reservePort();
@@ -261,6 +344,14 @@ async function startImageWorker() {
     stopChild(child);
     throw error;
   }
+}
+
+function buildImageWorkerEnv({ prewarm = parseBoolean(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM, true) } = {}) {
+  return {
+    ...process.env,
+    ATLAS_OPENCLAW_IMAGE_WORKER_MODEL: process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_MODEL ?? process.env.ATLAS_OPENCLAW_IMAGE_WORKER_MODEL ?? 'openai-codex/gpt-5.5',
+    ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM: prewarm ? '1' : '0'
+  };
 }
 
 async function reservePort() {
@@ -691,6 +782,10 @@ function parseBoolean(value, fallback) {
   return fallback;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function sanitizeEnv(env) {
   return Object.fromEntries(Object.entries(env).filter((entry) => typeof entry[1] === 'string'));
 }
@@ -788,5 +883,5 @@ function truncate(value, maxLength) {
 }
 
 function helpText() {
-  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--markdown] [--tail 120]\n  npm run loop:android -- ask \"What am I looking at?\"\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. summary parses ambient-loop.jsonl by default; use --markdown to tail ambient-loop.md. ask uses the stable session/store and summary provider mode by default. Logs are written under <store>/<session>/.`;
+  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--markdown] [--tail 120]\n  npm run loop:android -- ask \"What am I looking at?\"\n  npm run loop:android -- worker status\n  npm run loop:android -- worker start\n  npm run loop:android -- worker warm\n  npm run loop:android -- worker stop\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. summary parses ambient-loop.jsonl by default; use --markdown to tail ambient-loop.md. ask uses the stable session/store and summary provider mode by default. worker commands manage the persistent OpenClaw image worker registry/health/warm state. Logs are written under <store>/<session>/.`;
 }
