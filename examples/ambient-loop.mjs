@@ -17,6 +17,7 @@ const maxSleepMs = args.maxSleepMs ?? 5_000;
 const logDir = path.join(storeRoot, sessionId);
 const jsonlPath = args.jsonl ?? path.join(logDir, 'ambient-loop.jsonl');
 const markdownPath = args.markdown ?? path.join(logDir, 'ambient-loop.md');
+const askText = args.askText ?? process.env.ATLAS_AMBIENT_ASK_TEXT;
 
 let stopped = false;
 let imageWorker;
@@ -35,6 +36,7 @@ try {
   console.log(`Wait: ${shouldWait ? `yes (max ${maxSleepMs}ms)` : 'no'}`);
   console.log(`JSONL: ${jsonlPath}`);
   console.log(`Markdown: ${markdownPath}`);
+  if (askText) console.log(`Cached ask after ticks: ${askText}`);
   if (args.config) console.log(`Config: ${args.config}`);
   else console.log('Config: none (uses built-in fake adapters; no phone camera)');
 
@@ -71,6 +73,12 @@ try {
     }
   }
 
+  if (askText && !stopped) {
+    const askEntry = await runCachedAsk(askText);
+    await appendLoopLogs(askEntry);
+    printAskEntry(askEntry);
+  }
+
   console.log('');
   console.log(`Wrote loop summaries to:\n- ${jsonlPath}\n- ${markdownPath}`);
 } catch (error) {
@@ -97,6 +105,7 @@ function buildEntry({ tick, wallMs, heartbeat, inspection }) {
   const latest = inspection.observations?.latest;
   const significance = heartbeat.significance;
   return {
+    type: 'heartbeat',
     tick,
     at: new Date().toISOString(),
     wallMs,
@@ -127,6 +136,44 @@ function buildEntry({ tick, wallMs, heartbeat, inspection }) {
       : undefined,
     timing: inspection.timing,
     mediaRef: latest?.mediaRef
+  };
+}
+
+async function runCachedAsk(text) {
+  const started = Date.now();
+  const askArgs = ['session', 'ask', sessionId, '--store', storeRoot, '--text', text];
+  if (args.config) askArgs.push('--config', args.config);
+  const ask = await atlasJson(askArgs);
+  const wallMs = Date.now() - started;
+  const inspection = await atlasJson(['session', 'inspect', sessionId, '--store', storeRoot]);
+  const latest = inspection.observations?.latest;
+
+  return {
+    type: 'cached-ask',
+    at: new Date().toISOString(),
+    wallMs,
+    sessionId,
+    text,
+    responseText: ask.responseText,
+    plan: {
+      needsVisualContext: ask.plan?.needsVisualContext,
+      shouldRefreshVisualContext: ask.plan?.shouldRefreshVisualContext,
+      reason: ask.plan?.reason,
+      useCase: ask.plan?.useCase,
+      confidence: ask.plan?.confidence
+    },
+    refreshedObservationId: ask.refreshedObservationId,
+    refreshError: ask.refreshError,
+    reusedLastObservationAfterRefreshFailure: ask.reusedLastObservationAfterRefreshFailure,
+    context: {
+      latestObservationId: latest?.id,
+      summary: latest?.summary ?? inspection.perception?.summary,
+      freshnessMs: inspection.perception?.freshnessMs,
+      confidence: inspection.perception?.confidence,
+      stability: inspection.perception?.stability,
+      mediaRef: latest?.mediaRef
+    },
+    timing: inspection.timing
   };
 }
 
@@ -274,6 +321,8 @@ function stopChild(child) {
 }
 
 function formatMarkdownEntry(entry) {
+  if (entry.type === 'cached-ask') return formatMarkdownAskEntry(entry);
+
   const lines = [
     `## Tick ${entry.tick} — ${entry.at}`,
     '',
@@ -295,6 +344,28 @@ function formatMarkdownEntry(entry) {
   return `${lines.join('\n')}`;
 }
 
+function formatMarkdownAskEntry(entry) {
+  const lines = [
+    `## Cached ask — ${entry.at}`,
+    '',
+    `- text: ${entry.text}`,
+    `- wall time: ${formatMs(entry.wallMs)}`,
+    `- refresh during ask: ${entry.refreshedObservationId ? `yes (${entry.refreshedObservationId})` : 'no'}`,
+    `- plan: visual=${entry.plan?.needsVisualContext ?? '?'} refresh=${entry.plan?.shouldRefreshVisualContext ?? '?'} useCase=${entry.plan?.useCase ?? 'unknown'} confidence=${formatScore(entry.plan?.confidence)}`,
+    `- reason: ${entry.plan?.reason ?? 'n/a'}`,
+    entry.refreshError ? `- refresh error: ${entry.refreshError}` : undefined,
+    entry.context?.latestObservationId ? `- latest observation: ${entry.context.latestObservationId}` : undefined,
+    entry.context?.mediaRef ? `- media: ${entry.context.mediaRef}` : undefined,
+    '',
+    entry.context?.summary ? `context summary: ${entry.context.summary}` : 'context summary: (none)',
+    '',
+    entry.responseText ? `response: ${entry.responseText}` : 'response: (none)',
+    '',
+    ''
+  ].filter((line) => line !== undefined);
+  return `${lines.join('\n')}`;
+}
+
 function printEntry(entry) {
   console.log(
     [
@@ -307,6 +378,18 @@ function printEntry(entry) {
       `significance=${entry.significance?.level ?? 'n/a'}`,
       `wall=${formatMs(entry.wallMs)}`,
       entry.summary ? `summary=${truncate(entry.summary, 120)}` : 'summary=(none)'
+    ].join(' | ')
+  );
+}
+
+function printAskEntry(entry) {
+  console.log(
+    [
+      'cached ask',
+      `refresh=${entry.refreshedObservationId ? 'yes' : 'no'}`,
+      `wall=${formatMs(entry.wallMs)}`,
+      entry.context?.summary ? `context=${truncate(entry.context.summary, 100)}` : 'context=(none)',
+      entry.responseText ? `response=${truncate(entry.responseText, 120)}` : 'response=(none)'
     ].join(' | ')
   );
 }
@@ -349,6 +432,7 @@ function parseArgs(raw) {
     else if (arg === '--max-sleep-ms') parsed.maxSleepMs = readPositiveInteger(raw[++index], '--max-sleep-ms');
     else if (arg === '--jsonl') parsed.jsonl = raw[++index];
     else if (arg === '--markdown') parsed.markdown = raw[++index];
+    else if (arg === '--ask-text') parsed.askText = raw[++index];
     else if (arg === '--image-worker') parsed.imageWorker = readImageWorkerMode(raw[++index]);
     else if (arg === '--help' || arg === '-h') {
       console.log(helpText());
@@ -411,5 +495,5 @@ function formatWarmState(warm) {
 }
 
 function helpText() {
-  return `Atlas ambient loop runner\n\nUsage:\n  node examples/ambient-loop.mjs [--ticks 3] [--wait] [--max-sleep-ms 5000]\n                                 [--session id] [--store path] [--config path]\n                                 [--jsonl path] [--markdown path]\n                                 [--image-worker auto|true|false]\n\nDefault mode uses built-in fake adapters and does not invoke the phone camera. Passing a live Android config will invoke whatever device adapter that config selects. With --image-worker auto, OpenClaw image worker starts automatically for the Android/OpenClaw bridge config.`;
+  return `Atlas ambient loop runner\n\nUsage:\n  node examples/ambient-loop.mjs [--ticks 3] [--wait] [--max-sleep-ms 5000]\n                                 [--session id] [--store path] [--config path]\n                                 [--jsonl path] [--markdown path]\n                                 [--ask-text "What am I looking at?"]\n                                 [--image-worker auto|true|false]\n\nDefault mode uses built-in fake adapters and does not invoke the phone camera. Passing a live Android config will invoke whatever device adapter that config selects. With --ask-text, the runner finishes heartbeat ticks with one explicit ask so the log proves whether the user turn reused ambient context or triggered an ask-time refresh. With --image-worker auto, OpenClaw image worker starts automatically for the Android/OpenClaw bridge config.`;
 }

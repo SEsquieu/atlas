@@ -292,6 +292,9 @@ Current slice:
 - Heartbeat decisions include a dynamic cadence suggestion so a future ambient runner can schedule the next tick without hard-coding one interval.
 - Heartbeat captures now run a cheap significance gate that compares the new observation with the previous one and records `none`, `low`, `meaningful`, or `actionable` significance.
 - `npm run demo:ambient-loop -- --ticks 3` runs a fake-safe multi-tick ambient loop and writes skim-friendly `ambient-loop.jsonl` / `ambient-loop.md` summaries for test review.
+- `npm run demo:ambient-loop -- --ticks 1 --ask-text "What am I looking at?"` appends a cached-ask proof entry after heartbeat ticks, showing user-turn wall time, plan/reason, refresh/no-refresh, latest context summary, and provider response without invoking the phone camera unless a live config is passed.
+- `npm run loop:android -- summary` now separates heartbeat tick entries from cached-ask entries so ambient-loop scorecards do not miscount explicit asks as heartbeat reuses.
+- `npm run validate:ambient -- <ambient-loop.jsonl>` provides a nonzero-exit regression gate for ambient logs. It requires heartbeat ticks by default, fails on stale-context reuse, and can require captures/cached asks/no ask-time refreshes/max ask wall time.
 - The ambient loop runner auto-starts the warm OpenClaw image worker for the live Android/OpenClaw bridge config, preventing cold image-analysis timeouts during live loop tests.
 
 Deliverables:
@@ -302,6 +305,8 @@ Deliverables:
 - Cheap significance gate. ✅ v0 landed
 - Silent-by-default behavior.
 - Human-readable ambient loop summary log for test review. ✅ fake-safe runner landed
+- Cached-context ask proof in ambient loop logs. ✅ fake-safe runner landed
+- Nonzero-exit ambient loop validator for regression/demo gates. ✅ initial fake-safe validator landed
 - Capture budget / device health placeholder to avoid runaway camera pressure. ✅ v0 landed
 - Optional provider call for meaningful scene changes.
 - Hard gate for proactive speech.

@@ -73,7 +73,7 @@ For a live multi-tick ambient loop smoke that runs the Android/OpenClaw heartbea
 npm run demo:smoke-ambient-android -- --ticks 3
 ```
 
-By default this builds Atlas, starts the OpenClaw image worker without blocking on prewarm, runs the live Android/OpenClaw config, waits between ticks using Atlas cadence capped at 30s, and writes `ambient-loop.jsonl` / `ambient-loop.md` under `.atlas-runs/latest-ambient-android/<session>/`. Set `ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM=1` only when you intentionally want startup to request and wait for `/warm` before the first loop tick; the worker still reports HTTP readiness first, then acknowledges warm status separately. Use `--store <path>` to choose a different log/session location, `--no-build` while iterating, `--max-sleep-ms <ms>` to shorten waits, or `--no-wait` to run ticks back-to-back.
+By default this builds Atlas, starts the OpenClaw image worker without blocking on prewarm, runs the live Android/OpenClaw config, waits between ticks using Atlas cadence capped at 30s, and writes `ambient-loop.jsonl` / `ambient-loop.md` under `.atlas-runs/latest-ambient-android/<session>/`. Add `--ask-text "What am I looking at?"` to finish the heartbeat ticks with one explicit user ask; the JSONL/markdown logs then show whether that ask reused ambient context or triggered an ask-time refresh. Set `ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM=1` only when you intentionally want startup to request and wait for `/warm` before the first loop tick; the worker still reports HTTP readiness first, then acknowledges warm status separately. Use `--store <path>` to choose a different log/session location, `--no-build` while iterating, `--max-sleep-ms <ms>` to shorten waits, or `--no-wait` to run ticks back-to-back.
 
 For chat/operator-style loop control over a longer-running ambient loop:
 
@@ -86,7 +86,7 @@ npm run loop:android -- ask "What am I looking at?"
 npm run loop:android -- stop
 ```
 
-`start` resumes the stable `.atlas-runs/latest-ambient-android` loop location. Use `fresh-start` when you explicitly want a clean loop store. `status` reports process state plus latest session/visual context age, confidence, refresh health, bridge timing, and latest summary when a session exists. `summary` parses `ambient-loop.jsonl` into compact stats and a freshness scorecard by default; use `--markdown` to tail the human-readable journal. The scorecard calls out refresh-due captures, preemptive captures before stale, stale captures/reuses, max age versus stale window, and whether stale was ever hit. `ask` starts the OpenClaw image worker when needed so ask-time refreshes use the same worker path as ambient heartbeats; if `ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM=1` is set, it waits for `/warm` and prints the warm acknowledgement before asking. It then prints user-turn, capture round-trip, bridge total, camera/helper capture, file stage, image-analysis, and provider timings when available. If ask-time refresh fails but Atlas has a previous observation, the core user loop falls back to that observation with an explicit stale-context caveat instead of hard failing. This is still a CLI harness, not a daemon/service, but it gives Vera/OpenClaw a stable command surface for “start the loop” / “stop the loop” chat control.
+`start` resumes the stable `.atlas-runs/latest-ambient-android` loop location. Use `fresh-start` when you explicitly want a clean loop store. `status` reports process state plus latest session/visual context age, confidence, refresh health, bridge timing, and latest summary when a session exists. `summary` parses `ambient-loop.jsonl` into compact stats and a freshness scorecard by default; use `--markdown` to tail the human-readable journal. The scorecard calls out refresh-due captures, preemptive captures before stale, stale captures/reuses, max age versus stale window, and whether stale was ever hit. If the JSONL includes `cached-ask` entries from `--ask-text`, `summary` separates them from heartbeat ticks and prints a cached-ask scorecard with reuse vs ask-time refresh counts and average ask wall time. `ask` starts the OpenClaw image worker when needed so ask-time refreshes use the same worker path as ambient heartbeats; if `ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM=1` is set, it waits for `/warm` and prints the warm acknowledgement before asking. It then prints user-turn, capture round-trip, bridge total, camera/helper capture, file stage, image-analysis, and provider timings when available. If ask-time refresh fails but Atlas has a previous observation, the core user loop falls back to that observation with an explicit stale-context caveat instead of hard failing. This is still a CLI harness, not a daemon/service, but it gives Vera/OpenClaw a stable command surface for “start the loop” / “stop the loop” chat control.
 
 For a fake-safe ambient loop journal that does **not** invoke the phone camera unless you pass a live Android config:
 
@@ -94,7 +94,15 @@ For a fake-safe ambient loop journal that does **not** invoke the phone camera u
 npm run demo:ambient-loop -- --ticks 3
 ```
 
-The runner writes both `ambient-loop.jsonl` and `ambient-loop.md` under the session store directory. Each tick records cadence, freshness age/stale window, capture/no-capture, latest summary, significance level/score, and timing so a test loop can be read without digging through raw `events.jsonl`. Add `--wait` to sleep between ticks using the cadence decision, or pass `--config examples/android-openclaw-basic/atlas-live.config.example.json` only when you intentionally want the live Android device path.
+The runner writes both `ambient-loop.jsonl` and `ambient-loop.md` under the session store directory. Each tick records cadence, freshness age/stale window, capture/no-capture, latest summary, significance level/score, and timing so a test loop can be read without digging through raw `events.jsonl`. Add `--ask-text "What am I looking at?"` to append a cached-ask entry after the heartbeat ticks, including user-turn wall time, plan/reason, refresh/no-refresh, latest context summary, and provider response. Add `--wait` to sleep between ticks using the cadence decision, or pass `--config examples/android-openclaw-basic/atlas-live.config.example.json` only when you intentionally want the live Android device path.
+
+To turn ambient-loop logs into a pass/fail regression gate:
+
+```bash
+npm run validate:ambient -- .atlas-runs/latest-ambient-android/live-android-openclaw/ambient-loop.jsonl --require-capture --require-cached-ask --max-ask-refreshes 0
+```
+
+The validator reads `ambient-loop.jsonl`, separates heartbeat ticks from cached asks, fails on stale-context reuse by default, and can require captures, cached asks, no ask-time refreshes, no refresh-due reuses, or maximum ask wall time. This is the quick “did the ambient run actually prove the thing?” command for demo/harness output.
 
 For a no-camera warm-context behavior harness:
 

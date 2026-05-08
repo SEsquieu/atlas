@@ -16,6 +16,7 @@ const store = args.store ?? process.env.ATLAS_AMBIENT_STORE ?? path.join(repoRoo
 const loopArgs = [ambientLoopPath, '--config', configPath, '--session', session, '--ticks', ticks, '--store', store, '--image-worker', args.imageWorker ?? 'auto'];
 
 if (args.wait !== false) loopArgs.push('--wait', '--max-sleep-ms', maxSleepMs);
+if (args.askText) loopArgs.push('--ask-text', args.askText);
 if (args.jsonl) loopArgs.push('--jsonl', args.jsonl);
 if (args.markdown) loopArgs.push('--markdown', args.markdown);
 
@@ -25,6 +26,7 @@ try {
   console.log(`Ticks: ${ticks}`);
   console.log(`Wait: ${args.wait !== false ? `yes (max ${maxSleepMs}ms)` : 'no'}`);
   console.log(`Store: ${store}`);
+  if (args.askText) console.log(`Cached ask after ticks: ${args.askText}`);
   console.log(`Summary logs: ${path.join(store, session, 'ambient-loop.md')}`);
   console.log(`Build: ${shouldBuild ? 'yes' : 'skipped'}`);
   console.log('Note: this uses the live Android/OpenClaw config and may invoke the phone camera during heartbeat ticks.');
@@ -72,6 +74,7 @@ function parseArgs(raw) {
     else if (arg === '--store') parsed.store = raw[++index];
     else if (arg === '--jsonl') parsed.jsonl = raw[++index];
     else if (arg === '--markdown') parsed.markdown = raw[++index];
+    else if (arg === '--ask-text') parsed.askText = raw[++index];
     else if (arg === '--image-worker') parsed.imageWorker = readImageWorkerMode(raw[++index]);
     else if (arg === '--help' || arg === '-h') {
       console.log(helpText());
@@ -105,5 +108,5 @@ function formatMs(value) {
 }
 
 function helpText() {
-  return `Atlas ambient Android/OpenClaw loop smoke\n\nUsage:\n  npm run demo:smoke-ambient-android -- [--ticks 3] [--max-sleep-ms 30000]\n                                      [--no-build] [--no-wait]\n                                      [--session id] [--store path]\n                                      [--image-worker auto|true|false]\n\nRuns the live Android/OpenClaw ambient loop with the example config. Defaults to waiting between ticks using Atlas cadence, capped at 30s. Unless --store is provided, logs and session state are written to .atlas-runs/latest-ambient-android/<session>/.`;
+  return `Atlas ambient Android/OpenClaw loop smoke\n\nUsage:\n  npm run demo:smoke-ambient-android -- [--ticks 3] [--max-sleep-ms 30000]\n                                      [--no-build] [--no-wait]\n                                      [--session id] [--store path]\n                                      [--ask-text "What am I looking at?"]\n                                      [--image-worker auto|true|false]\n\nRuns the live Android/OpenClaw ambient loop with the example config. Defaults to waiting between ticks using Atlas cadence, capped at 30s. With --ask-text, finishes with one explicit ask to prove whether the user turn reused ambient context or refreshed at ask-time. Unless --store is provided, logs and session state are written to .atlas-runs/latest-ambient-android/<session>/.`;
 }

@@ -317,19 +317,22 @@ async function printSummary() {
 }
 
 function printParsedSummary(entries) {
-  const captures = entries.filter((entry) => entry.captured).length;
-  const reuses = entries.length - captures;
-  const freshness = buildFreshnessScorecard(entries);
-  const wallValues = entries.map((entry) => entry.wallMs).filter(isFiniteNumber);
-  const capturedWallValues = entries.filter((entry) => entry.captured).map((entry) => entry.wallMs).filter(isFiniteNumber);
-  const reuseWallValues = entries.filter((entry) => !entry.captured).map((entry) => entry.wallMs).filter(isFiniteNumber);
-  const bridgeTotalValues = entries.map((entry) => entry.timing?.bridge?.totalMs).filter(isFiniteNumber);
-  const captureValues = entries.map((entry) => entry.timing?.bridge?.captureMs).filter(isFiniteNumber);
-  const analysisValues = entries.map((entry) => entry.timing?.bridge?.analysisMs).filter(isFiniteNumber);
-  const latest = entries.at(-1);
+  const heartbeatEntries = entries.filter(isHeartbeatEntry);
+  const cachedAskEntries = entries.filter((entry) => entry.type === 'cached-ask');
+  const captures = heartbeatEntries.filter((entry) => entry.captured).length;
+  const reuses = heartbeatEntries.length - captures;
+  const freshness = buildFreshnessScorecard(heartbeatEntries);
+  const wallValues = heartbeatEntries.map((entry) => entry.wallMs).filter(isFiniteNumber);
+  const capturedWallValues = heartbeatEntries.filter((entry) => entry.captured).map((entry) => entry.wallMs).filter(isFiniteNumber);
+  const reuseWallValues = heartbeatEntries.filter((entry) => !entry.captured).map((entry) => entry.wallMs).filter(isFiniteNumber);
+  const bridgeTotalValues = heartbeatEntries.map((entry) => entry.timing?.bridge?.totalMs).filter(isFiniteNumber);
+  const captureValues = heartbeatEntries.map((entry) => entry.timing?.bridge?.captureMs).filter(isFiniteNumber);
+  const analysisValues = heartbeatEntries.map((entry) => entry.timing?.bridge?.analysisMs).filter(isFiniteNumber);
+  const latest = heartbeatEntries.at(-1);
 
   console.log('Atlas loop summary');
-  console.log(`- ticks: ${entries.length}`);
+  console.log(`- ticks: ${heartbeatEntries.length}`);
+  if (cachedAskEntries.length) console.log(`- cached asks: ${cachedAskEntries.length}`);
   console.log(`- captures: ${captures}`);
   console.log(`- reuses: ${reuses}`);
   console.log(`- avg wall: ${formatMs(avg(wallValues))}`);
@@ -338,9 +341,10 @@ function printParsedSummary(entries) {
   if (bridgeTotalValues.length) console.log(`- avg bridge: ${formatMs(avg(bridgeTotalValues))}`);
   if (captureValues.length) console.log(`- avg camera/helper capture: ${formatMs(avg(captureValues))}`);
   if (analysisValues.length) console.log(`- avg image analysis: ${formatMs(avg(analysisValues))}`);
-  console.log(`- significance: ${formatCounts(countBy(entries, (entry) => entry.significance?.level ?? 'none'))}`);
-  console.log(`- cadence: ${formatCounts(countBy(entries, (entry) => entry.cadence?.mode ?? 'unknown'))}`);
+  console.log(`- significance: ${formatCounts(countBy(heartbeatEntries, (entry) => entry.significance?.level ?? 'none'))}`);
+  console.log(`- cadence: ${formatCounts(countBy(heartbeatEntries, (entry) => entry.cadence?.mode ?? 'unknown'))}`);
   printFreshnessScorecard(freshness);
+  printCachedAskSummary(cachedAskEntries);
   console.log(`- latest tick: ${latest?.tick ?? 'n/a'} at ${latest?.at ?? 'n/a'}`);
   console.log(`- latest capture: ${latest?.captured ? 'yes' : 'no'}`);
   console.log(`- latest significance: ${latest?.significance?.level ?? 'none'}${isFiniteNumber(latest?.significance?.score) ? ` score=${latest.significance.score.toFixed(2)}` : ''}`);
@@ -350,6 +354,29 @@ function printParsedSummary(entries) {
   console.log(`- markdown: ${summaryPath}`);
   console.log('');
   console.log(`Latest summary: ${latest?.summary ?? '(none)'}`);
+}
+
+function isHeartbeatEntry(entry) {
+  return entry?.type === 'heartbeat' || entry?.type === undefined;
+}
+
+function printCachedAskSummary(entries) {
+  if (!entries.length) return;
+  const latest = entries.at(-1);
+  const refreshed = entries.filter((entry) => entry.refreshedObservationId).length;
+  const reused = entries.length - refreshed;
+  const wallValues = entries.map((entry) => entry.wallMs).filter(isFiniteNumber);
+
+  console.log('Cached ask scorecard');
+  console.log(`- asks: ${entries.length}`);
+  console.log(`- reused ambient context: ${reused}`);
+  console.log(`- refreshed during ask: ${refreshed}`);
+  console.log(`- avg ask wall: ${formatMs(avg(wallValues))}`);
+  console.log(`- latest ask: ${latest?.text ?? '(none)'}`);
+  console.log(`- latest ask refresh: ${latest?.refreshedObservationId ? `yes (${latest.refreshedObservationId})` : 'no'}`);
+  if (latest?.plan?.reason) console.log(`- latest ask plan: ${latest.plan.reason}`);
+  if (latest?.responseText) console.log(`- latest response: ${truncate(latest.responseText, 180)}`);
+  console.log('');
 }
 
 function buildFreshnessScorecard(entries) {
