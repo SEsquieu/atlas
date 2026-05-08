@@ -45,7 +45,7 @@ async function startLoop({ fresh = false } = {}) {
   if (existing?.pid && isProcessAlive(existing.pid)) {
     console.log(`Atlas loop already running: pid=${existing.pid}`);
     console.log(`Summary: ${summaryPath}`);
-    return;
+    return existing;
   }
 
   if (fresh) {
@@ -76,7 +76,7 @@ async function startLoop({ fresh = false } = {}) {
     windowsHide: true
   });
   child.unref();
-  await writeControl({
+  const control = {
     pid: child.pid,
     startedAt: new Date().toISOString(),
     session,
@@ -89,18 +89,44 @@ async function startLoop({ fresh = false } = {}) {
     ticks: Number(ticks),
     maxSleepMs: Number(maxSleepMs),
     fresh
-  });
+  };
+  await writeControl(control);
   console.log(`Started Atlas loop: pid=${child.pid}`);
   console.log(`Session: ${session}`);
   console.log(`Store: ${store}`);
   console.log(`Summary: ${summaryPath}`);
   console.log(`Logs: ${stdoutPath}`);
+  if (args.waitComplete) await waitForLoopCompletion(control);
+  return control;
 }
 
 async function freshStartLoop() {
   const existing = await readControl();
   if (existing?.pid && isProcessAlive(existing.pid)) throw new Error('Atlas loop is already running. Stop it before fresh-start.');
   await startLoop({ fresh: true });
+}
+
+async function waitForLoopCompletion(control) {
+  const expectedTicks = Number(control?.ticks ?? args.ticks ?? 1);
+  const timeoutMs = args.waitTimeoutMs ?? Math.max(300000, expectedTicks * ((control?.maxSleepMs ?? args.maxSleepMs ?? 30000) + 240000));
+  const startedAt = Date.now();
+  console.log(`Waiting for Atlas loop completion: pid=${control.pid}, ticks=${expectedTicks}, timeout=${formatMs(timeoutMs)}`);
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    const recordedTicks = await countJsonlLines(control.jsonlPath ?? jsonlPath);
+    const alive = control.pid ? isProcessAlive(control.pid) : false;
+    if (recordedTicks >= expectedTicks && !alive) {
+      console.log(`Atlas loop completed: ticks=${recordedTicks}`);
+      return;
+    }
+    if (!alive && recordedTicks < expectedTicks) {
+      const stderr = await readTextIfExists(control.stderrPath ?? stderrPath);
+      throw new Error(`Atlas loop exited before recording expected ticks (${recordedTicks}/${expectedTicks}).${stderr ? ` stderr: ${truncate(stderr.trim(), 1000)}` : ''}`);
+    }
+    await sleep(500);
+  }
+
+  throw new Error(`Timed out waiting for Atlas loop completion after ${formatMs(timeoutMs)}.`);
 }
 
 async function stopLoop() {
@@ -966,6 +992,8 @@ function parseArgs(raw) {
     const arg = raw[index];
     if (arg === '--ticks') parsed.ticks = readPositiveInteger(raw[++index], '--ticks');
     else if (arg === '--max-sleep-ms') parsed.maxSleepMs = readPositiveInteger(raw[++index], '--max-sleep-ms');
+    else if (arg === '--wait-complete') parsed.waitComplete = true;
+    else if (arg === '--wait-timeout-ms') parsed.waitTimeoutMs = readPositiveInteger(raw[++index], '--wait-timeout-ms');
     else if (arg === '--session') parsed.session = raw[++index];
     else if (arg === '--store') parsed.store = raw[++index];
     else if (arg === '--tail') parsed.tail = readPositiveInteger(raw[++index], '--tail');
@@ -1100,5 +1128,5 @@ function truncate(value, maxLength) {
 }
 
 function helpText() {
-  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--markdown] [--tail 120]\n  npm run loop:android -- ask \"What am I looking at?\"\n  npm run loop:android -- preflight [--no-warm]\n  npm run loop:android -- worker status\n  npm run loop:android -- worker start\n  npm run loop:android -- worker warm\n  npm run loop:android -- worker clean\n  npm run loop:android -- worker stop\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. summary parses ambient-loop.jsonl by default; use --markdown to tail ambient-loop.md. ask uses the stable session/store and summary provider mode by default. preflight checks build/config/session/worker readiness and warms the image worker without touching the camera. worker commands manage the persistent OpenClaw image worker registry/health/warm state. Logs are written under <store>/<session>/.`;
+  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000] [--wait-complete]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000] [--wait-complete]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--markdown] [--tail 120]\n  npm run loop:android -- ask \"What am I looking at?\"\n  npm run loop:android -- preflight [--no-warm]\n  npm run loop:android -- worker status\n  npm run loop:android -- worker start\n  npm run loop:android -- worker warm\n  npm run loop:android -- worker clean\n  npm run loop:android -- worker stop\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. pass --wait-complete for finite test loops that should block until ticks are recorded before validation. summary parses ambient-loop.jsonl by default; use --markdown to tail ambient-loop.md. ask uses the stable session/store and summary provider mode by default. preflight checks build/config/session/worker readiness and warms the image worker without touching the camera. worker commands manage the persistent OpenClaw image worker registry/health/warm state. Logs are written under <store>/<session>/.`;
 }
