@@ -13,7 +13,7 @@ Run the current no-camera MVP scenario pass from the repo root:
 npm run demo:scenarios
 ```
 
-The harness writes temporary session state under `.atlas-runs/scenario-harness` and verifies the major user-loop and heartbeat cases without touching Android/OpenClaw. It also emits `scenario-report.json` and `scenario-report.md` with per-scenario pass/fail status, details, event type timelines, event counts, latest observation/significance/provider text, and speech/suppression counts. Use `--store <path>` to choose a different output location, `--json <path>` / `--markdown <path>` to override report paths, or `--no-clean` to inspect a previous run alongside new state.
+The harness writes temporary session state under `.atlas-runs/scenario-harness` and verifies the major user-loop, heartbeat, and provider-swap cases without touching Android/OpenClaw. It also emits `scenario-report.json` and `scenario-report.md` with per-scenario pass/fail status, details, event type timelines, event counts, latest observation/significance/provider text, and speech/suppression counts. Use `--store <path>` to choose a different output location, `--json <path>` / `--markdown <path>` to override report paths, or `--no-clean` to inspect a previous run alongside new state.
 
 Validate the generated report contract:
 
@@ -21,7 +21,7 @@ Validate the generated report contract:
 npm run validate:scenarios
 ```
 
-The validator fails with nonzero exit if the report is missing required scenarios, if any scenario failed, or if required event patterns regress. For example, unchanged heartbeat must not have provider/speech events, meaningful heartbeat must include provider review plus speech suppression, and actionable heartbeat must include proactive speech when permission allows it.
+The validator fails with nonzero exit if the report is missing required scenarios, if any scenario failed, or if required event patterns regress. For example, unchanged heartbeat must not have provider/speech events, meaningful heartbeat must include provider review plus speech suppression, actionable heartbeat must include proactive speech when permission allows it, and provider swap must show the alternate provider receiving the same materialized physical session shape.
 
 Replay a saved session from its event log and compare replayed materialized state with saved state:
 

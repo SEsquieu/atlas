@@ -31,6 +31,7 @@ try {
   results.push(await runHeartbeatUnchangedSilenceScenario());
   results.push(await runHeartbeatMeaningfulProviderSuppressionScenario());
   results.push(await runHeartbeatActionablePermissionScenario());
+  results.push(await runProviderSwapScenario());
 
   for (const result of results) printResult(result);
   await writeScenarioReports(results);
@@ -252,11 +253,60 @@ async function runHeartbeatActionablePermissionScenario() {
   });
 }
 
+async function runProviderSwapScenario() {
+  const sessionId = 'provider-swap';
+  const store = new FileSessionStore({ rootDir: storeRoot });
+  await createStartedSession(store, {
+    sessionId,
+    provider: { id: 'alternate-provider', adapter: 'alternate-provider' },
+    devices: [{ id: 'provider-swap-camera', adapter: '@atlas/core/testing', capabilities: ['camera.capture'] }]
+  });
+
+  const observedProviders = [];
+  let captureCount = 0;
+  const runner = new AtlasRunner({
+    store,
+    devices: [cameraDevice(() => {
+      captureCount += 1;
+      return fakeImage({
+        id: 'provider-swap-image',
+        deviceId: 'provider-swap-camera',
+        mediaRef: 'fake://provider-swap.jpg',
+        summary: 'Fresh fake observation: a provider swap camera image.'
+      });
+    }, { id: 'provider-swap-camera', name: 'Provider Swap Camera' })],
+    provider: {
+      id: 'alternate-provider',
+      name: 'Alternate Provider',
+      step: async (turn) => {
+        observedProviders.push(turn.session.provider.id);
+        const latest = turn.observations.at(-1);
+        return { turnId: turn.turnId, responseText: `provider=${turn.session.provider.id}; latest=${latest?.id ?? 'none'}` };
+      }
+    }
+  });
+
+  const result = await runner.runUserTurn({ sessionId, text: 'What am I looking at?', turnId: 'provider-swap-turn' });
+
+  assert.deepEqual(observedProviders, ['alternate-provider']);
+  assert.equal(result.refreshedObservation?.id, 'provider-swap-image');
+  assert.equal(result.providerResult.responseText, 'provider=alternate-provider; latest=provider-swap-image');
+  assert.equal(captureCount, 1);
+
+  return await withAudit(store, {
+    name: 'provider swap preserves materialized physical session shape',
+    sessionId,
+    kind: 'adapter-swap',
+    passed: true,
+    details: [`observedProviders=${observedProviders.join(',')}`, `captures=${captureCount}`, `response=${result.providerResult.responseText}`]
+  });
+}
+
 async function createStartedSession(store, input) {
   const session = createSessionState({
     sessionId: input.sessionId,
-    provider: { id: 'fake-provider', adapter: '@atlas/core/testing' },
-    devices: [{ id: 'fake-camera', adapter: '@atlas/core/testing', capabilities: ['camera.capture'] }]
+    provider: input.provider ?? { id: 'fake-provider', adapter: '@atlas/core/testing' },
+    devices: input.devices ?? [{ id: 'fake-camera', adapter: '@atlas/core/testing', capabilities: ['camera.capture'] }]
   });
   await store.create({
     ...session,
@@ -369,10 +419,10 @@ function dataObject(event) {
   return typeof event?.data === 'object' && event.data !== null ? event.data : undefined;
 }
 
-function cameraDevice(onCapture) {
+function cameraDevice(onCapture, options = {}) {
   return {
-    id: 'fake-camera',
-    name: 'Fake no-camera device',
+    id: options.id ?? 'fake-camera',
+    name: options.name ?? 'Fake no-camera device',
     capabilities: async () => ['camera.capture'],
     captureImage: async () => onCapture()
   };
@@ -393,15 +443,15 @@ function providerFor(label, onTurn, responseText) {
   };
 }
 
-function fakeImage({ id, ageMs = 0, summary, motion = false, confidence = 0.9 }) {
+function fakeImage({ id, ageMs = 0, summary, motion = false, confidence = 0.9, deviceId = 'fake-camera', mediaRef }) {
   const observedAt = new Date(Date.now() - ageMs).toISOString();
   const availableAt = new Date(Date.parse(observedAt) + 150).toISOString();
   return {
     id,
     type: 'image',
     capturedAt: observedAt,
-    deviceId: 'fake-camera',
-    mediaRef: `fake://${id}.jpg`,
+    deviceId,
+    mediaRef: mediaRef ?? `fake://${id}.jpg`,
     telemetry: {
       observedAt,
       availableAt,

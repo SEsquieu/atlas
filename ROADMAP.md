@@ -324,7 +324,7 @@ Goal: make behavior inspectable and hard to fool ourselves about.
 
 Current slice:
 
-- `npm run demo:scenarios` runs a fake-safe scenario harness covering fresh visual capture, cached visual reuse, transitional place-confirmation refresh, unchanged heartbeat silence, meaningful heartbeat provider-review speech suppression, and actionable heartbeat escalation with permission.
+- `npm run demo:scenarios` runs a fake-safe scenario harness covering fresh visual capture, cached visual reuse, transitional place-confirmation refresh, unchanged heartbeat silence, meaningful heartbeat provider-review speech suppression, actionable heartbeat escalation with permission, and provider adapter swap behavior.
 - The scenario harness emits `scenario-report.json` / `scenario-report.md` with per-scenario details, event type timelines/counts, latest observation/significance/provider text, and speech/suppression counts.
 - `npm run validate:scenarios` validates the fake-safe scenario report contract and fails on missing scenarios, failed report status, or required event-pattern regressions.
 - `npm run replay:session -- <sessionId>` rebuilds a saved session from `events.jsonl`, compares replayed materialized state to saved `state.json`, and can emit JSON/Markdown replay reports.
@@ -344,7 +344,7 @@ Required scenarios:
 - “Am I in the right place?” stale/transitional rejection.
 - Heartbeat unchanged-scene silence.
 - Heartbeat actionable-change escalation.
-- Provider adapter swap simulation.
+- Provider adapter swap simulation. ✅ fake-safe scenario landed
 
 ## Phase 8 — Voice Layer
 

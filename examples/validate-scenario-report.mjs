@@ -38,6 +38,12 @@ const REQUIRED_SCENARIOS = [
     name: 'actionable heartbeat can escalate when speech is permitted',
     mustHaveEvents: ['heartbeat.tick', 'observation.captured', 'perception.significance', 'provider.requested', 'provider.responded', 'agent.speech'],
     significance: 'actionable'
+  },
+  {
+    name: 'provider swap preserves materialized physical session shape',
+    mustHaveEvents: ['user.utterance', 'tool.requested', 'tool.completed', 'observation.captured', 'provider.requested', 'provider.responded', 'agent.speech'],
+    latestObservationId: 'provider-swap-image',
+    providerTextIncludes: 'provider=alternate-provider'
   }
 ];
 
@@ -118,6 +124,14 @@ function validateScenario(result, rule) {
 
   if (rule.significance && audit.latestSignificance !== rule.significance) {
     failures.push(`${rule.name}: expected latestSignificance=${rule.significance}, found ${audit.latestSignificance ?? 'missing'}`);
+  }
+
+  if (rule.latestObservationId && audit.latestObservationId !== rule.latestObservationId) {
+    failures.push(`${rule.name}: expected latestObservationId=${rule.latestObservationId}, found ${audit.latestObservationId ?? 'missing'}`);
+  }
+
+  if (rule.providerTextIncludes && !String(audit.latestProviderText ?? '').includes(rule.providerTextIncludes)) {
+    failures.push(`${rule.name}: expected latestProviderText to include ${rule.providerTextIncludes}`);
   }
 
   if (typeof audit.eventCount === 'number' && eventTypes.length !== audit.eventCount) {
