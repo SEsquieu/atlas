@@ -172,17 +172,22 @@ async function printStatus() {
 async function askLoop() {
   const text = (args.text ?? args._.slice(1).join(' ')).trim();
   if (!text) throw new Error('Usage: npm run loop:android -- ask "What am I looking at?"');
-  await ensureConfiguredSession();
+  const askConfigPath = await prepareAskConfig();
+  await ensureConfiguredSession(askConfigPath);
   process.env.ATLAS_OPENCLAW_PROVIDER_MODE = args.providerMode ?? 'summary';
+  applyThinkingEnvOverride();
   let imageWorker;
   try {
     imageWorker = await maybeStartImageWorker();
     if (imageWorker?.url) console.log(`OpenClaw image worker: ${imageWorker.url}`);
     if (imageWorker?.warm) console.log(`OpenClaw image worker warm: ${formatWarmState(imageWorker.warm)}`);
-    const result = await atlasJson(['session', 'ask', session, '--text', text, '--config', configPath, '--store', store]);
+    const result = await atlasJson(['session', 'ask', session, '--text', text, '--config', askConfigPath, '--store', store]);
     const inspection = await atlasJson(['session', 'inspect', session, '--store', store]);
     console.log(result.responseText ?? '(no response text)');
     console.log('');
+    console.log(`- provider mode: ${process.env.ATLAS_OPENCLAW_PROVIDER_MODE}`);
+    console.log(`- OpenClaw thinking: ${formatThinkingOverride()}`);
+    if (args.agentSessionPrefix) console.log(`- OpenClaw session prefix: ${args.agentSessionPrefix}`);
     console.log(`- refreshed during ask: ${result.refreshedObservationId ?? 'no'}`);
     if (result.reusedLastObservationAfterRefreshFailure) {
       console.log(`- refresh fallback: reused latest observation after refresh failed (${result.refreshError ?? 'unknown error'})`);
@@ -203,6 +208,47 @@ async function askLoop() {
   } finally {
     imageWorker?.stop();
   }
+}
+
+async function prepareAskConfig() {
+  if (!args.agentSessionPrefix && args.thinking === undefined) return configPath;
+  await mkdir(runDir, { recursive: true });
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  const sessionConfig = config?.sessions?.[session];
+  if (!sessionConfig) return configPath;
+  const provider = (sessionConfig.provider ??= {});
+  const providerConfig = (provider.config ??= {});
+  const providerEnv = (providerConfig.env ??= {});
+
+  if (args.agentSessionPrefix) providerEnv.ATLAS_OPENCLAW_AGENT_SESSION_PREFIX = args.agentSessionPrefix;
+  if (args.thinking !== undefined) {
+    const normalized = normalizeThinkingOverride(args.thinking);
+    if (normalized === undefined) delete providerEnv.ATLAS_OPENCLAW_THINKING;
+    else providerEnv.ATLAS_OPENCLAW_THINKING = normalized;
+  }
+
+  const overridePath = path.join(runDir, 'ask-runtime.config.json');
+  await writeFile(overridePath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  return overridePath;
+}
+
+function applyThinkingEnvOverride() {
+  if (args.thinking === undefined) return;
+  const normalized = normalizeThinkingOverride(args.thinking);
+  if (normalized === undefined) delete process.env.ATLAS_OPENCLAW_THINKING;
+  else process.env.ATLAS_OPENCLAW_THINKING = normalized;
+}
+
+function normalizeThinkingOverride(value) {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed || /^(inherit|default|unset|none)$/i.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+function formatThinkingOverride() {
+  if (args.thinking === undefined) return process.env.ATLAS_OPENCLAW_THINKING || 'inherited/default';
+  const normalized = normalizeThinkingOverride(args.thinking);
+  return normalized ?? 'unset/default';
 }
 
 async function preflightLiveLoop() {
@@ -702,10 +748,10 @@ function stopChild(child) {
   child.kill();
 }
 
-async function ensureConfiguredSession() {
+async function ensureConfiguredSession(sessionConfigPath = configPath) {
   const inspect = await atlas(['session', 'inspect', session, '--store', store], { allowFailure: true });
   if (inspect.code === 0) return;
-  await atlas(['session', 'create', session, '--config', configPath, '--store', store]);
+  await atlas(['session', 'create', session, '--config', sessionConfigPath, '--store', store]);
   await atlas(['session', 'start', session, '--store', store]);
 }
 
@@ -1001,6 +1047,8 @@ function parseArgs(raw) {
     else if (arg === '--markdown') parsed.markdown = true;
     else if (arg === '--text') parsed.text = raw[++index] ?? '';
     else if (arg === '--provider-mode') parsed.providerMode = raw[++index] ?? '';
+    else if (arg === '--thinking') parsed.thinking = raw[++index] ?? '';
+    else if (arg === '--agent-session-prefix') parsed.agentSessionPrefix = raw[++index] ?? '';
     else if (arg === '--image-worker') parsed.imageWorker = readImageWorkerMode(raw[++index]);
     else if (arg === '--force') parsed.force = true;
     else if (arg === '--warm') parsed.warm = true;
@@ -1129,5 +1177,5 @@ function truncate(value, maxLength) {
 }
 
 function helpText() {
-  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000] [--wait-complete]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000] [--wait-complete]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--markdown] [--tail 120]\n  npm run loop:android -- ask \"What am I looking at?\"\n  npm run loop:android -- preflight [--no-warm]\n  npm run loop:android -- worker status\n  npm run loop:android -- worker start\n  npm run loop:android -- worker warm\n  npm run loop:android -- worker clean\n  npm run loop:android -- worker stop\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. pass --wait-complete for finite test loops that should block until ticks are recorded before validation. summary parses ambient-loop.jsonl by default; use --markdown to tail ambient-loop.md. ask uses the stable session/store and summary provider mode by default. preflight checks build/config/session/worker readiness and warms the image worker without touching the camera. worker commands manage the persistent OpenClaw image worker registry/health/warm state. Logs are written under <store>/<session>/.`;
+  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000] [--wait-complete]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000] [--wait-complete]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--markdown] [--tail 120]\n  npm run loop:android -- ask \"What am I looking at?\" [--provider-mode summary|agent] [--thinking high|low|off|unset] [--agent-session-prefix <prefix>]\n  npm run loop:android -- preflight [--no-warm]\n  npm run loop:android -- worker status\n  npm run loop:android -- worker start\n  npm run loop:android -- worker warm\n  npm run loop:android -- worker clean\n  npm run loop:android -- worker stop\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. pass --wait-complete for finite test loops that should block until ticks are recorded before validation. summary parses ambient-loop.jsonl by default; use --markdown to tail ambient-loop.md. ask uses the stable session/store and summary provider mode by default; --thinking and --agent-session-prefix write a per-store runtime config for isolated provider-agent A/B runs. preflight checks build/config/session/worker readiness and warms the image worker without touching the camera. worker commands manage the persistent OpenClaw image worker registry/health/warm state. Logs are written under <store>/<session>/.`;
 }

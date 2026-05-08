@@ -74,6 +74,18 @@ The Android bridge wrapper serializes phone camera access with an inter-process 
 
 Heartbeat-triggered provider reviews in the live Android config use `ATLAS_OPENCLAW_HEARTBEAT_PROVIDER_MODE=summary` by default. This keeps ambient review on the fast path; full `openclaw agent` provider turns are still available for explicit user asks or deliberate heartbeat-provider tests.
 
+### Provider thinking A/B harness
+
+Use the stable configured session id with isolated stores and OpenClaw session prefixes. Do not invent Atlas session ids unless they are added to the live config first.
+
+```bash
+npm run loop:android -- ask "What am I looking at?" --provider-mode agent --thinking low --agent-session-prefix atlas-ab-low --store .atlas-runs/thinking-ab-low
+npm run loop:android -- ask "What am I looking at?" --provider-mode agent --thinking high --agent-session-prefix atlas-ab-high --store .atlas-runs/thinking-ab-high
+npm run loop:android -- ask "What am I looking at?" --provider-mode agent --thinking unset --agent-session-prefix atlas-ab-default --store .atlas-runs/thinking-ab-default
+```
+
+`loop-control` writes a per-store `ask-runtime.config.json` when `--thinking` or `--agent-session-prefix` is supplied, so the configured Atlas session can stay `live-android-openclaw` while each OpenClaw provider run gets isolated agent session state. Use `--provider-mode summary` for the fast visual-summary path and `--provider-mode agent` when deliberately measuring `openclaw agent` latency.
+
 ## MVP Test Scenarios
 
 1. **Fresh context required**
