@@ -39,6 +39,16 @@ npm run validate:ambient -- --store .atlas-runs/latest-ambient-android --require
 
 The ambient validator reads `.atlas-runs/latest-ambient-android/live-android-openclaw/ambient-loop.jsonl` by default. Use `--store <path>` plus optional `--session <id>` for loop stores, or `--jsonl <path>` / positional JSONL when validating a specific log file.
 
+## Fake-safe Android/OpenClaw wrapper contracts
+
+`npm test` includes the Android/OpenClaw wrapper contract checks via:
+
+```bash
+npm run test:examples
+```
+
+These checks do not touch the phone camera or require OpenClaw to be installed. They verify that heartbeat provider review stays on the summary fast path by default, that `ATLAS_OPENCLAW_HEARTBEAT_PROVIDER_MODE=summary` overrides global agent mode for heartbeat turns, that summary-mode user replies preserve degraded visual-health caveats, and that the Android bridge capture lock can fail before invoking camera/OpenClaw.
+
 ## Live Android demo-readiness flow
 
 Before a live Android proof, run the no-camera preflight:
