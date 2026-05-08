@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -229,15 +230,19 @@ function resolveImageWorkerRegistryPath() {
 }
 
 async function imageWorkerHealthy(url) {
+  return Boolean(await readImageWorkerHealth(url));
+}
+
+async function readImageWorkerHealth(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error('image worker health check timed out')), 1500);
   try {
     const response = await fetch(new URL('/health', url), { signal: controller.signal });
-    if (!response.ok) return false;
+    if (!response.ok) return undefined;
     const json = await response.json().catch(() => ({}));
-    return json?.ok === true;
+    return json?.ok === true ? json : undefined;
   } catch {
-    return false;
+    return undefined;
   } finally {
     clearTimeout(timeout);
   }
@@ -264,17 +269,29 @@ async function configUsesOpenClawImageBridge(configPath) {
 }
 
 async function startImageWorker() {
-  const shouldPrewarm = parseBoolean(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM, false);
+  const shouldPrewarm = parseBoolean(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM, true);
+  const shouldWaitForWarm = parseBoolean(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_WAIT_FOR_WARM, false);
+  const shouldPersist = parseBoolean(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_PERSIST, true);
   const workerEnv = {
     ...process.env,
     ATLAS_OPENCLAW_IMAGE_WORKER_MODEL: process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_MODEL ?? 'openai-codex/gpt-5.5',
-    ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM: '0'
+    ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM: shouldPrewarm ? '1' : '0'
   };
-  const child = spawn(process.execPath, [workerPath], { cwd: repoRoot, env: workerEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   const timeoutMs = Number(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_START_TIMEOUT_MS ?? 180000);
-  const { url } = await waitForWorkerReady(child, timeoutMs);
+  if (shouldPersist) {
+    const port = await reservePort();
+    const url = `http://127.0.0.1:${port}`;
+    const child = spawn(process.execPath, [workerPath, '--port', String(port)], { cwd: repoRoot, env: workerEnv, stdio: 'ignore', detached: true, windowsHide: true });
+    child.unref();
+    const health = await waitForImageWorkerHealth(url, timeoutMs);
+    return { url, warm: health?.warm, stop: () => undefined };
+  }
+
+  const child = spawn(process.execPath, [workerPath], { cwd: repoRoot, env: workerEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const ready = await waitForWorkerReady(child, timeoutMs);
+  const { url } = ready;
   try {
-    const warm = shouldPrewarm ? await warmImageWorker(url, workerEnv) : undefined;
+    const warm = shouldWaitForWarm ? await warmImageWorker(url, workerEnv) : ready.warm;
     return { url, warm, stop: () => stopChild(child) };
   } catch (error) {
     stopChild(child);
@@ -366,6 +383,28 @@ async function waitForWorkerReady(child, timeoutMs) {
 function stopChild(child) {
   if (!child || child.killed) return;
   child.kill();
+}
+
+async function reservePort() {
+  return await new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : undefined;
+      server.close(() => port ? resolve(port) : reject(new Error('failed to reserve image worker port')));
+    });
+  });
+}
+
+async function waitForImageWorkerHealth(url, timeoutMs) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const health = await readImageWorkerHealth(url);
+    if (health) return health;
+    await sleep(100);
+  }
+  throw new Error(`OpenClaw image worker did not become healthy after ${timeoutMs}ms: ${url}`);
 }
 
 function formatMarkdownEntry(entry) {

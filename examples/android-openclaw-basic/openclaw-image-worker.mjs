@@ -22,6 +22,7 @@ let queue = Promise.resolve();
 let requestCount = 0;
 let lastError;
 let warmState = { status: 'idle' };
+let workerUrl;
 
 try {
   const server = http.createServer(handleRequest);
@@ -29,6 +30,7 @@ try {
   const address = server.address();
   const actualPort = typeof address === 'object' && address ? address.port : port;
   const url = `http://${host}:${actualPort}`;
+  workerUrl = url;
   warmState = { status: 'initializing', startedAt: new Date().toISOString() };
   process.stdout.write(`${JSON.stringify({ kind: 'atlas.openclaw-image-worker.ready', url, pid: process.pid, warm: warmState })}\n`);
   await writeWorkerRegistry({ url, pid: process.pid, warm: warmState });
@@ -139,6 +141,15 @@ async function describe(body = {}) {
     timeoutMs
   });
   requestCount += 1;
+  warmState = {
+    status: 'warm',
+    model: `${provider}/${model}`,
+    provider,
+    resolvedModel: result.model,
+    lastDescribeDurationMs: Date.now() - startedAt,
+    lastDescribeAt: new Date().toISOString()
+  };
+  if (workerUrl) await writeWorkerRegistry({ url: workerUrl, pid: process.pid, warm: warmState }).catch(() => undefined);
   return {
     ok: true,
     text: String(result.text ?? '').trim(),
