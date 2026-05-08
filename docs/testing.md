@@ -31,6 +31,14 @@ npm run replay:session -- heartbeat-actionable-escalation --store .atlas-runs/sc
 
 The replay command prints event counts, checkpoint/cursor status, and state comparison results. It exits nonzero if the replayed state diverges from the saved materialized state. Add `--json <path>` and/or `--markdown <path>` for durable replay reports.
 
+Validate an ambient loop journal directly:
+
+```bash
+npm run validate:ambient -- --store .atlas-runs/latest-ambient-android --require-capture
+```
+
+The ambient validator reads `.atlas-runs/latest-ambient-android/live-android-openclaw/ambient-loop.jsonl` by default. Use `--store <path>` plus optional `--session <id>` for loop stores, or `--jsonl <path>` / positional JSONL when validating a specific log file.
+
 ## MVP Test Scenarios
 
 1. **Fresh context required**

@@ -6,8 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const args = parseArgs(process.argv.slice(2));
-const defaultJsonl = path.join(repoRoot, '.atlas-runs', 'latest-ambient-android', 'live-android-openclaw', 'ambient-loop.jsonl');
-const jsonlPath = path.resolve(repoRoot, args.jsonl ?? args._[0] ?? defaultJsonl);
+const defaultStore = path.join(repoRoot, '.atlas-runs', 'latest-ambient-android');
+const defaultSession = 'live-android-openclaw';
+const jsonlPath = resolveAmbientJsonlPath(args);
 
 try {
   const entries = await readJsonlEntries(jsonlPath);
@@ -114,6 +115,8 @@ function parseArgs(raw) {
   for (let index = 0; index < raw.length; index += 1) {
     const arg = raw[index];
     if (arg === '--jsonl') parsed.jsonl = raw[++index];
+    else if (arg === '--store') parsed.store = raw[++index];
+    else if (arg === '--session') parsed.session = raw[++index];
     else if (arg === '--min-heartbeats') parsed.minHeartbeats = readNonNegativeInteger(raw[++index], '--min-heartbeats');
     else if (arg === '--require-capture') parsed.requireCapture = true;
     else if (arg === '--min-captures') parsed.minCaptures = readNonNegativeInteger(raw[++index], '--min-captures');
@@ -132,6 +135,18 @@ function parseArgs(raw) {
     }
   }
   return parsed;
+}
+
+function resolveAmbientJsonlPath(options) {
+  if (options.jsonl) return path.resolve(repoRoot, options.jsonl);
+  if (options._[0]) return path.resolve(repoRoot, options._[0]);
+
+  const store = path.resolve(repoRoot, options.store ?? defaultStore);
+  const rootJsonl = path.join(store, 'ambient-loop.jsonl');
+  if (existsSync(rootJsonl)) return rootJsonl;
+
+  const session = options.session ?? defaultSession;
+  return path.join(store, session, 'ambient-loop.jsonl');
 }
 
 function isHeartbeatEntry(entry) {
@@ -171,5 +186,5 @@ function formatMs(value) {
 }
 
 function helpText() {
-  return `Atlas ambient run validator\n\nUsage:\n  npm run validate:ambient -- [path/to/ambient-loop.jsonl]\n  npm run validate:ambient -- --jsonl path --require-capture --require-cached-ask --max-ask-refreshes 0\n\nDefaults:\n- reads .atlas-runs/latest-ambient-android/live-android-openclaw/ambient-loop.jsonl\n- requires at least one heartbeat tick\n- fails on unsafe stale visual context reuse\n- allows stale fallback when refresh is degraded/unavailable and marks it as a warning\n\nUseful gates:\n  --min-heartbeats <n>\n  --require-capture | --min-captures <n>\n  --require-cached-ask | --min-cached-asks <n>\n  --max-stale-reuses <n>\n  --fail-on-degraded-stale-reuse\n  --max-refresh-due-reuses <n>\n  --max-ask-refreshes <n>\n  --max-ask-wall-ms <ms>`;
+  return `Atlas ambient run validator\n\nUsage:\n  npm run validate:ambient -- [path/to/ambient-loop.jsonl]\n  npm run validate:ambient -- --jsonl path --require-capture --require-cached-ask --max-ask-refreshes 0\n  npm run validate:ambient -- --store .atlas-runs/latest-ambient-android --session live-android-openclaw\n\nDefaults:\n- reads .atlas-runs/latest-ambient-android/live-android-openclaw/ambient-loop.jsonl\n- with --store, reads <store>/ambient-loop.jsonl when present, otherwise <store>/<session>/ambient-loop.jsonl\n- default --session is live-android-openclaw\n- requires at least one heartbeat tick\n- fails on unsafe stale visual context reuse\n- allows stale fallback when refresh is degraded/unavailable and marks it as a warning\n\nUseful inputs:\n  --jsonl <path>\n  --store <path>\n  --session <id>\n\nUseful gates:\n  --min-heartbeats <n>\n  --require-capture | --min-captures <n>\n  --require-cached-ask | --min-cached-asks <n>\n  --max-stale-reuses <n>\n  --fail-on-degraded-stale-reuse\n  --max-refresh-due-reuses <n>\n  --max-ask-refreshes <n>\n  --max-ask-wall-ms <ms>`;
 }
