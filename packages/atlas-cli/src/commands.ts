@@ -324,7 +324,8 @@ function createDeviceFromBinding(binding: DeviceBinding): DeviceAdapter {
       analysisMode: readOptionalString(config, 'analysisMode'),
       maxWidth: readOptionalNumber(config, 'maxWidth'),
       quality: readOptionalQuality(config, 'quality'),
-      delayMs: readOptionalNumber(config, 'delayMs')
+      delayMs: readOptionalNumber(config, 'delayMs'),
+      speak: readOptionalSpeakConfig(config, binding.adapter)
     });
   }
 
@@ -369,6 +370,23 @@ function readOptionalStringRecord(config: Record<string, unknown>, key: string):
   const value = config[key];
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+}
+
+function readOptionalSpeakConfig(config: Record<string, unknown>, adapter: string) {
+  const value = config.speak;
+  if (value === undefined) return undefined;
+  const speak = readObjectConfig(value as Record<string, unknown> | undefined, `${adapter}.speak`);
+  return {
+    command: readRequiredString(speak, 'command', `${adapter}.speak`),
+    args: readOptionalStringArray(speak, 'args'),
+    cwd: readOptionalString(speak, 'cwd') ?? readOptionalString(config, 'cwd'),
+    timeoutMs: readOptionalNumber(speak, 'timeoutMs'),
+    env: readOptionalStringRecord(speak, 'env'),
+    inputMode: readOptionalInputMode(speak, 'inputMode'),
+    stopCommand: readOptionalString(speak, 'stopCommand'),
+    stopArgs: readOptionalStringArray(speak, 'stopArgs'),
+    stopTimeoutMs: readOptionalNumber(speak, 'stopTimeoutMs')
+  };
 }
 
 function readOptionalInputMode(config: Record<string, unknown>, key: string): 'env' | 'stdin' | undefined {

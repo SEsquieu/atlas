@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import http from 'node:http';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,6 +22,9 @@ try {
   await testHeartbeatProviderDefaultsToSummary();
   await testHeartbeatProviderModeOverridesGlobalAgentMode();
   await testUserSummaryModeIncludesVisualHealthCaveat();
+  await testNativeSpeakInvokesNodeCommand();
+  await testNativeStopInvokesNodeCommand();
+  await testAutodiscoversWarmWorkerForOpenClawAnalysis();
   await testCaptureLockTimeoutAvoidsCameraInvocation();
 
   console.log('All wrapper contract tests passed.');
@@ -98,6 +102,70 @@ async function testCaptureLockTimeoutAvoidsCameraInvocation() {
   pass('capture lock timeout fails before camera/OpenClaw invocation');
 }
 
+async function testNativeSpeakInvokesNodeCommand() {
+  const fakeOpenClawBin = await createFakeOpenClaw('speak');
+  const result = await runWrapper('bridge-wrapper.mjs', {}, {
+    ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN: fakeOpenClawBin,
+    ATLAS_ANDROID_BRIDGE_NODE: 'phone-node-id',
+    ATLAS_ANDROID_BRIDGE_SPEAK: JSON.stringify({ text: 'hello native tts', speechId: 'speech-1', rate: 1.1 })
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  const parsed = parseJson(result.stdout);
+  assert.equal(parsed.command, 'audio.speak');
+  assert.deepEqual(parsed.params, { text: 'hello native tts', speechId: 'speech-1', rate: 1.1 });
+  const fakeStdout = parseJson(parsed.stdout);
+  assert.deepEqual(fakeStdout.argv.slice(0, 7), ['nodes', 'invoke', '--node', 'phone-node-id', '--command', 'audio.speak', '--params']);
+  assert.deepEqual(JSON.parse(fakeStdout.argv[7]), { text: 'hello native tts', speechId: 'speech-1', rate: 1.1 });
+
+  pass('native speak invokes audio.speak node command');
+}
+
+async function testNativeStopInvokesNodeCommand() {
+  const fakeOpenClawBin = await createFakeOpenClaw('stop');
+  const result = await runWrapper('bridge-wrapper.mjs', {}, {
+    ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN: fakeOpenClawBin,
+    ATLAS_ANDROID_BRIDGE_NODE: 'phone-node-id',
+    ATLAS_ANDROID_BRIDGE_STOP_SPEAKING: JSON.stringify({ speechId: 'speech-1' })
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  const parsed = parseJson(result.stdout);
+  assert.equal(parsed.command, 'audio.stop');
+  assert.deepEqual(parsed.params, { speechId: 'speech-1' });
+  const fakeStdout = parseJson(parsed.stdout);
+  assert.deepEqual(fakeStdout.argv.slice(0, 7), ['nodes', 'invoke', '--node', 'phone-node-id', '--command', 'audio.stop', '--params']);
+  assert.deepEqual(JSON.parse(fakeStdout.argv[7]), { speechId: 'speech-1' });
+
+  pass('native stop invokes audio.stop node command');
+}
+
+async function testAutodiscoversWarmWorkerForOpenClawAnalysis() {
+  const fakeOpenClawBin = await createFakeOpenClawCamera('camera-worker-discovery');
+  const fakeImagePath = path.join(testRoot, 'fake-camera.jpg');
+  const registryPath = path.join(testRoot, 'openclaw-image-worker.json');
+  const worker = await startFakeImageWorker();
+  try {
+    await writeFile(registryPath, `${JSON.stringify({ url: worker.url, pid: process.pid, warm: { status: 'warm' } }, null, 2)}\n`, 'utf8');
+    const result = await runWrapper('bridge-wrapper.mjs', { analyze: true, analysisMode: 'openclaw' }, {
+      ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN: fakeOpenClawBin,
+      ATLAS_OPENCLAW_IMAGE_WORKER_REGISTRY: registryPath,
+      ATLAS_ANDROID_BRIDGE_IMAGES_DIR: path.join(testRoot, 'images-worker-discovery'),
+      FAKE_OPENCLAW_IMAGE_PATH: fakeImagePath
+    });
+
+    assert.equal(result.code, 0, result.stderr);
+    const parsed = parseJson(result.stdout);
+    assert.equal(parsed.analysisState, 'ok');
+    assert.equal(parsed.summary, 'worker summary');
+    assert.equal(worker.describeCount(), 1);
+  } finally {
+    await worker.close();
+  }
+
+  pass('bridge wrapper auto-discovers warm image worker');
+}
+
 function providerTurn(overrides = {}) {
   return {
     turnId: 'turn-1',
@@ -149,6 +217,65 @@ function missingCommandPath() {
   return process.platform === 'win32'
     ? 'C:\\definitely-missing-openclaw-wrapper-contract-test.exe'
     : '/definitely-missing-openclaw-wrapper-contract-test';
+}
+
+async function createFakeOpenClaw(name) {
+  const fakeNpmDir = path.join(testRoot, `fake-openclaw-${name}`);
+  const fakeModuleDir = path.join(fakeNpmDir, 'node_modules', 'openclaw');
+  await mkdir(fakeModuleDir, { recursive: true });
+  await writeFile(
+    path.join(fakeModuleDir, 'openclaw.mjs'),
+    `#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ok: true, argv: process.argv.slice(2) }) + '\\n');\n`,
+    'utf8'
+  );
+  return process.platform === 'win32' ? path.join(fakeNpmDir, 'openclaw.cmd') : path.join(fakeNpmDir, 'openclaw');
+}
+
+async function createFakeOpenClawCamera(name) {
+  const fakeNpmDir = path.join(testRoot, `fake-openclaw-${name}`);
+  const fakeModuleDir = path.join(fakeNpmDir, 'node_modules', 'openclaw');
+  await mkdir(fakeModuleDir, { recursive: true });
+  await writeFile(
+    path.join(fakeModuleDir, 'openclaw.mjs'),
+    `#!/usr/bin/env node\nimport fs from 'node:fs';\nconst argv = process.argv.slice(2);\nif (argv[0] === 'nodes' && argv[1] === 'camera' && argv[2] === 'snap') {\n  const imagePath = process.env.FAKE_OPENCLAW_IMAGE_PATH;\n  fs.writeFileSync(imagePath, 'fake image bytes');\n  process.stdout.write('MEDIA:' + imagePath + '\\n');\n  process.exit(0);\n}\nif (argv[0] === 'infer') {\n  process.stderr.write('cold infer should not be used when worker registry is healthy\\n');\n  process.exit(99);\n}\nprocess.stdout.write(JSON.stringify({ ok: true, argv }) + '\\n');\n`,
+    'utf8'
+  );
+  return process.platform === 'win32' ? path.join(fakeNpmDir, 'openclaw.cmd') : path.join(fakeNpmDir, 'openclaw');
+}
+
+async function startFakeImageWorker() {
+  let describeCount = 0;
+  const server = http.createServer(async (req, res) => {
+    if (req.method === 'GET' && req.url === '/health') {
+      sendJson(res, 200, { ok: true, warm: { status: 'warm' } });
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/describe') {
+      describeCount += 1;
+      for await (const _chunk of req) {
+        // Drain request body.
+      }
+      sendJson(res, 200, { ok: true, text: 'worker summary' });
+      return;
+    }
+    sendJson(res, 404, { ok: false, error: 'not found' });
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    describeCount: () => describeCount,
+    close: () => new Promise((resolve) => server.close(resolve))
+  };
+}
+
+function sendJson(res, status, body) {
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(`${JSON.stringify(body)}\n`);
 }
 
 function pass(message) {

@@ -4,17 +4,27 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 try {
-  const options = await readJsonInput('ATLAS_ANDROID_BRIDGE_OPTIONS');
-  const releaseLock = await acquireCaptureLock();
-  try {
-    const result = await captureWithOpenClaw(options);
+  if (process.env.ATLAS_ANDROID_BRIDGE_SPEAK?.trim()) {
+    const result = await speakWithOpenClaw(JSON.parse(process.env.ATLAS_ANDROID_BRIDGE_SPEAK));
     process.stdout.write(`${JSON.stringify(result)}\n`);
-  } finally {
-    await releaseLock();
+  } else if (process.env.ATLAS_ANDROID_BRIDGE_STOP_SPEAKING?.trim()) {
+    const result = await stopSpeakingWithOpenClaw(JSON.parse(process.env.ATLAS_ANDROID_BRIDGE_STOP_SPEAKING));
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else {
+    const options = await readJsonInput('ATLAS_ANDROID_BRIDGE_OPTIONS');
+    const releaseLock = await acquireCaptureLock();
+    try {
+      const result = await captureWithOpenClaw(options);
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    } finally {
+      await releaseLock();
+    }
   }
 } catch (error) {
   process.stderr.write(`${formatError(error)}\n`);
@@ -94,6 +104,74 @@ function isProcessAlive(pid) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function speakWithOpenClaw(input) {
+  const startedAt = Date.now();
+  const node = firstString(input.node, process.env.ATLAS_ANDROID_BRIDGE_NODE) ?? 'paired-android-node';
+  const text = firstString(input.text);
+  if (!text) throw new Error('Android bridge speak requires non-empty text.');
+  const openclaw = resolveOpenClawInvocation(firstString(process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN));
+  const timeoutMs = readNumberEnv('ATLAS_ANDROID_BRIDGE_SPEAK_TIMEOUT_MS') ?? 15000;
+  const command = firstString(process.env.ATLAS_ANDROID_BRIDGE_SPEAK_COMMAND) ?? 'audio.speak';
+  const params = buildNativeSpeakParams(text, input);
+  const result = await runCommand(
+    openclaw.command,
+    [...openclaw.args, 'nodes', 'invoke', '--node', node, '--command', command, '--params', JSON.stringify(params), '--invoke-timeout', String(timeoutMs), '--json'],
+    { timeoutMs }
+  );
+  const endedAt = Date.now();
+  return {
+    ok: true,
+    node,
+    command,
+    speechId: input.speechId,
+    params,
+    stdout: result.stdout.trim() || undefined,
+    stderr: result.stderr.trim() || undefined,
+    timings: { totalMs: endedAt - startedAt },
+    timestamps: { startedAt: new Date(startedAt).toISOString(), completedAt: new Date(endedAt).toISOString() }
+  };
+}
+
+async function stopSpeakingWithOpenClaw(input) {
+  const startedAt = Date.now();
+  const node = firstString(input.node, process.env.ATLAS_ANDROID_BRIDGE_NODE) ?? 'paired-android-node';
+  const openclaw = resolveOpenClawInvocation(firstString(process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN));
+  const timeoutMs = readNumberEnv('ATLAS_ANDROID_BRIDGE_SPEAK_TIMEOUT_MS') ?? 15000;
+  const command = firstString(process.env.ATLAS_ANDROID_BRIDGE_STOP_SPEAKING_COMMAND) ?? 'audio.stop';
+  const params = input?.speechId ? { speechId: input.speechId } : {};
+  const result = await runCommand(
+    openclaw.command,
+    [...openclaw.args, 'nodes', 'invoke', '--node', node, '--command', command, '--params', JSON.stringify(params), '--invoke-timeout', String(timeoutMs), '--json'],
+    { timeoutMs }
+  );
+  const endedAt = Date.now();
+  return {
+    ok: true,
+    node,
+    command,
+    speechId: input.speechId,
+    params,
+    stdout: result.stdout.trim() || undefined,
+    stderr: result.stderr.trim() || undefined,
+    timings: { totalMs: endedAt - startedAt },
+    timestamps: { startedAt: new Date(startedAt).toISOString(), completedAt: new Date(endedAt).toISOString() }
+  };
+}
+
+function buildNativeSpeakParams(text, input) {
+  const params = { text };
+  const speechId = firstString(input.speechId);
+  const language = firstString(input.language, input.voice?.language);
+  const rate = Number.isFinite(input.rate) ? input.rate : Number.isFinite(input.speed) ? input.speed : undefined;
+
+  if (speechId) params.speechId = speechId;
+  if (language) params.language = language;
+  if (rate !== undefined) params.rate = rate;
+  if (typeof input.interrupt === 'boolean') params.interrupt = input.interrupt;
+
+  return params;
 }
 
 async function captureWithOpenClaw(options) {
@@ -303,7 +381,7 @@ async function describeImageWithOllama({ imagePath, baseUrl, model, prompt }) {
 }
 
 async function describeImageWithOpenClaw({ imagePath, model, timeoutMs }) {
-  const workerUrl = firstString(process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL, process.env.ATLAS_OPENCLAW_IMAGE_WORKER_URL);
+  const workerUrl = await resolveOpenClawImageWorkerUrl();
   if (workerUrl) {
     const response = await postJson(new URL('/describe', workerUrl), { imagePath, model, timeoutMs }, { timeoutMs });
     const text = response?.text;
@@ -322,6 +400,42 @@ async function describeImageWithOpenClaw({ imagePath, model, timeoutMs }) {
     throw new Error('OpenClaw image describe returned no text.');
   }
   return text.trim();
+}
+
+async function resolveOpenClawImageWorkerUrl() {
+  const explicitUrl = firstString(process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL, process.env.ATLAS_OPENCLAW_IMAGE_WORKER_URL);
+  if (explicitUrl) return explicitUrl;
+
+  if (process.env.ATLAS_OPENCLAW_IMAGE_WORKER_AUTODISCOVER === 'false') return undefined;
+
+  const registryPath = path.resolve(firstString(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_REGISTRY) ?? path.join(repoRoot, '.atlas-runs', 'openclaw-image-worker.json'));
+  let registry;
+  try {
+    registry = JSON.parse(await fs.readFile(registryPath, 'utf8'));
+  } catch {
+    return undefined;
+  }
+
+  const registryUrl = firstString(registry?.url);
+  if (!registryUrl) return undefined;
+  const healthTimeoutMs = readNumberEnv('ATLAS_OPENCLAW_IMAGE_WORKER_HEALTH_TIMEOUT_MS') ?? 1000;
+  const healthy = await checkImageWorkerHealth(registryUrl, healthTimeoutMs);
+  return healthy ? registryUrl : undefined;
+}
+
+async function checkImageWorkerHealth(workerUrl, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error(`OpenClaw image worker health check timed out after ${timeoutMs}ms.`)), timeoutMs);
+  try {
+    const response = await fetch(new URL('/health', workerUrl), { signal: controller.signal });
+    if (!response.ok) return false;
+    const json = await response.json().catch(() => ({}));
+    return json?.ok === true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function postJson(url, body, options = {}) {

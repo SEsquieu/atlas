@@ -23,7 +23,7 @@
         {
           "id": "android-live",
           "adapter": "@atlas/device-android/bridge-command",
-          "capabilities": ["camera.capture"],
+          "capabilities": ["camera.capture", "audio.speak"],
           "config": {
             "command": "node",
             "args": ["examples/android-openclaw-basic/bridge-wrapper.mjs"],
@@ -31,6 +31,17 @@
             "analysisMode": "openclaw",
             "maxWidth": 1024,
             "quality": 0.7,
+            "speak": {
+              "command": "node",
+              "args": ["examples/android-openclaw-basic/bridge-wrapper.mjs"],
+              "timeoutMs": 15000,
+              "env": {
+                "ATLAS_ANDROID_BRIDGE_NODE": "Galaxy S22 Ultra"
+              },
+              "stopCommand": "node",
+              "stopArgs": ["examples/android-openclaw-basic/bridge-wrapper.mjs"],
+              "stopTimeoutMs": 15000
+            },
             "env": {
               "ATLAS_ANDROID_BRIDGE_NODE": "Galaxy S22 Ultra",
               "ATLAS_ANDROID_BRIDGE_IMAGES_DIR": ".atlas-cache/images",

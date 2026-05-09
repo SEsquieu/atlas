@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import type { DeviceAdapter, DeviceCapability } from '@atlas/core';
+import type { DeviceAdapter, DeviceCapability, SpeakOptions, StopSpeakingOptions } from '@atlas/core';
 import {
   normalizeAndroidBridgeCaptureResult,
   normalizeAndroidBridgeError,
@@ -18,6 +18,16 @@ export type AndroidBridgeCommandOptions = {
   inputMode?: AndroidBridgeCommandInputMode;
 };
 
+export type AndroidBridgeSpeakCommandOptions = AndroidBridgeCommandOptions & {
+  stopCommand?: string;
+  stopArgs?: string[];
+  stopTimeoutMs?: number;
+};
+
+export type AndroidBridgeSpeakInput = SpeakOptions & {
+  text: string;
+};
+
 export type AndroidBridgeCommandDeviceAdapterOptions = AndroidBridgeCommandOptions & {
   id?: string;
   name?: string;
@@ -27,11 +37,12 @@ export type AndroidBridgeCommandDeviceAdapterOptions = AndroidBridgeCommandOptio
   maxWidth?: number;
   quality?: 'low' | 'medium' | 'high' | number;
   delayMs?: number;
+  speak?: AndroidBridgeSpeakCommandOptions;
 };
 
 export function createAndroidBridgeCommandDeviceAdapter(options: AndroidBridgeCommandDeviceAdapterOptions): DeviceAdapter {
   const deviceId = options.id ?? 'android-bridge-command';
-  const capabilities: DeviceCapability[] = ['camera.capture'];
+  const capabilities: DeviceCapability[] = options.speak ? ['camera.capture', 'audio.speak'] : ['camera.capture'];
 
   return {
     id: deviceId,
@@ -56,7 +67,17 @@ export function createAndroidBridgeCommandDeviceAdapter(options: AndroidBridgeCo
       } catch (error) {
         throw normalizeAndroidBridgeError(error);
       }
-    }
+    },
+    speak: options.speak
+      ? async (text, speakOptions) => {
+          await runAndroidBridgeSpeakCommand(options.speak!, { ...speakOptions, text });
+        }
+      : undefined,
+    stopSpeaking: options.speak?.stopCommand
+      ? async (stopOptions) => {
+          await runAndroidBridgeStopSpeakingCommand(options.speak!, stopOptions);
+        }
+      : undefined
   };
 }
 
@@ -78,6 +99,39 @@ export async function runAndroidBridgeCommand(
     stdin: options.inputMode === 'stdin' ? payload : undefined
   });
   return output as AndroidBridgeCaptureResult;
+}
+
+export async function runAndroidBridgeSpeakCommand(options: AndroidBridgeCommandOptions, speakInput: AndroidBridgeSpeakInput): Promise<unknown> {
+  if (!options.command?.trim()) throw new Error('Android bridge speak command is required.');
+  if (!speakInput.text?.trim()) throw new Error('Android bridge speak text is required.');
+  const payload = JSON.stringify(speakInput);
+  return await runJsonCommand({
+    command: options.command,
+    args: options.args ?? [],
+    cwd: options.cwd,
+    timeoutMs: options.timeoutMs,
+    env: {
+      ...options.env,
+      ATLAS_ANDROID_BRIDGE_SPEAK: payload
+    },
+    stdin: options.inputMode === 'stdin' ? payload : undefined
+  });
+}
+
+export async function runAndroidBridgeStopSpeakingCommand(options: AndroidBridgeSpeakCommandOptions, stopOptions?: StopSpeakingOptions): Promise<unknown> {
+  if (!options.stopCommand?.trim()) throw new Error('Android bridge stop-speaking command is required.');
+  const payload = JSON.stringify(stopOptions ?? {});
+  return await runJsonCommand({
+    command: options.stopCommand,
+    args: options.stopArgs ?? [],
+    cwd: options.cwd,
+    timeoutMs: options.stopTimeoutMs ?? options.timeoutMs,
+    env: {
+      ...options.env,
+      ATLAS_ANDROID_BRIDGE_STOP_SPEAKING: payload
+    },
+    stdin: options.inputMode === 'stdin' ? payload : undefined
+  });
 }
 
 async function runJsonCommand(options: {
