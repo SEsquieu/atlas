@@ -29,6 +29,7 @@ try {
   else if (action === 'status') await printStatus();
   else if (action === 'summary') await printSummary();
   else if (action === 'ask') await askLoop();
+  else if (action === 'demo') await demoAskLoop();
   else if (action === 'fresh-start') await freshStartLoop();
   else if (action === 'preflight') await preflightLiveLoop();
   else if (action === 'worker') await workerControl();
@@ -167,6 +168,32 @@ async function printStatus() {
     console.log(`Image worker: ${workerUrl}`);
     console.log(`Image worker warm: ${formatWarmState(health?.warm)} requests=${health?.requestCount ?? '?'}`);
   }
+}
+
+async function demoAskLoop() {
+  const text = (args.text ?? args._.slice(1).join(' ')).trim() || 'What am I looking at? Answer in one short sentence.';
+  const providerMode = args.providerMode ?? 'summary';
+  const imageWorker = args.imageWorker ?? 'auto';
+
+  if (args.dryRun) {
+    console.log('Atlas Android phone-loop demo command');
+    console.log('- camera: not touched by dry run');
+    console.log('- phone prerequisite: Android/OpenClaw app foregrounded when running live');
+    console.log(`- session: ${session}`);
+    console.log(`- store: ${store}`);
+    console.log(`- provider mode: ${providerMode}`);
+    console.log(`- image worker: ${imageWorker}`);
+    console.log(`- prompt: ${text}`);
+    console.log('');
+    console.log('Live command:');
+    console.log(`npm run demo:phone-loop -- ${JSON.stringify(text)}`);
+    return;
+  }
+
+  args.text = text;
+  args.providerMode = providerMode;
+  args.imageWorker = imageWorker;
+  await askLoop();
 }
 
 async function askLoop() {
@@ -1051,6 +1078,7 @@ function parseArgs(raw) {
     else if (arg === '--agent-session-prefix') parsed.agentSessionPrefix = raw[++index] ?? '';
     else if (arg === '--image-worker') parsed.imageWorker = readImageWorkerMode(raw[++index]);
     else if (arg === '--force') parsed.force = true;
+    else if (arg === '--dry-run') parsed.dryRun = true;
     else if (arg === '--warm') parsed.warm = true;
     else if (arg === '--no-warm') parsed.warm = false;
     else parsed._.push(arg);
@@ -1177,5 +1205,5 @@ function truncate(value, maxLength) {
 }
 
 function helpText() {
-  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000] [--wait-complete]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000] [--wait-complete]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--markdown] [--tail 120]\n  npm run loop:android -- ask \"What am I looking at?\" [--provider-mode summary|agent] [--thinking high|low|off|unset] [--agent-session-prefix <prefix>]\n  npm run loop:android -- preflight [--no-warm]\n  npm run loop:android -- worker status\n  npm run loop:android -- worker start\n  npm run loop:android -- worker warm\n  npm run loop:android -- worker clean\n  npm run loop:android -- worker stop\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. pass --wait-complete for finite test loops that should block until ticks are recorded before validation. summary parses ambient-loop.jsonl by default; use --markdown to tail ambient-loop.md. ask uses the stable session/store and summary provider mode by default; --thinking and --agent-session-prefix write a per-store runtime config for isolated provider-agent A/B runs. preflight checks build/config/session/worker readiness and warms the image worker without touching the camera. worker commands manage the persistent OpenClaw image worker registry/health/warm state. Logs are written under <store>/<session>/.`;
+  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000] [--wait-complete]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000] [--wait-complete]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--markdown] [--tail 120]\n  npm run loop:android -- ask \"What am I looking at?\" [--provider-mode summary|agent] [--thinking high|low|off|unset] [--agent-session-prefix <prefix>]\n  npm run loop:android -- demo ["What am I looking at?"] [--dry-run]\n  npm run loop:android -- preflight [--no-warm]\n  npm run loop:android -- worker status\n  npm run loop:android -- worker start\n  npm run loop:android -- worker warm\n  npm run loop:android -- worker clean\n  npm run loop:android -- worker stop\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. pass --wait-complete for finite test loops that should block until ticks are recorded before validation. summary parses ambient-loop.jsonl by default; use --markdown to tail ambient-loop.md. ask uses the stable session/store and summary provider mode by default; --thinking and --agent-session-prefix write a per-store runtime config for isolated provider-agent A/B runs. demo is the blessed phone-loop ask path: summary provider, warm-worker auto, native Android speech from config, and a short default prompt. preflight checks build/config/session/worker readiness and warms the image worker without touching the camera. worker commands manage the persistent OpenClaw image worker registry/health/warm state. Logs are written under <store>/<session>/.`;
 }

@@ -84,6 +84,8 @@ npm run loop:android -- status
 npm run loop:android -- summary
 npm run loop:android -- summary --markdown --tail 40
 npm run loop:android -- ask "What am I looking at?"
+npm run demo:phone-loop -- "What am I looking at?"
+npm run demo:phone-loop -- --dry-run
 npm run loop:android -- worker status
 npm run loop:android -- worker start
 npm run loop:android -- worker warm
@@ -91,6 +93,8 @@ npm run loop:android -- worker clean
 npm run loop:android -- worker stop
 npm run loop:android -- stop
 ```
+
+`demo:phone-loop` is the blessed one-shot phone-loop demo command. It runs the `loop:android demo` action with summary provider mode, warm-worker auto-discovery/start, native Android speech from the live config, and a short default prompt when no question is supplied. Use `--dry-run` to print the exact plan without touching the phone camera.
 
 `preflight` is the demo-readiness check: it verifies the live config, runner scripts, built Atlas CLI output, loop/session state, worker registry health, and image-worker warm path without touching the phone camera. It prints the exact live proof sequence to run next; pass `--no-warm` to skip the `/warm` call when you only want a dry structural check. `start` resumes the stable `.atlas-runs/latest-ambient-android` loop location. Use `fresh-start` when you explicitly want a clean loop store. For automation, pass `--wait-complete` with finite tick counts so validation waits for the detached loop to finish recording ticks instead of racing the JSONL file. `status` reports process state plus latest session/visual context age, confidence, refresh health, bridge timing, latest summary, and discovered image worker state when available. `summary` parses `ambient-loop.jsonl` into compact stats and a freshness scorecard by default; use `--markdown` to tail the human-readable journal. The scorecard calls out refresh-due captures, preemptive captures before stale, stale captures/reuses, max age versus stale window, whether stale was ever hit, and provider-review counts. If the JSONL includes `cached-ask` entries from `--ask-text`, `summary` separates them from heartbeat ticks and prints a cached-ask scorecard with reuse vs ask-time refresh counts and average ask wall time. `ask` starts the OpenClaw image worker when needed so ask-time refreshes use the same worker path as ambient heartbeats; if `ATLAS_OPENCLAW_IMAGE_WORKER_PREWARM=1` is set, it waits for `/warm` and prints the warm acknowledgement before asking. It then prints user-turn, capture round-trip, bridge total, camera/helper capture, file stage, image-analysis, and provider timings when available. If ask-time refresh fails but Atlas has a previous observation, the core user loop falls back to that observation with an explicit stale-context caveat instead of hard failing. The `worker` subcommands manage the persistent OpenClaw image worker as an intentional workspace service: `status` reads the registry and health endpoint, `start` reuses a healthy/starting worker or starts a detached one, `warm` forces a `/warm` request, `clean` removes stale or invalid registry entries, and `stop` kills the registered worker PID only when it safely looks like the image worker unless `--force` is used. This is still a CLI harness, not a daemon/service, but it gives Vera/OpenClaw a stable command surface for “start the loop” / “stop the loop” / “keep the worker warm” chat control.
 
