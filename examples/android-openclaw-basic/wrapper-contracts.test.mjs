@@ -24,6 +24,7 @@ try {
   await testUserSummaryModeIncludesVisualHealthCaveat();
   await testNativeSpeakInvokesNodeCommand();
   await testNativeStopInvokesNodeCommand();
+  await testNativeTranscribeInvokesNodeCommand();
   await testAutodiscoversWarmWorkerForOpenClawAnalysis();
   await testCaptureLockTimeoutAvoidsCameraInvocation();
 
@@ -140,6 +141,40 @@ async function testNativeStopInvokesNodeCommand() {
   pass('native stop invokes audio.stop node command');
 }
 
+async function testNativeTranscribeInvokesNodeCommand() {
+  const fakeOpenClawBin = await createFakeOpenClawInvoke('transcribe', {
+    ok: true,
+    nodeId: 'phone-node-id',
+    command: 'audio.transcribe.once',
+    payload: {
+      ok: true,
+      captureId: 'capture-1',
+      transcript: 'what am I looking at',
+      status: 'ok',
+      confidence: 0.88,
+      alternatives: ['what am I looking at']
+    }
+  });
+  const result = await runWrapper('bridge-wrapper.mjs', {}, {
+    ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN: fakeOpenClawBin,
+    ATLAS_ANDROID_BRIDGE_NODE: 'phone-node-id',
+    ATLAS_ANDROID_BRIDGE_TRANSCRIBE: JSON.stringify({ language: 'en-US', maxDurationMs: 12345 })
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  const parsed = parseJson(result.stdout);
+  assert.equal(parsed.command, 'audio.transcribe.once');
+  assert.deepEqual(parsed.params, { maxDurationMs: 12345, language: 'en-US' });
+  assert.equal(parsed.transcript, 'what am I looking at');
+  assert.equal(parsed.status, 'ok');
+  assert.equal(parsed.confidence, 0.88);
+  const fakeStdout = parseJson(parsed.stdout);
+  assert.deepEqual(fakeStdout.argv.slice(0, 7), ['nodes', 'invoke', '--node', 'phone-node-id', '--command', 'audio.transcribe.once', '--params']);
+  assert.deepEqual(JSON.parse(fakeStdout.argv[7]), { maxDurationMs: 12345, language: 'en-US' });
+
+  pass('native transcribe invokes audio.transcribe.once node command');
+}
+
 async function testAutodiscoversWarmWorkerForOpenClawAnalysis() {
   const fakeOpenClawBin = await createFakeOpenClawCamera('camera-worker-discovery');
   const fakeImagePath = path.join(testRoot, 'fake-camera.jpg');
@@ -220,12 +255,16 @@ function missingCommandPath() {
 }
 
 async function createFakeOpenClaw(name) {
+  return await createFakeOpenClawInvoke(name, { ok: true });
+}
+
+async function createFakeOpenClawInvoke(name, response) {
   const fakeNpmDir = path.join(testRoot, `fake-openclaw-${name}`);
   const fakeModuleDir = path.join(fakeNpmDir, 'node_modules', 'openclaw');
   await mkdir(fakeModuleDir, { recursive: true });
   await writeFile(
     path.join(fakeModuleDir, 'openclaw.mjs'),
-    `#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ok: true, argv: process.argv.slice(2) }) + '\\n');\n`,
+    `#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ...${JSON.stringify(response)}, argv: process.argv.slice(2) }) + '\\n');\n`,
     'utf8'
   );
   return process.platform === 'win32' ? path.join(fakeNpmDir, 'openclaw.cmd') : path.join(fakeNpmDir, 'openclaw');

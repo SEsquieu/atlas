@@ -102,13 +102,14 @@ async function runSessionCommand(args: string[], options: CliOptions): Promise<C
   if (subcommand === 'create' && sessionId) return createSessionCommand(sessionId, rest, options);
   if (subcommand === 'inspect' && sessionId) return inspectSessionCommand(sessionId, rest, options);
   if (subcommand === 'ask' && sessionId) return askSessionCommand(sessionId, rest, options);
+  if (subcommand === 'transcript' && sessionId) return transcriptSessionCommand(sessionId, rest, options);
   if (subcommand === 'heartbeat' && sessionId) return heartbeatSessionCommand(sessionId, rest, options);
   if (subcommand === 'start' && sessionId) return lifecycleSessionCommand(sessionId, 'session.started', 'active', rest, options);
   if (subcommand === 'pause' && sessionId) return lifecycleSessionCommand(sessionId, 'session.paused', 'paused', rest, options);
   if (subcommand === 'resume' && sessionId) return lifecycleSessionCommand(sessionId, 'session.resumed', 'active', rest, options);
   if ((subcommand === 'end' || subcommand === 'done') && sessionId) return lifecycleSessionCommand(sessionId, 'session.ended', 'done', rest, options);
 
-  return fail('Usage: atlas session create <sessionId> [options] [--config <path>]\n       atlas session inspect <sessionId> [--store <path>]\n       atlas session ask <sessionId> --text <text> [--store <path>] [--config <path>]\n       atlas session heartbeat <sessionId> [--store <path>] [--config <path>]\n       atlas session start|pause|resume|end <sessionId> [--reason <reason>] [--store <path>]', 1);
+  return fail('Usage: atlas session create <sessionId> [options] [--config <path>]\n       atlas session inspect <sessionId> [--store <path>]\n       atlas session ask <sessionId> --text <text> [--store <path>] [--config <path>]\n       atlas session transcript <sessionId> --text <text> [--store <path>] [--config <path>]\n       atlas session heartbeat <sessionId> [--store <path>] [--config <path>]\n       atlas session start|pause|resume|end <sessionId> [--reason <reason>] [--store <path>]', 1);
 }
 
 async function createSessionCommand(sessionId: string, args: string[], options: CliOptions): Promise<CliResult> {
@@ -190,6 +191,44 @@ async function askSessionCommand(sessionId: string, args: string[], options: Cli
     );
   } catch (error) {
     return fail(`session ask failed: ${formatError(error)}`, 1);
+  }
+}
+
+async function transcriptSessionCommand(sessionId: string, args: string[], options: CliOptions): Promise<CliResult> {
+  const text = readFlagValue(args, '--text');
+  if (!text) return fail('Usage: atlas session transcript <sessionId> --text <text> [--store <path>] [--config <path>]', 1);
+
+  const store = createStore(args, options);
+  const config = await loadOptionalConfig(args, options);
+  if ('error' in config) return fail(config.error, 1);
+  const runnerResult = await createCliRunner(sessionId, store, config.config);
+  if ('error' in runnerResult) return fail(runnerResult.error, 1);
+
+  try {
+    const result = await runnerResult.runner.runTranscriptTurn({
+      sessionId,
+      transcript: text,
+      source: readFlagValue(args, '--source') ?? 'cli-transcript',
+      confidence: readOptionalFlagNumber(args, '--confidence'),
+      language: readFlagValue(args, '--language')
+    });
+    return ok(
+      JSON.stringify(
+        {
+          sessionId,
+          responseText: result.providerResult.responseText,
+          plan: result.plan,
+          refreshedObservationId: result.refreshedObservation?.id,
+          refreshError: result.refreshError,
+          reusedLastObservationAfterRefreshFailure: result.reusedLastObservationAfterRefreshFailure,
+          status: result.session.status
+        },
+        null,
+        2
+      )
+    );
+  } catch (error) {
+    return fail(`session transcript failed: ${formatError(error)}`, 1);
   }
 }
 
@@ -325,7 +364,8 @@ function createDeviceFromBinding(binding: DeviceBinding): DeviceAdapter {
       maxWidth: readOptionalNumber(config, 'maxWidth'),
       quality: readOptionalQuality(config, 'quality'),
       delayMs: readOptionalNumber(config, 'delayMs'),
-      speak: readOptionalSpeakConfig(config, binding.adapter)
+      speak: readOptionalSpeakConfig(config, binding.adapter),
+      transcribe: readOptionalTranscribeConfig(config, binding.adapter)
     });
   }
 
@@ -386,6 +426,20 @@ function readOptionalSpeakConfig(config: Record<string, unknown>, adapter: strin
     stopCommand: readOptionalString(speak, 'stopCommand'),
     stopArgs: readOptionalStringArray(speak, 'stopArgs'),
     stopTimeoutMs: readOptionalNumber(speak, 'stopTimeoutMs')
+  };
+}
+
+function readOptionalTranscribeConfig(config: Record<string, unknown>, adapter: string) {
+  const value = config.transcribe;
+  if (value === undefined) return undefined;
+  const transcribe = readObjectConfig(value as Record<string, unknown> | undefined, `${adapter}.transcribe`);
+  return {
+    command: readRequiredString(transcribe, 'command', `${adapter}.transcribe`),
+    args: readOptionalStringArray(transcribe, 'args'),
+    cwd: readOptionalString(transcribe, 'cwd') ?? readOptionalString(config, 'cwd'),
+    timeoutMs: readOptionalNumber(transcribe, 'timeoutMs'),
+    env: readOptionalStringRecord(transcribe, 'env'),
+    inputMode: readOptionalInputMode(transcribe, 'inputMode')
   };
 }
 
@@ -478,6 +532,13 @@ function readFlagValue(args: string[], flag: string): string | undefined {
   return args[index + 1];
 }
 
+function readOptionalFlagNumber(args: string[], flag: string): number | undefined {
+  const value = readFlagValue(args, flag);
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function readRepeatedFlagValues(args: string[], flag: string): string[] {
   const values: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
@@ -500,5 +561,5 @@ function formatError(error: unknown): string {
 }
 
 function helpText(): string {
-  return `Atlas CLI\n\nUsage:\n  atlas shrug\n  atlas sessions list [--store <path>]\n  atlas session create <sessionId> [--name <name>] [--goal <goal>] [--provider <adapter>] [--provider-id <id>] [--device <id:adapter:capability,capability>] [--store <path>] [--config <path>]\n  atlas session inspect <sessionId> [--store <path>]\n  atlas session ask <sessionId> --text <text> [--store <path>] [--config <path>]\n  atlas session heartbeat <sessionId> [--store <path>] [--config <path>]\n  atlas session start <sessionId> [--reason <reason>] [--store <path>]\n  atlas session pause <sessionId> [--reason <reason>] [--store <path>]\n  atlas session resume <sessionId> [--reason <reason>] [--store <path>]\n  atlas session end <sessionId> [--reason <reason>] [--store <path>]\n  atlas config inspect [--config <path>]\n  atlas help\n\nEnvironment:\n  ATLAS_STORE  Override default .atlas-cache/sessions store path`;
+  return `Atlas CLI\n\nUsage:\n  atlas shrug\n  atlas sessions list [--store <path>]\n  atlas session create <sessionId> [--name <name>] [--goal <goal>] [--provider <adapter>] [--provider-id <id>] [--device <id:adapter:capability,capability>] [--store <path>] [--config <path>]\n  atlas session inspect <sessionId> [--store <path>]\n  atlas session ask <sessionId> --text <text> [--store <path>] [--config <path>]\n  atlas session transcript <sessionId> --text <text> [--store <path>] [--config <path>]\n  atlas session heartbeat <sessionId> [--store <path>] [--config <path>]\n  atlas session start <sessionId> [--reason <reason>] [--store <path>]\n  atlas session pause <sessionId> [--reason <reason>] [--store <path>]\n  atlas session resume <sessionId> [--reason <reason>] [--store <path>]\n  atlas session end <sessionId> [--reason <reason>] [--store <path>]\n  atlas config inspect [--config <path>]\n  atlas help\n\nEnvironment:\n  ATLAS_STORE  Override default .atlas-cache/sessions store path`;
 }

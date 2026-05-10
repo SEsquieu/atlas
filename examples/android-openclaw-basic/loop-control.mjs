@@ -21,6 +21,7 @@ const stdoutPath = path.join(runDir, 'loop.stdout.log');
 const stderrPath = path.join(runDir, 'loop.stderr.log');
 const summaryPath = path.join(runDir, 'ambient-loop.md');
 const jsonlPath = path.join(runDir, 'ambient-loop.jsonl');
+const bridgeWrapperPath = path.join(repoRoot, 'examples', 'android-openclaw-basic', 'bridge-wrapper.mjs');
 const imageWorkerStartupGraceMs = Number(process.env.ATLAS_OPENCLAW_IMAGE_WORKER_STARTUP_GRACE_MS ?? 120000);
 
 try {
@@ -29,6 +30,7 @@ try {
   else if (action === 'status') await printStatus();
   else if (action === 'summary') await printSummary();
   else if (action === 'ask') await askLoop();
+  else if (action === 'voice-demo' || action === 'listen-demo') await voiceDemoLoop();
   else if (action === 'demo') await demoAskLoop();
   else if (action === 'fresh-start') await freshStartLoop();
   else if (action === 'preflight') await preflightLiveLoop();
@@ -235,6 +237,104 @@ async function askLoop() {
   } finally {
     imageWorker?.stop();
   }
+}
+
+async function voiceDemoLoop() {
+  const providerMode = args.providerMode ?? 'summary';
+  const imageWorker = args.imageWorker ?? 'auto';
+  const listenTimeoutMs = args.listenTimeoutMs ?? Number(process.env.ATLAS_ANDROID_BRIDGE_TRANSCRIBE_TIMEOUT_MS ?? 12000);
+  const language = args.language ?? process.env.ATLAS_ANDROID_BRIDGE_TRANSCRIBE_LANGUAGE ?? 'en-US';
+  const node = args.node ?? process.env.ATLAS_ANDROID_BRIDGE_NODE ?? 'Galaxy S22 Ultra';
+
+  if (args.dryRun) {
+    console.log('Atlas Android voice phone-loop demo command');
+    console.log('- microphone: not touched by dry run');
+    console.log('- camera: not touched by dry run');
+    console.log('- phone prerequisite: Android/OpenClaw app foregrounded when running live');
+    console.log(`- node: ${node}`);
+    console.log(`- session: ${session}`);
+    console.log(`- store: ${store}`);
+    console.log(`- provider mode: ${providerMode}`);
+    console.log(`- image worker: ${imageWorker}`);
+    console.log(`- listen timeout: ${formatMs(listenTimeoutMs)}`);
+    console.log(`- language: ${language}`);
+    console.log('');
+    console.log('Live command:');
+    console.log('npm run demo:phone-voice-loop');
+    return;
+  }
+
+  const askConfigPath = await prepareAskConfig();
+  await ensureConfiguredSession(askConfigPath);
+  process.env.ATLAS_OPENCLAW_PROVIDER_MODE = providerMode;
+  applyThinkingEnvOverride();
+
+  let worker;
+  try {
+    worker = await maybeStartImageWorker();
+    if (worker?.url) console.log(`OpenClaw image worker: ${worker.url}`);
+    if (worker?.warm) console.log(`OpenClaw image worker warm: ${formatWarmState(worker.warm)}`);
+
+    console.log(`Listening on ${node} for up to ${formatMs(listenTimeoutMs)}...`);
+    const transcript = await transcribeOnceViaBridge({ node, language, maxDurationMs: listenTimeoutMs, prompt: args.prompt });
+    if (!transcript.transcript?.trim()) {
+      throw new Error(`No transcript captured (status=${transcript.status}${transcript.error ? ` error=${transcript.error}` : ''}).`);
+    }
+
+    const text = transcript.transcript.trim();
+    console.log(`Heard: ${text}`);
+    if (isFiniteNumber(transcript.confidence)) console.log(`STT confidence: ${formatPercent(transcript.confidence)}`);
+
+    const cliArgs = ['session', 'transcript', session, '--text', text, '--source', 'android-stt', '--config', askConfigPath, '--store', store];
+    if (transcript.language) cliArgs.push('--language', transcript.language);
+    if (isFiniteNumber(transcript.confidence)) cliArgs.push('--confidence', String(transcript.confidence));
+    const result = await atlasJson(cliArgs);
+    const inspection = await atlasJson(['session', 'inspect', session, '--store', store]);
+
+    console.log('');
+    console.log(result.responseText ?? '(no response text)');
+    console.log('');
+    console.log(`- provider mode: ${process.env.ATLAS_OPENCLAW_PROVIDER_MODE}`);
+    console.log(`- OpenClaw thinking: ${formatThinkingOverride()}`);
+    console.log(`- refreshed during turn: ${result.refreshedObservationId ?? 'no'}`);
+    if (result.reusedLastObservationAfterRefreshFailure) {
+      console.log(`- refresh fallback: reused latest observation after refresh failed (${result.refreshError ?? 'unknown error'})`);
+    } else if (result.refreshError) {
+      console.log(`- refresh error: ${result.refreshError}`);
+    }
+    const bridge = latestBridgeTiming(inspection);
+    console.log(`- user turn: ${formatMs(inspection.timing?.userTurnMs)}`);
+    console.log(`- listen round trip: ${formatMs(transcript.timings?.totalMs)}`);
+    console.log(`- capture round trip: ${formatMs(inspection.timing?.captureRoundTripMs)}`);
+    if (bridge) {
+      console.log(`- bridge total: ${formatMs(bridge.totalMs)}`);
+      console.log(`  - camera/helper capture: ${formatMs(bridge.captureMs)}`);
+      console.log(`  - file stage: ${formatMs(bridge.stageMs)}`);
+      console.log(`  - image analysis: ${formatMs(bridge.analysisMs)}`);
+    }
+    console.log(`- provider round trip: ${formatMs(inspection.timing?.providerRoundTripMs)}`);
+    console.log(`- latest observation: ${inspection.observations?.latest?.id ?? 'none'}`);
+  } finally {
+    worker?.stop();
+  }
+}
+
+async function transcribeOnceViaBridge({ node, language, maxDurationMs, prompt }) {
+  const payload = { node, language, maxDurationMs };
+  if (prompt) payload.prompt = prompt;
+  const result = await runProcess(process.execPath, [bridgeWrapperPath], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      ATLAS_ANDROID_BRIDGE_NODE: node,
+      ATLAS_ANDROID_BRIDGE_TRANSCRIBE_TIMEOUT_MS: String(maxDurationMs),
+      ATLAS_ANDROID_BRIDGE_TRANSCRIBE: JSON.stringify(payload)
+    }
+  });
+  if (result.code !== 0) {
+    throw new Error([`Android STT bridge failed with code ${result.code}`, result.stdout, result.stderr].filter(Boolean).join('\n'));
+  }
+  return JSON.parse(result.stdout);
 }
 
 async function prepareAskConfig() {
@@ -1021,7 +1121,12 @@ async function run(command, commandArgs) {
 
 async function runProcess(command, commandArgs, options = {}) {
   return await new Promise((resolve, reject) => {
-    const child = spawn(command, commandArgs, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawn(command, commandArgs, {
+      cwd: options.cwd,
+      env: options.env ? sanitizeEnv(options.env) : undefined,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    });
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8');
@@ -1074,6 +1179,10 @@ function parseArgs(raw) {
     else if (arg === '--markdown') parsed.markdown = true;
     else if (arg === '--text') parsed.text = raw[++index] ?? '';
     else if (arg === '--provider-mode') parsed.providerMode = raw[++index] ?? '';
+    else if (arg === '--node') parsed.node = raw[++index] ?? '';
+    else if (arg === '--language') parsed.language = raw[++index] ?? '';
+    else if (arg === '--listen-timeout-ms') parsed.listenTimeoutMs = readPositiveInteger(raw[++index], '--listen-timeout-ms');
+    else if (arg === '--prompt') parsed.prompt = raw[++index] ?? '';
     else if (arg === '--thinking') parsed.thinking = raw[++index] ?? '';
     else if (arg === '--agent-session-prefix') parsed.agentSessionPrefix = raw[++index] ?? '';
     else if (arg === '--image-worker') parsed.imageWorker = readImageWorkerMode(raw[++index]);
@@ -1205,5 +1314,5 @@ function truncate(value, maxLength) {
 }
 
 function helpText() {
-  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000] [--wait-complete]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000] [--wait-complete]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--markdown] [--tail 120]\n  npm run loop:android -- ask \"What am I looking at?\" [--provider-mode summary|agent] [--thinking high|low|off|unset] [--agent-session-prefix <prefix>]\n  npm run loop:android -- demo ["What am I looking at?"] [--dry-run]\n  npm run loop:android -- preflight [--no-warm]\n  npm run loop:android -- worker status\n  npm run loop:android -- worker start\n  npm run loop:android -- worker warm\n  npm run loop:android -- worker clean\n  npm run loop:android -- worker stop\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. pass --wait-complete for finite test loops that should block until ticks are recorded before validation. summary parses ambient-loop.jsonl by default; use --markdown to tail ambient-loop.md. ask uses the stable session/store and summary provider mode by default; --thinking and --agent-session-prefix write a per-store runtime config for isolated provider-agent A/B runs. demo is the blessed phone-loop ask path: summary provider, warm-worker auto, native Android speech from config, and a short default prompt. preflight checks build/config/session/worker readiness and warms the image worker without touching the camera. worker commands manage the persistent OpenClaw image worker registry/health/warm state. Logs are written under <store>/<session>/.`;
+  return `Atlas Android loop control\n\nUsage:\n  npm run loop:android -- start [--ticks 9999] [--max-sleep-ms 30000] [--wait-complete]\n  npm run loop:android -- fresh-start [--ticks 9999] [--max-sleep-ms 30000] [--wait-complete]\n  npm run loop:android -- stop\n  npm run loop:android -- status\n  npm run loop:android -- summary [--markdown] [--tail 120]\n  npm run loop:android -- ask \"What am I looking at?\" [--provider-mode summary|agent] [--thinking high|low|off|unset] [--agent-session-prefix <prefix>]\n  npm run loop:android -- voice-demo [--node \"Galaxy S22 Ultra\"] [--language en-US] [--listen-timeout-ms 12000] [--provider-mode summary|agent] [--dry-run]\n  npm run loop:android -- demo ["What am I looking at?"] [--dry-run]\n  npm run loop:android -- preflight [--no-warm]\n  npm run loop:android -- worker status\n  npm run loop:android -- worker start\n  npm run loop:android -- worker warm\n  npm run loop:android -- worker clean\n  npm run loop:android -- worker stop\n\nDefaults to session live-android-openclaw and store .atlas-runs/latest-ambient-android. start resumes the stable loop location; fresh-start clears that store first. pass --wait-complete for finite test loops that should block until ticks are recorded before validation. summary parses ambient-loop.jsonl by default; use --markdown to tail ambient-loop.md. ask uses the stable session/store and summary provider mode by default; --thinking and --agent-session-prefix write a per-store runtime config for isolated provider-agent A/B runs. demo is the blessed text phone-loop ask path: summary provider, warm-worker auto, native Android speech from config, and a short default prompt. voice-demo is the hands-free proof path: phone STT -> Atlas transcript turn -> visual refresh as needed -> native phone TTS. preflight checks build/config/session/worker readiness and warms the image worker without touching the camera. worker commands manage the persistent OpenClaw image worker registry/health/warm state. Logs are written under <store>/<session>/.`;
 }

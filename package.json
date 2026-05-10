@@ -24,6 +24,7 @@
     "replay:session": "node examples/replay-session.mjs",
     "loop:android": "node examples/android-openclaw-basic/loop-control.mjs",
     "demo:phone-loop": "node examples/android-openclaw-basic/loop-control.mjs demo",
+    "demo:phone-voice-loop": "node examples/android-openclaw-basic/loop-control.mjs voice-demo",
     "openclaw:image-worker": "node examples/android-openclaw-basic/openclaw-image-worker.mjs",
     "bench:image-openclaw": "node examples/android-openclaw-basic/benchmark-image-analysis.mjs",
     "bench:image-openclaw:concurrent": "node examples/android-openclaw-basic/benchmark-image-concurrent.mjs"

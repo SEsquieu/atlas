@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import type { DeviceAdapter, DeviceCapability, SpeakOptions, StopSpeakingOptions } from '@atlas/core';
+import type { DeviceAdapter, DeviceCapability, SpeakOptions, StopSpeakingOptions, TranscribeOnceOptions, TranscriptResult } from '@atlas/core';
 import {
   normalizeAndroidBridgeCaptureResult,
   normalizeAndroidBridgeError,
@@ -28,6 +28,8 @@ export type AndroidBridgeSpeakInput = SpeakOptions & {
   text: string;
 };
 
+export type AndroidBridgeTranscribeCommandOptions = AndroidBridgeCommandOptions;
+
 export type AndroidBridgeCommandDeviceAdapterOptions = AndroidBridgeCommandOptions & {
   id?: string;
   name?: string;
@@ -38,11 +40,16 @@ export type AndroidBridgeCommandDeviceAdapterOptions = AndroidBridgeCommandOptio
   quality?: 'low' | 'medium' | 'high' | number;
   delayMs?: number;
   speak?: AndroidBridgeSpeakCommandOptions;
+  transcribe?: AndroidBridgeTranscribeCommandOptions;
 };
 
 export function createAndroidBridgeCommandDeviceAdapter(options: AndroidBridgeCommandDeviceAdapterOptions): DeviceAdapter {
   const deviceId = options.id ?? 'android-bridge-command';
-  const capabilities: DeviceCapability[] = options.speak ? ['camera.capture', 'audio.speak'] : ['camera.capture'];
+  const capabilities: DeviceCapability[] = [
+    'camera.capture',
+    ...(options.speak ? (['audio.speak'] satisfies DeviceCapability[]) : []),
+    ...(options.transcribe ? (['audio.listen'] satisfies DeviceCapability[]) : [])
+  ];
 
   return {
     id: deviceId,
@@ -77,6 +84,9 @@ export function createAndroidBridgeCommandDeviceAdapter(options: AndroidBridgeCo
       ? async (stopOptions) => {
           await runAndroidBridgeStopSpeakingCommand(options.speak!, stopOptions);
         }
+      : undefined,
+    transcribeOnce: options.transcribe
+      ? async (transcribeOptions) => await runAndroidBridgeTranscribeOnceCommand(options.transcribe!, transcribeOptions)
       : undefined
   };
 }
@@ -132,6 +142,45 @@ export async function runAndroidBridgeStopSpeakingCommand(options: AndroidBridge
     },
     stdin: options.inputMode === 'stdin' ? payload : undefined
   });
+}
+
+export async function runAndroidBridgeTranscribeOnceCommand(
+  options: AndroidBridgeTranscribeCommandOptions,
+  transcribeOptions?: TranscribeOnceOptions
+): Promise<TranscriptResult> {
+  if (!options.command?.trim()) throw new Error('Android bridge transcribe command is required.');
+  const payload = JSON.stringify(transcribeOptions ?? {});
+  const output = await runJsonCommand({
+    command: options.command,
+    args: options.args ?? [],
+    cwd: options.cwd,
+    timeoutMs: options.timeoutMs,
+    env: {
+      ...options.env,
+      ATLAS_ANDROID_BRIDGE_TRANSCRIBE: payload
+    },
+    stdin: options.inputMode === 'stdin' ? payload : undefined
+  });
+  return normalizeTranscriptResult(output);
+}
+
+function normalizeTranscriptResult(output: unknown): TranscriptResult {
+  if (!output || typeof output !== 'object') throw new Error('Android bridge transcribe command returned invalid JSON.');
+  const raw = output as Record<string, unknown>;
+  const status = typeof raw.status === 'string' ? raw.status : raw.ok === true ? 'ok' : 'error';
+  if (!['ok', 'empty', 'timeout', 'cancelled', 'error'].includes(status)) throw new Error(`Android bridge transcribe command returned invalid status: ${status}`);
+  return {
+    transcript: typeof raw.transcript === 'string' ? raw.transcript : undefined,
+    status: status as TranscriptResult['status'],
+    confidence: typeof raw.confidence === 'number' && Number.isFinite(raw.confidence) ? raw.confidence : undefined,
+    language: typeof raw.language === 'string' ? raw.language : undefined,
+    alternatives: Array.isArray(raw.alternatives) ? raw.alternatives.filter((entry): entry is string => typeof entry === 'string') : undefined,
+    captureId: typeof raw.captureId === 'string' ? raw.captureId : undefined,
+    startedAt: typeof raw.startedAt === 'string' ? raw.startedAt : undefined,
+    completedAt: typeof raw.completedAt === 'string' ? raw.completedAt : undefined,
+    error: typeof raw.error === 'string' ? raw.error : undefined,
+    data: raw
+  };
 }
 
 async function runJsonCommand(options: {

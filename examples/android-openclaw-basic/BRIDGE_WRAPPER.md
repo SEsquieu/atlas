@@ -94,7 +94,17 @@ This repo includes a concrete wrapper at `examples/android-openclaw-basic/bridge
 - optionally runs OpenClaw/Codex or Ollama visual analysis
 - when `ATLAS_ANDROID_BRIDGE_OPENCLAW_IMAGE_WORKER_URL` or `ATLAS_OPENCLAW_IMAGE_WORKER_URL` is set, sends OpenClaw image-analysis requests to a persistent warm worker instead of spawning a fresh `openclaw infer image describe` process
 - when no worker URL is set, auto-discovers a healthy warm worker from `.atlas-runs/openclaw-image-worker.json` before falling back to cold `openclaw infer image describe`
+- when `ATLAS_ANDROID_BRIDGE_SPEAK`, `ATLAS_ANDROID_BRIDGE_STOP_SPEAKING`, or `ATLAS_ANDROID_BRIDGE_TRANSCRIBE` is set, invokes native Android node audio commands instead of the camera path
 - prints bridge-result JSON to stdout
+
+Native transcript capture uses `audio.transcribe.once` by default:
+
+```bash
+ATLAS_ANDROID_BRIDGE_TRANSCRIBE='{"node":"Galaxy S22 Ultra","language":"en-US","maxDurationMs":12000}' \
+  node examples/android-openclaw-basic/bridge-wrapper.mjs
+```
+
+The wrapper prints a normalized transcript result with `transcript`, `status`, `confidence`, `alternatives`, `captureId`, and timing fields. On Windows/PowerShell, prefer passing the JSON through process environment/config instead of inline shell quoting.
 
 This is the first live-harness seam: the command can call OpenClaw however the local install supports, while Atlas still sees only normalized device output.
 

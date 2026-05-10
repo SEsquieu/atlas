@@ -248,6 +248,26 @@ export type StopSpeakingOptions = {
   speechId?: string;
 };
 
+export type TranscribeOnceOptions = {
+  reason?: string;
+  language?: string;
+  maxDurationMs?: number;
+  prompt?: string;
+};
+
+export type TranscriptResult = {
+  transcript?: string;
+  status: 'ok' | 'empty' | 'timeout' | 'cancelled' | 'error';
+  confidence?: number;
+  language?: string;
+  alternatives?: string[];
+  captureId?: string;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+  data?: unknown;
+};
+
 export type AnalyzeObservationOptions = {
   reason?: string;
   kinds?: ObservationAnalysisKind[];
@@ -261,6 +281,7 @@ export interface DeviceAdapter {
   getLocation?(options?: LocationOptions): Promise<Observation>;
   speak?(text: string, options?: SpeakOptions): Promise<void>;
   stopSpeaking?(options?: StopSpeakingOptions): Promise<void>;
+  transcribeOnce?(options?: TranscribeOnceOptions): Promise<TranscriptResult>;
 }
 
 export interface PerceptionAnalyzerAdapter {

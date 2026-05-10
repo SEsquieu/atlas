@@ -16,6 +16,9 @@ try {
   } else if (process.env.ATLAS_ANDROID_BRIDGE_STOP_SPEAKING?.trim()) {
     const result = await stopSpeakingWithOpenClaw(JSON.parse(process.env.ATLAS_ANDROID_BRIDGE_STOP_SPEAKING));
     process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else if (process.env.ATLAS_ANDROID_BRIDGE_TRANSCRIBE?.trim()) {
+    const result = await transcribeOnceWithOpenClaw(JSON.parse(process.env.ATLAS_ANDROID_BRIDGE_TRANSCRIBE));
+    process.stdout.write(`${JSON.stringify(result)}\n`);
   } else {
     const options = await readJsonInput('ATLAS_ANDROID_BRIDGE_OPTIONS');
     const releaseLock = await acquireCaptureLock();
@@ -171,6 +174,49 @@ function buildNativeSpeakParams(text, input) {
   if (rate !== undefined) params.rate = rate;
   if (typeof input.interrupt === 'boolean') params.interrupt = input.interrupt;
 
+  return params;
+}
+
+async function transcribeOnceWithOpenClaw(input) {
+  const startedAt = Date.now();
+  const node = firstString(input.node, process.env.ATLAS_ANDROID_BRIDGE_NODE) ?? 'paired-android-node';
+  const openclaw = resolveOpenClawInvocation(firstString(process.env.ATLAS_ANDROID_BRIDGE_OPENCLAW_BIN));
+  const timeoutMs = readNumberEnv('ATLAS_ANDROID_BRIDGE_TRANSCRIBE_TIMEOUT_MS') ?? readNumberEnv('ATLAS_ANDROID_BRIDGE_LISTEN_TIMEOUT_MS') ?? 20000;
+  const command = firstString(process.env.ATLAS_ANDROID_BRIDGE_TRANSCRIBE_COMMAND) ?? 'audio.transcribe.once';
+  const params = buildNativeTranscribeParams(input, timeoutMs);
+  const result = await runCommand(
+    openclaw.command,
+    [...openclaw.args, 'nodes', 'invoke', '--node', node, '--command', command, '--params', JSON.stringify(params), '--invoke-timeout', String(timeoutMs + 5000), '--json'],
+    { timeoutMs: timeoutMs + 10000 }
+  );
+  const endedAt = Date.now();
+  const parsed = JSON.parse(result.stdout.trim());
+  const payload = parsed?.payload && typeof parsed.payload === 'object' ? parsed.payload : {};
+  return {
+    ok: parsed?.ok === true && payload.status === 'ok',
+    node,
+    command,
+    params,
+    transcript: typeof payload.transcript === 'string' ? payload.transcript : undefined,
+    status: typeof payload.status === 'string' ? payload.status : parsed?.ok === true ? 'ok' : 'error',
+    confidence: typeof payload.confidence === 'number' ? payload.confidence : undefined,
+    language: typeof payload.language === 'string' ? payload.language : params.language,
+    alternatives: Array.isArray(payload.alternatives) ? payload.alternatives.filter((entry) => typeof entry === 'string') : undefined,
+    captureId: typeof payload.captureId === 'string' ? payload.captureId : undefined,
+    error: typeof payload.error === 'string' ? payload.error : parsed?.error?.message,
+    stdout: result.stdout.trim() || undefined,
+    stderr: result.stderr.trim() || undefined,
+    timings: { totalMs: endedAt - startedAt },
+    timestamps: { startedAt: new Date(startedAt).toISOString(), completedAt: new Date(endedAt).toISOString() }
+  };
+}
+
+function buildNativeTranscribeParams(input, timeoutMs) {
+  const params = { maxDurationMs: Number.isFinite(input.maxDurationMs) ? input.maxDurationMs : timeoutMs };
+  const language = firstString(input.language);
+  const prompt = firstString(input.prompt);
+  if (language) params.language = language;
+  if (prompt) params.prompt = prompt;
   return params;
 }
 
