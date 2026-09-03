@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import com.grinningfrog.atlas.model.AtlasEvent
 import com.grinningfrog.atlas.model.AtlasSession
 import com.grinningfrog.atlas.model.ContextStability
+import com.grinningfrog.atlas.model.ContextMode
 import com.grinningfrog.atlas.model.MotionState
 import com.grinningfrog.atlas.model.MediaPurpose
 import com.grinningfrog.atlas.model.MediaRef
@@ -16,7 +17,7 @@ import com.grinningfrog.atlas.model.VisualObservation
 import org.json.JSONObject
 import java.util.UUID
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 2) {
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 3) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """CREATE TABLE sessions (
@@ -25,7 +26,8 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 goal TEXT NOT NULL,
                 status TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                context_mode TEXT NOT NULL DEFAULT 'MANUAL'
             )""".trimIndent()
         )
         db.execSQL(
@@ -64,6 +66,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 motion_state TEXT NOT NULL,
                 fingerprint TEXT,
                 summary TEXT,
+                interpreted_at INTEGER,
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id)
             )""".trimIndent()
         )
@@ -83,6 +86,10 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             db.execSQL("ALTER TABLE observations ADD COLUMN media_processing_ms INTEGER NOT NULL DEFAULT 0")
             db.execSQL("UPDATE observations SET media_id = observation_id")
         }
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE sessions ADD COLUMN context_mode TEXT NOT NULL DEFAULT 'MANUAL'")
+            db.execSQL("ALTER TABLE observations ADD COLUMN interpreted_at INTEGER")
+        }
     }
 
     @Synchronized
@@ -94,7 +101,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         writableDatabase.transaction {
             insertOrThrow("sessions", null, ContentValues().apply {
                 put("session_id", session.id); put("name", name); put("goal", goal)
-                put("status", session.status.name); put("created_at", nowMs); put("updated_at", nowMs)
+                put("status", session.status.name); put("created_at", nowMs); put("updated_at", nowMs); put("context_mode", session.contextMode.name)
             })
             appendEventLocked(this, session.id, "session.created", nowMs, JSONObject().put("source", "atlas-android").toString())
         }
@@ -109,12 +116,21 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         }
     }
 
+    @Synchronized
+    fun updateContextMode(sessionId: String, mode: ContextMode, nowMs: Long = System.currentTimeMillis()) {
+        writableDatabase.transaction {
+            update("sessions", ContentValues().apply { put("context_mode", mode.name); put("updated_at", nowMs) }, "session_id = ?", arrayOf(sessionId))
+            appendEventLocked(this, sessionId, "context.${mode.name.lowercase()}", nowMs, JSONObject().put("mode", mode.name).toString())
+        }
+    }
+
     fun loadLatestSession(): AtlasSession? = readableDatabase.rawQuery(
-        "SELECT session_id,name,goal,status,created_at,updated_at FROM sessions ORDER BY updated_at DESC LIMIT 1", null
+        "SELECT session_id,name,goal,status,created_at,updated_at,context_mode FROM sessions ORDER BY updated_at DESC LIMIT 1", null
     ).use { cursor ->
         if (!cursor.moveToFirst()) null else AtlasSession(
             id = cursor.getString(0), name = cursor.getString(1), goal = cursor.getString(2),
             status = SessionStatus.valueOf(cursor.getString(3)), createdAtMs = cursor.getLong(4), updatedAtMs = cursor.getLong(5),
+            contextMode = ContextMode.valueOf(cursor.getString(6)),
         )
     }
 
@@ -143,7 +159,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 put("total_ms", observation.timing.totalMs); put("capture_ms", observation.timing.captureMs); put("processing_ms", observation.timing.processingMs)
                 observation.confidence?.let { put("confidence", it) }
                 put("stability", observation.stability.name); put("motion_state", observation.motionState.name)
-                put("fingerprint", observation.sceneFingerprint); put("summary", observation.summary)
+                put("fingerprint", observation.sceneFingerprint); put("summary", observation.summary); put("interpreted_at", observation.interpretedAtMs)
             })
             appendEventLocked(this, observation.sessionId, "observation.captured", observation.availableAtMs, JSONObject().apply {
                 put("observationId", observation.id); put("observedAtMs", observation.observedAtMs); put("availableAtMs", observation.availableAtMs)
@@ -155,10 +171,17 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         }
     }
 
+    @Synchronized
+    fun updateObservationInterpretation(observationId: String, summary: String, interpretedAtMs: Long) {
+        writableDatabase.update("observations", ContentValues().apply {
+            put("summary", summary); put("interpreted_at", interpretedAtMs)
+        }, "observation_id = ?", arrayOf(observationId))
+    }
+
     fun loadLatestObservation(sessionId: String): VisualObservation? = readableDatabase.rawQuery(
         """SELECT observation_id,media_path,media_id,media_mime,media_width,media_height,media_bytes,media_sha256,media_purpose,
             media_raw_bytes,media_processing_ms,observed_at,available_at,total_ms,capture_ms,processing_ms,
-            confidence,stability,motion_state,fingerprint,summary FROM observations WHERE session_id = ? ORDER BY observed_at DESC LIMIT 1""".trimIndent(),
+            confidence,stability,motion_state,fingerprint,summary,interpreted_at FROM observations WHERE session_id = ? ORDER BY observed_at DESC LIMIT 1""".trimIndent(),
         arrayOf(sessionId)
     ).use { cursor ->
         if (!cursor.moveToFirst()) null else VisualObservation(
@@ -170,7 +193,19 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             confidence = if (cursor.isNull(16)) null else cursor.getDouble(16),
             stability = ContextStability.valueOf(cursor.getString(17)), motionState = MotionState.valueOf(cursor.getString(18)),
             sceneFingerprint = if (cursor.isNull(19)) null else cursor.getString(19), summary = if (cursor.isNull(20)) null else cursor.getString(20),
+            interpretedAtMs = if (cursor.isNull(21)) null else cursor.getLong(21),
         )
+    }
+
+    fun loadHeartbeatInferenceTimes(sessionId: String, sinceMs: Long): List<Long> = readableDatabase.rawQuery(
+        "SELECT at_ms,data_json FROM events WHERE session_id = ? AND event_type = 'provider.requested' AND at_ms >= ? ORDER BY at_ms DESC",
+        arrayOf(sessionId, sinceMs.toString())
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                if (runCatching { JSONObject(cursor.getString(1)).optString("source") }.getOrNull() == "heartbeat") add(cursor.getLong(0))
+            }
+        }
     }
 
     fun loadRecentEvents(sessionId: String, limit: Int = 100): List<AtlasEvent> = readableDatabase.rawQuery(

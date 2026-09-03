@@ -4,6 +4,7 @@ import java.util.UUID
 
 enum class SessionStatus { IDLE, ACTIVE, PAUSED, DONE, ERROR }
 enum class RuntimePhase { STOPPED, STARTING, READY, LISTENING, CAPTURING, THINKING, SPEAKING, DEGRADED, ERROR }
+enum class ContextMode { MANUAL, LIVE }
 enum class RouteCapability { FAST, VISION, REASONING, FALLBACK }
 enum class InferenceRisk { NORMAL, ELEVATED, SAFETY_CRITICAL }
 enum class LatencyClass { LATENCY_CRITICAL, INTERACTIVE, BACKGROUND }
@@ -29,6 +30,7 @@ data class AtlasSession(
     val createdAtMs: Long,
     val updatedAtMs: Long,
     val permissions: SessionPermissions = SessionPermissions(),
+    val contextMode: ContextMode = ContextMode.MANUAL,
 )
 
 data class ObservationTiming(
@@ -72,6 +74,7 @@ data class VisualObservation(
     val motionState: MotionState = MotionState.UNKNOWN,
     val sceneFingerprint: String? = null,
     val summary: String? = null,
+    val interpretedAtMs: Long? = null,
 )
 
 data class ProviderEndpoint(

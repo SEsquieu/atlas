@@ -67,7 +67,9 @@ class AtlasSessionService : LifecycleService() {
                 }
             },
         )
-        runtime = AtlasMobileRuntime(app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope)
+        runtime = AtlasMobileRuntime(app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope) { live ->
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(live))
+        }
         serviceScope.launch {
             runCatching { runtime.initialize() }.onFailure { error ->
                 app.database.loadLatestSession()?.let { session ->
@@ -101,10 +103,10 @@ class AtlasSessionService : LifecycleService() {
         val service: AtlasSessionService get() = this@AtlasSessionService
     }
 
-    private fun notification() = NotificationCompat.Builder(this, CHANNEL_ID)
+    private fun notification(live: Boolean = false) = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(R.drawable.ic_atlas)
-        .setContentTitle("Atlas physical session")
-        .setContentText("Device resources are used only while a session is active")
+        .setContentTitle(if (live) "Atlas Live Context" else "Atlas physical session")
+        .setContentText(if (live) "Rolling physical context is active" else "Background context inference is off")
         .setContentIntent(
             PendingIntent.getActivity(
                 this,

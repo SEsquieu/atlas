@@ -18,9 +18,10 @@ The default APK leaves Atlas Cloud disabled. A gateway deployment can enable acc
 1. Grant camera, microphone, and notification access. Atlas acquires camera, microphone, speech, and motion resources on session start/resume and releases them on pause/end.
 2. Open **Inference** and add an endpoint name, base URL, model, and optional API key.
 3. Mark the endpoint as image-capable only if its chat-completions API accepts an `image_url` content part.
-4. Open **Session**, enter a durable goal, and start.
+4. Open **Session**, enter a durable goal, and start. New sessions begin with **Live Context** off.
 5. Tap **Observe**, type a question, or tap **Ask** for speech recognition.
-6. Inspect **Events** to see the ordered session trace.
+6. Enable **Live Context** only when Atlas should maintain rolling physical context in the background.
+7. Inspect **Events** to see the ordered session trace.
 
 Examples of base URLs:
 
@@ -53,6 +54,20 @@ Providers never receive a filesystem path. `MediaRepository` owns private storag
 | Detail/high-risk vision | 1600 px | 82 | 750 KB |
 
 Capture performs sampled decoding, EXIF rotation, proportional resize, and iterative recompression/downscaling. It atomically commits only a derivative within budget and deletes the raw temporary file even when processing fails. The observation/event record retains raw and final byte counts and processing latency for measurement.
+
+Freshness and suitability are separate checks. A recent heartbeat thumbnail may satisfy an ordinary scene question, but detail work such as reading a label forces a detail-quality capture even when the thumbnail is new.
+
+## Live Context
+
+Live Context is a persisted Atlas Core session mode, not a provider feature.
+
+- Off is the default. Atlas makes no background captures or inference calls; asks, voice requests, and manual Observe remain available.
+- On starts the motion-aware heartbeat immediately and continues through the foreground session service.
+- Local scene difference gates semantic review. Background inference has a one-minute cooldown and a hard ceiling of 12 attempts per rolling hour, reconstructed from the durable event log after restart.
+- A successful heartbeat interpretation is stored on its source observation and supplied as context to later requests while that observation remains current.
+- Pausing or ending the session stops Live Context immediately. Resuming a session whose persisted mode is Live restarts it.
+
+The notification and Session screen visibly distinguish Live Context from a manual physical session. These limits constrain inference calls, not camera captures; capture cadence continues to adapt to motion, battery, and thermal state.
 
 ## Optional Atlas Cloud build
 

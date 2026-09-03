@@ -57,6 +57,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -83,6 +84,7 @@ import com.grinningfrog.atlas.data.SecureSettings
 import com.grinningfrog.atlas.cloud.ManagedAccountClient
 import com.grinningfrog.atlas.media.MediaRepository
 import com.grinningfrog.atlas.model.AtlasEvent
+import com.grinningfrog.atlas.model.ContextMode
 import com.grinningfrog.atlas.model.ProviderEndpoint
 import com.grinningfrog.atlas.model.RouteTable
 import com.grinningfrog.atlas.model.RuntimePhase
@@ -230,7 +232,8 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
     var goal by remember { mutableStateOf("Help me understand and act safely in my current surroundings.") }
     var prompt by remember { mutableStateOf("") }
     var actionError by remember { mutableStateOf<String?>(null) }
-    val active = snapshot.session?.status == SessionStatus.ACTIVE
+    val session = snapshot.session
+    val active = session?.status == SessionStatus.ACTIVE
 
     fun runAction(block: suspend () -> Unit) {
         scope.launch { runCatching { block() }.onFailure { actionError = it.message ?: it.javaClass.simpleName } }
@@ -280,6 +283,27 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
             }
         }
 
+        if (session != null && session.status != SessionStatus.DONE) item {
+            val live = session.contextMode == ContextMode.LIVE
+            Card(colors = CardDefaults.cardColors(containerColor = if (live) MaterialTheme.colorScheme.primaryContainer.copy(alpha = .55f) else MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Live Context", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(if (live) "Atlas is maintaining a rolling physical context." else "Atlas observes only when you ask or tap Observe.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked = live, onCheckedChange = { enabled -> runAction { runtime.setLiveContextEnabled(enabled) } }, enabled = active)
+                    }
+                    if (live) {
+                        Text("Adaptive captures use local scene gating. Background inference is limited to one call per minute and 12 calls per hour.", style = MaterialTheme.typography.bodySmall)
+                        snapshot.nextHeartbeatAtMs?.let { Text("Next context check ${DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(it))}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    } else if (!active) {
+                        Text("Resume the session to change this setting.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+
         snapshot.latestObservation?.let { observation ->
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
@@ -290,6 +314,11 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
                         Column(Modifier.padding(14.dp)) {
                             Text("Current visual context", fontWeight = FontWeight.SemiBold)
                             Text("age ${snapshot.contextAgeMs?.let(::duration) ?: "—"} · ${observation.motionState.name.lowercase()} · ${observation.media.width}×${observation.media.height} · ${observation.media.byteSize / 1024} KB", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            observation.summary?.let { summary ->
+                                Spacer(Modifier.height(5.dp))
+                                Text(summary, style = MaterialTheme.typography.bodySmall)
+                                observation.interpretedAtMs?.let { Text("Interpreted ${duration((System.currentTimeMillis() - it).coerceAtLeast(0))} ago", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            }
                         }
                     }
                 }

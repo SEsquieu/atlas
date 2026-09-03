@@ -4,6 +4,7 @@ import com.grinningfrog.atlas.model.InferenceRequest
 import com.grinningfrog.atlas.model.InferenceResponse
 import com.grinningfrog.atlas.model.ProviderEndpoint
 import com.grinningfrog.atlas.model.RouteTable
+import kotlinx.coroutines.CancellationException
 
 class CapabilityRouter(
     private val backend: InferenceBackend,
@@ -25,6 +26,8 @@ class CapabilityRouter(
                 val result = backend.infer(endpoint, apiKey(endpoint), request)
                 onAttempt(endpoint, true, null)
                 return result.copy(degraded = endpoint.id !in routes().candidates(request.capability).take(1))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
                 val message = error.message ?: error::class.java.simpleName
                 failures += "${endpoint.name}: $message"

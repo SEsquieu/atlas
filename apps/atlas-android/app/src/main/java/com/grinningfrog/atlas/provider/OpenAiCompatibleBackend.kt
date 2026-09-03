@@ -4,20 +4,25 @@ import android.util.Base64
 import com.grinningfrog.atlas.model.InferenceRequest
 import com.grinningfrog.atlas.model.InferenceResponse
 import com.grinningfrog.atlas.model.ProviderEndpoint
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 class OpenAiCompatibleBackend(
     private val baseClient: OkHttpClient = OkHttpClient(),
 ) : InferenceBackend {
-    override suspend fun infer(endpoint: ProviderEndpoint, apiKey: String?, request: InferenceRequest): InferenceResponse = withContext(Dispatchers.IO) {
+    override suspend fun infer(endpoint: ProviderEndpoint, apiKey: String?, request: InferenceRequest): InferenceResponse {
         val started = System.nanoTime()
         val payload = JSONObject().apply {
             put("model", endpoint.model)
@@ -46,7 +51,7 @@ class OpenAiCompatibleBackend(
             .callTimeout(endpoint.timeoutMs, TimeUnit.MILLISECONDS)
             .build()
 
-        client.newCall(httpRequest).execute().use { response ->
+        return client.newCall(httpRequest).await().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) throw InferenceUnavailableException("${endpoint.name} returned HTTP ${response.code}: ${body.take(300)}")
             val text = extractText(body) ?: throw InferenceUnavailableException("${endpoint.name} returned no assistant text")
@@ -61,6 +66,19 @@ class OpenAiCompatibleBackend(
                 routingRevision = response.header("X-Atlas-Route-Revision"),
             )
         }
+    }
+
+    private suspend fun Call.await(): Response = suspendCancellableCoroutine { continuation ->
+        continuation.invokeOnCancellation { cancel() }
+        enqueue(object : Callback {
+            override fun onFailure(call: Call, error: IOException) {
+                if (continuation.isActive) continuation.resumeWithException(error)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                if (continuation.isActive) continuation.resume(response) else response.close()
+            }
+        })
     }
 
     private fun userContent(request: InferenceRequest): Any {

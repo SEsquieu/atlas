@@ -18,7 +18,7 @@ The Android POC currently includes:
 - CameraX capture plus motion-aware freshness decisions;
 - a Core-owned media repository that rotates, downsizes, recompresses, hashes, and enforces per-purpose byte budgets before inference;
 - voice input and interruptible spoken responses;
-- resource-aware heartbeat and deterministic scene-change gating;
+- opt-in Live Context with resource-aware heartbeat, deterministic scene-change gating, and durable proactive-inference limits;
 - capability routes (`fast`, `vision`, `reasoning`, `fallback`);
 - direct OpenAI-compatible local, LAN, and cloud endpoints;
 - Android Keystore-encrypted provider credentials; and

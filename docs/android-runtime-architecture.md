@@ -47,10 +47,14 @@ The local event table uses an auto-incrementing sequence. Wall-clock timestamps 
 1. User input is classified by whether it requires present visual context.
 2. Atlas evaluates observation age, motion, stability, risk, and expected refresh latency.
 3. Atlas captures when a current claim requires it; high-risk questions fail closed if refresh fails.
-4. Atlas selects a capability (`vision` or `reasoning`) and invokes configured endpoints in order.
+4. Atlas selects a capability (`fast`, `vision`, or `reasoning`) and invokes configured endpoints in order.
 5. Atlas records request, route attempts, latency, result or failure, and lifecycle disposition.
 6. Atlas preserves a textual answer even if speech synthesis fails; speech can be interrupted locally.
-7. Heartbeat independently adapts observation cadence to motion, battery, and thermal pressure. Deterministic scene difference gates model review and unsolicited speech defaults off.
+7. Live Context, when explicitly enabled, adapts observation cadence to motion, battery, and thermal pressure. Deterministic scene difference gates model review, a durable rolling window limits proactive inference, and unsolicited speech defaults off.
+
+New sessions use manual context mode. Manual mode performs no background capture or inference but retains explicit asks, voice requests, and Observe. Live mode is persisted with the session and visible in both the UI and foreground notification. Pausing or ending cancels its heartbeat immediately.
+
+Successful heartbeat interpretation is attached to the exact source observation with its interpretation timestamp. Later requests may reuse both the bounded image and this semantic context while freshness policy still considers them valid. Media suitability is independent of time freshness: detail requests cannot reuse heartbeat-sized images.
 
 ## Media boundary
 

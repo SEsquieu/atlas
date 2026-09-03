@@ -7,6 +7,7 @@ import com.grinningfrog.atlas.device.DeviceHealthMonitor
 import com.grinningfrog.atlas.device.MotionMonitor
 import com.grinningfrog.atlas.device.SpeechController
 import com.grinningfrog.atlas.model.AtlasSession
+import com.grinningfrog.atlas.model.ContextMode
 import com.grinningfrog.atlas.model.InferenceRequest
 import com.grinningfrog.atlas.model.MediaPurpose
 import com.grinningfrog.atlas.model.RouteCapability
@@ -16,6 +17,7 @@ import com.grinningfrog.atlas.model.SessionStatus
 import com.grinningfrog.atlas.model.VisualObservation
 import com.grinningfrog.atlas.provider.CapabilityRouter
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,6 +40,7 @@ class AtlasMobileRuntime(
     private val health: DeviceHealthMonitor,
     private val router: CapabilityRouter,
     private val scope: CoroutineScope,
+    private val onLiveContextChanged: (Boolean) -> Unit = {},
 ) {
     private val operations = Mutex()
     private val generation = AtomicLong(0)
@@ -51,7 +54,9 @@ class AtlasMobileRuntime(
         val observation = session?.let { database.loadLatestObservation(it.id) }
         if (session?.status == SessionStatus.ACTIVE) startDevices()
         publish(session = session, observation = observation, phase = if (session?.status == SessionStatus.ACTIVE) RuntimePhase.READY else RuntimePhase.STOPPED)
-        if (session?.status == SessionStatus.ACTIVE) startHeartbeat()
+        val live = session?.let { it.status == SessionStatus.ACTIVE && it.contextMode == ContextMode.LIVE } == true
+        onLiveContextChanged(live)
+        if (live) startHeartbeat()
     }
 
     suspend fun createAndStartSession(name: String, goal: String): AtlasSession = operations.withLock {
@@ -61,7 +66,7 @@ class AtlasMobileRuntime(
         database.updateSessionStatus(session.id, SessionStatus.ACTIVE)
         val active = session.copy(status = SessionStatus.ACTIVE, updatedAtMs = System.currentTimeMillis())
         publish(session = active, observation = null, phase = RuntimePhase.READY)
-        startHeartbeat()
+        onLiveContextChanged(false)
         active
     }
 
@@ -72,13 +77,14 @@ class AtlasMobileRuntime(
         startDevices()
         database.updateSessionStatus(session.id, SessionStatus.ACTIVE)
         publish(session = session.copy(status = SessionStatus.ACTIVE), phase = RuntimePhase.READY)
-        startHeartbeat()
+        if (session.contextMode == ContextMode.LIVE) startHeartbeat() else onLiveContextChanged(false)
     }
 
     suspend fun pauseSession() = operations.withLock {
         val session = requireSession()
         generation.incrementAndGet()
         heartbeatJob?.cancel(); heartbeatJob = null
+        onLiveContextChanged(false)
         speech.stopSpeaking()
         stopDevices()
         database.updateSessionStatus(session.id, SessionStatus.PAUSED)
@@ -89,6 +95,7 @@ class AtlasMobileRuntime(
         val session = requireSession()
         generation.incrementAndGet()
         heartbeatJob?.cancel(); heartbeatJob = null
+        onLiveContextChanged(false)
         speech.stopSpeaking()
         stopDevices()
         database.updateSessionStatus(session.id, SessionStatus.DONE)
@@ -98,6 +105,26 @@ class AtlasMobileRuntime(
     suspend fun captureNow(reason: String = "user-request"): VisualObservation = operations.withLock {
         val session = requireActiveSession()
         captureLocked(session, reason)
+    }
+
+    suspend fun setLiveContextEnabled(enabled: Boolean) {
+        if (!enabled) {
+            heartbeatJob?.cancel(); heartbeatJob = null
+            onLiveContextChanged(false)
+        }
+        operations.withLock {
+            val session = requireSession()
+            if (session.status == SessionStatus.DONE) throw IllegalStateException("Completed sessions cannot change context mode")
+            val mode = if (enabled) ContextMode.LIVE else ContextMode.MANUAL
+            if (session.contextMode == mode) return@withLock
+            database.updateContextMode(session.id, mode)
+            val updated = session.copy(contextMode = mode, updatedAtMs = System.currentTimeMillis())
+            publish(session = updated, nextHeartbeatAt = null, phase = if (session.status == SessionStatus.ACTIVE) RuntimePhase.READY else RuntimePhase.STOPPED)
+            if (enabled && session.status == SessionStatus.ACTIVE) startHeartbeat() else {
+                heartbeatJob?.cancel(); heartbeatJob = null
+                onLiveContextChanged(false)
+            }
+        }
     }
 
     suspend fun listenAndAsk() {
@@ -130,7 +157,7 @@ class AtlasMobileRuntime(
             .put("ageMs", freshness.ageMs).put("staleAfterMs", freshness.staleAfterMs))
         if (freshness.decision == FreshnessDecision.REFRESH_REQUIRED) {
             try {
-                val purpose = if (freshness.useCase == VisualUseCase.HIGH_RISK) MediaPurpose.DETAIL_VISION else MediaPurpose.STANDARD_VISION
+                val purpose = if (freshness.useCase == VisualUseCase.HIGH_RISK || freshness.useCase == VisualUseCase.DETAIL) MediaPurpose.DETAIL_VISION else MediaPurpose.STANDARD_VISION
                 observation = captureLocked(session, "user-preflight", purpose)
             }
             catch (error: Exception) {
@@ -145,7 +172,7 @@ class AtlasMobileRuntime(
         }
 
         publish(phase = RuntimePhase.THINKING)
-        val capability = if (freshness.useCase != VisualUseCase.NONE) RouteCapability.VISION else RouteCapability.REASONING
+        val capability = InferenceIntentPolicy.capability(text, freshness.useCase)
         val risk = when (freshness.useCase) {
             VisualUseCase.HIGH_RISK -> com.grinningfrog.atlas.model.InferenceRisk.SAFETY_CRITICAL
             VisualUseCase.NAVIGATION -> com.grinningfrog.atlas.model.InferenceRisk.ELEVATED
@@ -156,7 +183,9 @@ class AtlasMobileRuntime(
             systemPrompt = systemPrompt(session), userText = text,
             observation = if (capability == RouteCapability.VISION) observation else null,
             image = if (capability == RouteCapability.VISION) observation?.let { mediaRepository.inferenceImage(it.media) } else null,
-            contextNote = observation?.let { "Observed ${System.currentTimeMillis() - it.observedAtMs}ms ago; stability=${it.stability}; motion=${it.motionState}." },
+            contextNote = observation?.takeIf {
+                capability == RouteCapability.VISION || FreshnessPolicy.rollingInterpretationIsFresh(it, System.currentTimeMillis())
+            }?.let(::observationContext),
             risk = risk,
         )
         database.appendEvent(session.id, "provider.requested", JSONObject().put("turnId", turnId).put("requestId", request.requestId)
@@ -187,6 +216,7 @@ class AtlasMobileRuntime(
 
     fun close() {
         heartbeatJob?.cancel()
+        onLiveContextChanged(false)
         stopDevices()
     }
 
@@ -210,12 +240,15 @@ class AtlasMobileRuntime(
 
     private fun startHeartbeat() {
         if (heartbeatJob?.isActive == true) return
+        onLiveContextChanged(true)
         heartbeatJob = scope.launch {
-            while (isActive && mutableState.value.session?.status == SessionStatus.ACTIVE) {
+            while (isActive && mutableState.value.session?.status == SessionStatus.ACTIVE && mutableState.value.session?.contextMode == ContextMode.LIVE) {
+                try { heartbeatOnce() }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) { fail(error) }
                 val delayMs = heartbeatDelay()
                 publish(nextHeartbeatAt = System.currentTimeMillis() + delayMs)
                 delay(delayMs)
-                runCatching { heartbeatOnce() }.onFailure { fail(it) }
             }
         }
     }
@@ -235,16 +268,24 @@ class AtlasMobileRuntime(
 
         val current = captureLocked(session, "heartbeat", MediaPurpose.HEARTBEAT)
         val delta = SceneDifference.score(latest?.sceneFingerprint, current.sceneFingerprint)
-        val meaningful = delta != null && delta >= 0.18
+        val meaningful = latest == null || (delta != null && delta >= 0.18)
         database.appendEvent(session.id, "perception.significance", JSONObject().put("observationId", current.id).put("sceneDelta", delta).put("meaningful", meaningful))
-        if (meaningful) reviewHeartbeatLocked(session, current, delta)
+        if (meaningful) {
+            val now = System.currentTimeMillis()
+            val recent = database.loadHeartbeatInferenceTimes(session.id, now - ProactiveInferencePolicy.WINDOW_MS)
+            val assessment = ProactiveInferencePolicy.assess(now, recent)
+            database.appendEvent(session.id, "heartbeat.inference_assessed", JSONObject().put("observationId", current.id)
+                .put("allowed", assessment.allowed).put("reason", assessment.reason).put("attemptsInWindow", recent.size)
+                .put("windowMs", ProactiveInferencePolicy.WINDOW_MS).put("cooldownMs", ProactiveInferencePolicy.COOLDOWN_MS))
+            if (assessment.allowed) reviewHeartbeatLocked(session, current, delta)
+        }
         publish(deviceHealth = deviceHealth, phase = RuntimePhase.READY)
     }
 
-    private suspend fun reviewHeartbeatLocked(session: AtlasSession, observation: VisualObservation, delta: Double) {
+    private suspend fun reviewHeartbeatLocked(session: AtlasSession, observation: VisualObservation, delta: Double?) {
         val request = InferenceRequest(
             sessionId = session.id, capability = RouteCapability.FAST, systemPrompt = systemPrompt(session),
-            userText = "Briefly assess this changed scene. Mention only an immediately useful or safety-relevant change; otherwise reply NO_ACTION.",
+            userText = "In at most 60 words, summarize what is visibly present and the meaningful change. End with ACTION: NONE, or ACTION: followed by one immediately useful or safety-relevant message.",
             observation = observation, contextNote = "Deterministic scene delta=$delta",
             image = mediaRepository.inferenceImage(observation.media),
             risk = com.grinningfrog.atlas.model.InferenceRisk.ELEVATED,
@@ -252,15 +293,22 @@ class AtlasMobileRuntime(
         )
         database.appendEvent(session.id, "provider.requested", JSONObject().put("source", "heartbeat").put("requestId", request.requestId)
             .put("capability", "FAST").put("risk", request.risk.name).put("latencyClass", request.latencyClass.name))
-        runCatching { router.route(request) }.onSuccess { response ->
+        try {
+            val response = router.route(request)
+            val interpretedAt = System.currentTimeMillis()
+            database.updateObservationInterpretation(observation.id, response.text, interpretedAt)
+            publish(observation = observation.copy(summary = response.text, interpretedAtMs = interpretedAt))
             database.appendEvent(session.id, "provider.responded", JSONObject().put("source", "heartbeat").put("requestId", request.requestId)
                 .put("endpointId", response.endpointId).put("model", response.selectedModel).put("routingProfile", response.routingProfile)
                 .put("routingReason", response.routingReason).put("routingRevision", response.routingRevision)
                 .put("latencyMs", response.latencyMs).put("text", response.text))
-            if (!response.text.equals("NO_ACTION", ignoreCase = true) && session.permissions.proactiveSpeech) {
-                scope.launch { operations.withLock { speakLocked(session, response.text) } }
-            } else database.appendEvent(session.id, "agent.speech_suppressed", JSONObject().put("source", "heartbeat").put("text", response.text))
-        }.onFailure { error ->
+            val action = heartbeatAction(response.text)
+            if (action != null && session.permissions.proactiveSpeech) {
+                scope.launch { operations.withLock { speakLocked(session, action) } }
+            } else database.appendEvent(session.id, "agent.speech_suppressed", JSONObject().put("source", "heartbeat").put("action", action))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
             database.appendEvent(session.id, "provider.failed", JSONObject().put("source", "heartbeat").put("requestId", request.requestId).put("error", error.safeMessage()))
         }
     }
@@ -304,6 +352,19 @@ class AtlasMobileRuntime(
 
     private fun batteryConstrained(health: com.grinningfrog.atlas.model.DeviceHealth) =
         (health.batteryPercent != null && health.batteryPercent < 20 && !health.charging) || health.thermalStatus in setOf("hot", "throttled")
+
+    private fun observationContext(observation: VisualObservation) = buildString {
+        append("Observed ${System.currentTimeMillis() - observation.observedAtMs}ms ago; stability=${observation.stability}; motion=${observation.motionState}.")
+        observation.summary?.let {
+            append(" Background interpretation from ${observation.interpretedAtMs?.let { at -> System.currentTimeMillis() - at } ?: 0}ms ago: ")
+            append(it)
+        }
+    }
+
+    private fun heartbeatAction(text: String): String? {
+        val marker = Regex("(?im)^ACTION:\\s*(.+)$").find(text)?.groupValues?.get(1)?.trim() ?: return null
+        return marker.takeUnless { it.equals("NONE", ignoreCase = true) || it.equals("NO_ACTION", ignoreCase = true) }
+    }
 
     private fun systemPrompt(session: AtlasSession) = """
         You are the replaceable reasoning backend inside Atlas, a physical-agent runtime.
