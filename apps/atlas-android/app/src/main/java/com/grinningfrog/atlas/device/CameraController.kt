@@ -1,7 +1,6 @@
 package com.grinningfrog.atlas.device
 
 import android.content.Context
-import android.graphics.BitmapFactory
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -10,8 +9,8 @@ import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.lifecycle.LifecycleOwner
 import com.google.common.util.concurrent.ListenableFuture
-import com.grinningfrog.atlas.model.ContextStability
-import com.grinningfrog.atlas.model.MotionState
+import com.grinningfrog.atlas.media.MediaRepository
+import com.grinningfrog.atlas.model.MediaPurpose
 import com.grinningfrog.atlas.model.ObservationTiming
 import com.grinningfrog.atlas.model.VisualObservation
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +25,7 @@ class CameraController(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
     private val motion: MotionMonitor,
+    private val mediaRepository: MediaRepository,
 ) {
     private var provider: ProcessCameraProvider? = null
     private var capture: ImageCapture? = null
@@ -51,22 +51,23 @@ class CameraController(
         capture = null
     }
 
-    suspend fun capture(sessionId: String, reason: String): VisualObservation {
+    suspend fun capture(sessionId: String, reason: String, purpose: MediaPurpose): VisualObservation {
         val imageCapture = capture ?: throw IllegalStateException("Camera is not ready")
         val startedNanos = System.nanoTime()
         val observedAtMs = System.currentTimeMillis()
-        val directory = File(context.filesDir, "captures/$sessionId").apply { mkdirs() }
-        val output = File(directory, "${observedAtMs}-${reason.safeName()}.jpg")
+        val directory = File(context.cacheDir, "atlas-camera").apply { mkdirs() }
+        val output = File(directory, "${observedAtMs}-${reason.safeName()}.raw.jpg")
         val captureStarted = System.nanoTime()
         imageCapture.takePicture(ImageCapture.OutputFileOptions.Builder(output).build())
         val captureMs = elapsedMs(captureStarted)
         val processingStarted = System.nanoTime()
-        val fingerprint = withContext(Dispatchers.Default) { fingerprint(output) }
+        val media = mediaRepository.ingestCameraJpeg(output, sessionId, purpose)
+        val fingerprint = withContext(Dispatchers.Default) { mediaRepository.fingerprint(media) }
         val processingMs = elapsedMs(processingStarted)
         val availableAtMs = System.currentTimeMillis()
         return VisualObservation(
             sessionId = sessionId,
-            mediaPath = output.absolutePath,
+            media = media,
             observedAtMs = observedAtMs,
             availableAtMs = availableAtMs,
             timing = ObservationTiming(elapsedMs(startedNanos), captureMs, processingMs),
@@ -74,21 +75,6 @@ class CameraController(
             motionState = motion.state.value,
             sceneFingerprint = fingerprint,
         )
-    }
-
-    private fun fingerprint(file: File): String? {
-        val source = BitmapFactory.decodeFile(file.absolutePath) ?: return null
-        val scaled = android.graphics.Bitmap.createScaledBitmap(source, 8, 8, true)
-        val result = buildString(128) {
-            for (y in 0 until 8) for (x in 0 until 8) {
-                val pixel = scaled.getPixel(x, y)
-                val luma = ((android.graphics.Color.red(pixel) * 299 + android.graphics.Color.green(pixel) * 587 + android.graphics.Color.blue(pixel) * 114) / 1000)
-                append(luma.toString(16).padStart(2, '0'))
-            }
-        }
-        if (scaled !== source) scaled.recycle()
-        source.recycle()
-        return result
     }
 
     private fun String.safeName() = lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').take(36).ifBlank { "capture" }

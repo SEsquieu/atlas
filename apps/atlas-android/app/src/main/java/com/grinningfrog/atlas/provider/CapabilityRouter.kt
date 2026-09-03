@@ -9,14 +9,14 @@ class CapabilityRouter(
     private val backend: InferenceBackend,
     private val endpoints: () -> List<ProviderEndpoint>,
     private val routes: () -> RouteTable,
-    private val apiKey: (ProviderEndpoint) -> String?,
+    private val apiKey: suspend (ProviderEndpoint) -> String?,
     private val onAttempt: suspend (endpoint: ProviderEndpoint, success: Boolean, error: String?) -> Unit = { _, _, _ -> },
 ) {
     suspend fun route(request: InferenceRequest): InferenceResponse {
         val configured = endpoints().associateBy { it.id }
         val candidates = routes().candidates(request.capability)
             .mapNotNull(configured::get)
-            .filter { request.observation == null || it.supportsVision }
+            .filter { request.image == null || it.supportsVision }
         if (candidates.isEmpty()) throw InferenceUnavailableException("No endpoint is configured for ${request.capability.name.lowercase()}")
 
         val failures = mutableListOf<String>()

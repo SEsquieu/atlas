@@ -1,12 +1,14 @@
 package com.grinningfrog.atlas.runtime
 
 import com.grinningfrog.atlas.data.AtlasDatabase
+import com.grinningfrog.atlas.media.MediaRepository
 import com.grinningfrog.atlas.device.CameraController
 import com.grinningfrog.atlas.device.DeviceHealthMonitor
 import com.grinningfrog.atlas.device.MotionMonitor
 import com.grinningfrog.atlas.device.SpeechController
 import com.grinningfrog.atlas.model.AtlasSession
 import com.grinningfrog.atlas.model.InferenceRequest
+import com.grinningfrog.atlas.model.MediaPurpose
 import com.grinningfrog.atlas.model.RouteCapability
 import com.grinningfrog.atlas.model.RuntimePhase
 import com.grinningfrog.atlas.model.RuntimeSnapshot
@@ -29,6 +31,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 class AtlasMobileRuntime(
     private val database: AtlasDatabase,
+    private val mediaRepository: MediaRepository,
     private val camera: CameraController,
     private val speech: SpeechController,
     private val motion: MotionMonitor,
@@ -117,12 +120,19 @@ class AtlasMobileRuntime(
         val operationGeneration = generation.get()
         database.appendEvent(session.id, "user.utterance", JSONObject().put("turnId", turnId).put("mode", if (voice) "voice" else "text").put("text", text))
 
-        var observation = database.loadLatestObservation(session.id)
+        // Pre-media-boundary rows carry no verified size/hash. Never send those legacy raw files
+        // to a provider; force one normalized capture before they can be reused as current context.
+        var observation = database.loadLatestObservation(session.id)?.takeIf {
+            it.media.byteSize > 0 && it.media.sha256.isNotBlank()
+        }
         val freshness = FreshnessPolicy.assess(text, observation, System.currentTimeMillis())
         database.appendEvent(session.id, "context.assessed", JSONObject().put("turnId", turnId).put("decision", freshness.decision.name).put("reason", freshness.reason)
             .put("ageMs", freshness.ageMs).put("staleAfterMs", freshness.staleAfterMs))
         if (freshness.decision == FreshnessDecision.REFRESH_REQUIRED) {
-            try { observation = captureLocked(session, "user-preflight") }
+            try {
+                val purpose = if (freshness.useCase == VisualUseCase.HIGH_RISK) MediaPurpose.DETAIL_VISION else MediaPurpose.STANDARD_VISION
+                observation = captureLocked(session, "user-preflight", purpose)
+            }
             catch (error: Exception) {
                 database.appendEvent(session.id, "visual.refresh_failed", JSONObject().put("turnId", turnId).put("error", error.safeMessage()))
                 if (freshness.useCase == VisualUseCase.HIGH_RISK || freshness.useCase == VisualUseCase.NAVIGATION || observation == null) {
@@ -140,6 +150,7 @@ class AtlasMobileRuntime(
             sessionId = session.id, capability = capability,
             systemPrompt = systemPrompt(session), userText = text,
             observation = if (capability == RouteCapability.VISION) observation else null,
+            image = if (capability == RouteCapability.VISION) observation?.let { mediaRepository.inferenceImage(it.media) } else null,
             contextNote = observation?.let { "Observed ${System.currentTimeMillis() - it.observedAtMs}ms ago; stability=${it.stability}; motion=${it.motionState}." },
         )
         database.appendEvent(session.id, "provider.requested", JSONObject().put("turnId", turnId).put("requestId", request.requestId).put("capability", capability.name))
@@ -213,7 +224,7 @@ class AtlasMobileRuntime(
             .put("refreshDueAtMs", refreshDueAt).put("battery", deviceHealth.batteryPercent).put("thermal", deviceHealth.thermalStatus).put("motion", deviceHealth.motion.name))
         if (!shouldCapture) { publish(deviceHealth = deviceHealth, phase = RuntimePhase.READY); return@withLock }
 
-        val current = captureLocked(session, "heartbeat")
+        val current = captureLocked(session, "heartbeat", MediaPurpose.HEARTBEAT)
         val delta = SceneDifference.score(latest?.sceneFingerprint, current.sceneFingerprint)
         val meaningful = delta != null && delta >= 0.18
         database.appendEvent(session.id, "perception.significance", JSONObject().put("observationId", current.id).put("sceneDelta", delta).put("meaningful", meaningful))
@@ -226,6 +237,7 @@ class AtlasMobileRuntime(
             sessionId = session.id, capability = RouteCapability.FAST, systemPrompt = systemPrompt(session),
             userText = "Briefly assess this changed scene. Mention only an immediately useful or safety-relevant change; otherwise reply NO_ACTION.",
             observation = observation, contextNote = "Deterministic scene delta=$delta",
+            image = mediaRepository.inferenceImage(observation.media),
         )
         database.appendEvent(session.id, "provider.requested", JSONObject().put("source", "heartbeat").put("requestId", request.requestId).put("capability", "FAST"))
         runCatching { router.route(request) }.onSuccess { response ->
@@ -239,16 +251,19 @@ class AtlasMobileRuntime(
         }
     }
 
-    private suspend fun captureLocked(session: AtlasSession, reason: String): VisualObservation {
+    private suspend fun captureLocked(session: AtlasSession, reason: String, purpose: MediaPurpose = MediaPurpose.STANDARD_VISION): VisualObservation {
         if (!session.permissions.observe || session.permissions.captureImage == com.grinningfrog.atlas.model.PermissionPolicy.NEVER) {
             throw SecurityException("Session policy does not allow camera observation")
         }
         publish(phase = RuntimePhase.CAPTURING)
         database.appendEvent(session.id, "tool.requested", JSONObject().put("tool", "capture_current_view").put("reason", reason))
         return try {
-            val observation = camera.capture(session.id, reason)
+            val observation = camera.capture(session.id, reason, purpose)
             database.saveObservation(observation)
-            database.appendEvent(session.id, "tool.completed", JSONObject().put("tool", "capture_current_view").put("observationId", observation.id))
+            database.appendEvent(session.id, "tool.completed", JSONObject().put("tool", "capture_current_view").put("observationId", observation.id)
+                .put("mediaId", observation.media.id).put("purpose", observation.media.purpose.name).put("rawBytes", observation.media.rawByteSize)
+                .put("finalBytes", observation.media.byteSize).put("width", observation.media.width).put("height", observation.media.height)
+                .put("mediaProcessingMs", observation.media.processingMs))
             publish(observation = observation, error = null, phase = RuntimePhase.READY)
             observation
         } catch (error: Exception) {

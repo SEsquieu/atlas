@@ -73,12 +73,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.grinningfrog.atlas.data.SecureSettings
+import com.grinningfrog.atlas.cloud.ManagedAccountClient
+import com.grinningfrog.atlas.media.MediaRepository
 import com.grinningfrog.atlas.model.AtlasEvent
 import com.grinningfrog.atlas.model.ProviderEndpoint
 import com.grinningfrog.atlas.model.RouteTable
@@ -121,6 +124,8 @@ class MainActivity : ComponentActivity() {
                 AtlasApp(
                     runtime = service?.runtime,
                     settings = (application as AtlasApplication).settings,
+                    mediaRepository = (application as AtlasApplication).mediaRepository,
+                    managedAccount = (application as AtlasApplication).managedAccount,
                     permissionsGranted = permissionsGranted,
                     onRequestPermissions = { permissionLauncher.launch(requestedPermissions()) },
                 )
@@ -164,6 +169,8 @@ private enum class AppPage { SESSION, PROVIDERS, EVENTS }
 private fun AtlasApp(
     runtime: AtlasMobileRuntime?,
     settings: SecureSettings,
+    mediaRepository: MediaRepository,
+    managedAccount: ManagedAccountClient,
     permissionsGranted: Boolean,
     onRequestPermissions: () -> Unit,
 ) {
@@ -185,8 +192,8 @@ private fun AtlasApp(
         when {
             !permissionsGranted -> PermissionGate(Modifier.padding(padding), onRequestPermissions)
             runtime == null -> LoadingRuntime(Modifier.padding(padding))
-            page == AppPage.SESSION -> SessionPage(runtime, snapshot, providers.isNotEmpty(), Modifier.padding(padding))
-            page == AppPage.PROVIDERS -> ProviderPage(settings, providers, Modifier.padding(padding)) { providerRevision++ }
+            page == AppPage.SESSION -> SessionPage(runtime, snapshot, providers.isNotEmpty(), mediaRepository, Modifier.padding(padding))
+            page == AppPage.PROVIDERS -> ProviderPage(settings, providers, managedAccount, Modifier.padding(padding)) { providerRevision++ }
             page == AppPage.EVENTS -> EventsPage(snapshot, Modifier.padding(padding))
         }
     }
@@ -217,7 +224,7 @@ private fun LoadingRuntime(modifier: Modifier) {
 }
 
 @Composable
-private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, hasProvider: Boolean, modifier: Modifier) {
+private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, hasProvider: Boolean, mediaRepository: MediaRepository, modifier: Modifier) {
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf("Everyday Atlas") }
     var goal by remember { mutableStateOf("Help me understand and act safely in my current surroundings.") }
@@ -277,12 +284,12 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                     Column {
-                        remember(observation.mediaPath) { BitmapFactory.decodeFile(observation.mediaPath)?.asImageBitmap() }?.let { bitmap ->
+                        remember(observation.media.id) { BitmapFactory.decodeFile(mediaRepository.resolve(observation.media).absolutePath)?.asImageBitmap() }?.let { bitmap ->
                             Image(bitmap, "Latest Atlas observation", Modifier.fillMaxWidth().height(220.dp), contentScale = ContentScale.Crop)
                         }
                         Column(Modifier.padding(14.dp)) {
                             Text("Current visual context", fontWeight = FontWeight.SemiBold)
-                            Text("age ${snapshot.contextAgeMs?.let(::duration) ?: "—"} · ${observation.motionState.name.lowercase()} · capture ${observation.timing.totalMs} ms", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("age ${snapshot.contextAgeMs?.let(::duration) ?: "—"} · ${observation.motionState.name.lowercase()} · ${observation.media.width}×${observation.media.height} · ${observation.media.byteSize / 1024} KB", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -327,7 +334,7 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
 }
 
 @Composable
-private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpoint>, modifier: Modifier, onChanged: () -> Unit) {
+private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpoint>, managedAccount: ManagedAccountClient, modifier: Modifier, onChanged: () -> Unit) {
     var name by remember { mutableStateOf("") }
     var baseUrl by remember { mutableStateOf("http://10.0.2.2:11434") }
     var model by remember { mutableStateOf("") }
@@ -347,14 +354,7 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                 }
             }
         }
-        item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f))) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Managed Atlas · reserved seam", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("A future authenticated, metered subscription endpoint can be added here. This POC never embeds or exposes an Atlas-owned inference key.")
-                }
-            }
-        }
+        item { ManagedAccountCard(managedAccount, settings, onChanged) }
         if (providers.isNotEmpty()) item { Text("Configured endpoints", style = MaterialTheme.typography.titleMedium) }
         items(providers, key = { it.id }) { endpoint ->
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
@@ -398,6 +398,74 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                     ) { Text("Save and add to capability routes") }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ManagedAccountCard(account: ManagedAccountClient, settings: SecureSettings, onChanged: () -> Unit) {
+    val state by account.state.collectAsState()
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+
+    fun installEndpoint() {
+        val endpoint = account.endpoint()
+        settings.saveProvider(endpoint, null)
+        val all = settings.loadProviders()
+        val ids = listOf(endpoint.id) + all.map { it.id }.filterNot { it == endpoint.id }
+        settings.saveRoutes(RouteTable(ids, ids.filter { id -> all.firstOrNull { it.id == id }?.supportsVision == true }, ids, ids))
+        onChanged()
+    }
+
+    fun launchCheckout(block: suspend () -> String) {
+        scope.launch {
+            runCatching { block() }
+                .onSuccess { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it))) }
+                .onFailure(account::reportError)
+        }
+    }
+
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .55f))) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("Atlas Cloud · managed frontier inference", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            if (!state.configured) {
+                Text("This build has the account and billing plumbing disabled. Configure the gateway and Supabase build values to enable it.")
+            } else if (!state.signedIn) {
+                Text("Create an Atlas account for metered inference. Subscribe for a recurring allowance or buy additional credit blocks.")
+                OutlinedTextField(email, { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(password, { password = it }, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(enabled = !state.busy && email.isNotBlank() && password.length >= 8, onClick = { scope.launch { account.signIn(email, password); if (account.state.value.signedIn) { installEndpoint(); account.refreshBalance() } } }) { Text("Sign in") }
+                    OutlinedButton(enabled = !state.busy && email.isNotBlank() && password.length >= 8, onClick = { scope.launch { account.signUp(email, password); if (account.state.value.signedIn) installEndpoint() } }) { Text("Create account") }
+                }
+            } else {
+                LaunchedEffect(state.email) { if (state.balanceMicros == null) account.refreshBalance() }
+                Text(state.email.orEmpty(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${state.balanceMicros?.let { "%.2f credits".format(it / 1_000_000.0) } ?: "Balance unavailable"} · ${state.subscriptionStatus}", fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(enabled = !state.busy, onClick = { launchCheckout { account.checkout("subscription") } }) { Text("Subscribe") }
+                    OutlinedButton(enabled = !state.busy, onClick = { launchCheckout { account.checkout("credit_block") } }) { Text("Buy credits") }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButtonCompact("Use first") { installEndpoint() }
+                    TextButtonCompact("Refresh") { scope.launch { account.refreshBalance() } }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButtonCompact("Manage billing") { launchCheckout { account.portal() } }
+                    TextButtonCompact("Sign out") { scope.launch {
+                        settings.deleteProvider(ManagedAccountClient.ENDPOINT_ID)
+                        val remaining = settings.loadProviders()
+                        val ids = remaining.map { it.id }
+                        settings.saveRoutes(RouteTable(ids, remaining.filter { it.supportsVision }.map { it.id }, ids, ids))
+                        account.signOut()
+                        onChanged()
+                    } }
+                }
+            }
+            state.message?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (state.busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         }
     }
 }

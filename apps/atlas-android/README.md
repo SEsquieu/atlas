@@ -11,6 +11,8 @@ This app runs Atlas Core on an Android phone. It is a reference experience for t
 
 Open this directory directly in Android Studio and run the `app` configuration. The repository does not commit machine-specific `local.properties`; Android Studio creates it from your SDK location.
 
+The default APK leaves Atlas Cloud disabled. A gateway deployment can enable account sign-up, subscription checkout, credit-block purchase, balance display, and managed inference by supplying the three Gradle properties documented below. BYOI never requires those values.
+
 ## First run
 
 1. Grant camera, microphone, and notification access. Atlas acquires camera, microphone, speech, and motion resources on session start/resume and releases them on pause/end.
@@ -35,9 +37,35 @@ Atlas appends `/v1/chat/completions` unless the configured URL already ends in `
 - Provider keys are non-exportable AES-GCM ciphertext backed by Android Keystore.
 - Keys are sent only to the endpoint configured by the user.
 - Captured frames, transcripts, model responses, and audit events are stored in private app storage.
+- Full-resolution camera output is temporary. Atlas normalizes it into a private, opaque media artifact before persistence or inference.
 - Android backups are disabled.
 - Cleartext HTTP is enabled for local-network POC endpoints. A public release should replace the global allowance with an explicit network-security policy and visible per-endpoint warning.
 - Removing the app removes its local data. There is no cloud sync in this POC.
+
+## Media boundary and image budgets
+
+Providers never receive a filesystem path. `MediaRepository` owns private storage under the app's `filesDir/media/v1`, and Core passes providers an immutable in-memory payload plus media ID, MIME type, dimensions, byte count, and SHA-256 digest.
+
+| Purpose | Longest edge | Starting JPEG quality | Hard byte budget |
+| --- | ---: | ---: | ---: |
+| Heartbeat | 640 px | 70 | 150 KB |
+| Standard vision | 1024 px | 78 | 350 KB |
+| Detail/high-risk vision | 1600 px | 82 | 750 KB |
+
+Capture performs sampled decoding, EXIF rotation, proportional resize, and iterative recompression/downscaling. It atomically commits only a derivative within budget and deletes the raw temporary file even when processing fails. The observation/event record retains raw and final byte counts and processing latency for measurement.
+
+## Optional Atlas Cloud build
+
+After deploying `apps/atlas-cloud`, build a managed-enabled APK with:
+
+```bash
+./gradlew assembleDebug \
+  -PATLAS_GATEWAY_URL=https://your-gateway.example \
+  -PSUPABASE_URL=https://PROJECT.supabase.co \
+  -PSUPABASE_PUBLISHABLE_KEY=sb_publishable_REPLACE_ME
+```
+
+The app authenticates directly with Supabase, stores the session tokens with Android Keystore, and presents the short-lived access token to Atlas Cloud. OpenAI and Supabase service-role credentials remain on the server. Signing out removes only the managed endpoint from capability routes; direct endpoints are untouched.
 
 This is not yet production privacy UX. Before external beta, Atlas needs retention controls, session deletion/export, redaction options, a privacy disclosure, and security review.
 
@@ -60,6 +88,6 @@ Routes are expressed as capabilities, not model names. The initial UI adds each 
 - A single latest session is resumed after process restart.
 - Session permissions use conservative defaults and are not yet editable or persisted per session.
 - Observation retention is unbounded.
-- There is no signed release build, CI Android build, Play distribution, account, subscription, or managed inference endpoint.
+- There is no signed release build or Play distribution. Atlas Cloud plumbing exists but is not a production service until deployed, configured, abuse-protected, and operationally monitored.
 
 Those are release tasks, not reasons to couple Core to an inference vendor.

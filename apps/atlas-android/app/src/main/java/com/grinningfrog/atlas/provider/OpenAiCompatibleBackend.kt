@@ -12,7 +12,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
 import java.util.concurrent.TimeUnit
 
 class OpenAiCompatibleBackend(
@@ -33,6 +32,8 @@ class OpenAiCompatibleBackend(
             .url(chatCompletionsUrl(endpoint.baseUrl))
             .header("Content-Type", "application/json")
             .header("X-Atlas-Request-Id", request.requestId)
+            .header("X-Atlas-Capability", request.capability.name.lowercase())
+            .apply { request.observation?.media?.purpose?.let { header("X-Atlas-Media-Purpose", it.name.lowercase()) } }
             .apply { if (!apiKey.isNullOrBlank()) header("Authorization", "Bearer $apiKey") }
             .post(payload.toString().toRequestBody("application/json".toMediaType()))
             .build()
@@ -52,18 +53,15 @@ class OpenAiCompatibleBackend(
     }
 
     private fun userContent(request: InferenceRequest): Any {
-        val observation = request.observation
-        if (observation == null) return listOfNotNull(request.userText, request.contextNote).joinToString("\n\n")
-        val file = File(observation.mediaPath)
-        if (!file.exists()) throw InferenceUnavailableException("Observation media is no longer available: ${observation.mediaPath}")
-        val mime = when (file.extension.lowercase()) { "png" -> "image/png"; else -> "image/jpeg" }
-        val encoded = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
+        val image = request.image
+        if (image == null) return listOfNotNull(request.userText, request.contextNote).joinToString("\n\n")
+        val encoded = Base64.encodeToString(image.bytes, Base64.NO_WRAP)
         return JSONArray().apply {
             put(JSONObject().put("type", "text").put("text", buildString {
                 append(request.userText)
                 request.contextNote?.let { append("\n\nAtlas context: ").append(it) }
             }))
-            put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:$mime;base64,$encoded")))
+            put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:${image.mimeType};base64,$encoded")))
         }
     }
 

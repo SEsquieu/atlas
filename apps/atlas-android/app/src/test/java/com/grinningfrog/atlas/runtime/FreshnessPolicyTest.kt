@@ -2,6 +2,8 @@ package com.grinningfrog.atlas.runtime
 
 import com.grinningfrog.atlas.model.ContextStability
 import com.grinningfrog.atlas.model.MotionState
+import com.grinningfrog.atlas.model.MediaPurpose
+import com.grinningfrog.atlas.model.MediaRef
 import com.grinningfrog.atlas.model.ObservationTiming
 import com.grinningfrog.atlas.model.VisualObservation
 import org.junit.Assert.assertEquals
@@ -44,7 +46,7 @@ class FreshnessPolicyTest {
 
     private fun observation(atMs: Long, motion: MotionState) = VisualObservation(
         sessionId = "session",
-        mediaPath = "/not/read/by/policy.jpg",
+        media = MediaRef("media", "test.jpg", "image/jpeg", 100, 100, 10, "hash", MediaPurpose.STANDARD_VISION, 20, 1),
         observedAtMs = atMs,
         availableAtMs = atMs + 50,
         timing = ObservationTiming(50, 40, 10),

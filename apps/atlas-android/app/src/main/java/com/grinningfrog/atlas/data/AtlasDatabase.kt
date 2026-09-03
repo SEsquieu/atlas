@@ -8,13 +8,15 @@ import com.grinningfrog.atlas.model.AtlasEvent
 import com.grinningfrog.atlas.model.AtlasSession
 import com.grinningfrog.atlas.model.ContextStability
 import com.grinningfrog.atlas.model.MotionState
+import com.grinningfrog.atlas.model.MediaPurpose
+import com.grinningfrog.atlas.model.MediaRef
 import com.grinningfrog.atlas.model.ObservationTiming
 import com.grinningfrog.atlas.model.SessionStatus
 import com.grinningfrog.atlas.model.VisualObservation
 import org.json.JSONObject
 import java.util.UUID
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 1) {
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 2) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """CREATE TABLE sessions (
@@ -43,6 +45,15 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 observation_id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
                 media_path TEXT NOT NULL,
+                media_id TEXT NOT NULL,
+                media_mime TEXT NOT NULL,
+                media_width INTEGER NOT NULL,
+                media_height INTEGER NOT NULL,
+                media_bytes INTEGER NOT NULL,
+                media_sha256 TEXT NOT NULL,
+                media_purpose TEXT NOT NULL,
+                media_raw_bytes INTEGER NOT NULL,
+                media_processing_ms INTEGER NOT NULL,
                 observed_at INTEGER NOT NULL,
                 available_at INTEGER NOT NULL,
                 total_ms INTEGER NOT NULL,
@@ -59,7 +70,20 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         db.execSQL("CREATE INDEX observations_session_time ON observations(session_id, observed_at DESC)")
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE observations ADD COLUMN media_id TEXT")
+            db.execSQL("ALTER TABLE observations ADD COLUMN media_mime TEXT NOT NULL DEFAULT 'image/jpeg'")
+            db.execSQL("ALTER TABLE observations ADD COLUMN media_width INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE observations ADD COLUMN media_height INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE observations ADD COLUMN media_bytes INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE observations ADD COLUMN media_sha256 TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE observations ADD COLUMN media_purpose TEXT NOT NULL DEFAULT 'STANDARD_VISION'")
+            db.execSQL("ALTER TABLE observations ADD COLUMN media_raw_bytes INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE observations ADD COLUMN media_processing_ms INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("UPDATE observations SET media_id = observation_id")
+        }
+    }
 
     @Synchronized
     fun createSession(name: String, goal: String, nowMs: Long = System.currentTimeMillis()): AtlasSession {
@@ -110,7 +134,11 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     fun saveObservation(observation: VisualObservation) {
         writableDatabase.transaction {
             insertOrThrow("observations", null, ContentValues().apply {
-                put("observation_id", observation.id); put("session_id", observation.sessionId); put("media_path", observation.mediaPath)
+                put("observation_id", observation.id); put("session_id", observation.sessionId); put("media_path", observation.media.storageKey)
+                put("media_id", observation.media.id); put("media_mime", observation.media.mimeType)
+                put("media_width", observation.media.width); put("media_height", observation.media.height); put("media_bytes", observation.media.byteSize)
+                put("media_sha256", observation.media.sha256); put("media_purpose", observation.media.purpose.name)
+                put("media_raw_bytes", observation.media.rawByteSize); put("media_processing_ms", observation.media.processingMs)
                 put("observed_at", observation.observedAtMs); put("available_at", observation.availableAtMs)
                 put("total_ms", observation.timing.totalMs); put("capture_ms", observation.timing.captureMs); put("processing_ms", observation.timing.processingMs)
                 observation.confidence?.let { put("confidence", it) }
@@ -119,7 +147,8 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             })
             appendEventLocked(this, observation.sessionId, "observation.captured", observation.availableAtMs, JSONObject().apply {
                 put("observationId", observation.id); put("observedAtMs", observation.observedAtMs); put("availableAtMs", observation.availableAtMs)
-                put("mediaPath", observation.mediaPath); put("totalMs", observation.timing.totalMs); put("captureMs", observation.timing.captureMs)
+                put("mediaId", observation.media.id); put("mediaBytes", observation.media.byteSize); put("mediaSha256", observation.media.sha256)
+                put("totalMs", observation.timing.totalMs); put("captureMs", observation.timing.captureMs)
                 put("processingMs", observation.timing.processingMs); put("motionState", observation.motionState.name)
             }.toString())
             update("sessions", ContentValues().apply { put("updated_at", observation.availableAtMs) }, "session_id = ?", arrayOf(observation.sessionId))
@@ -127,16 +156,20 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     fun loadLatestObservation(sessionId: String): VisualObservation? = readableDatabase.rawQuery(
-        """SELECT observation_id,media_path,observed_at,available_at,total_ms,capture_ms,processing_ms,
+        """SELECT observation_id,media_path,media_id,media_mime,media_width,media_height,media_bytes,media_sha256,media_purpose,
+            media_raw_bytes,media_processing_ms,observed_at,available_at,total_ms,capture_ms,processing_ms,
             confidence,stability,motion_state,fingerprint,summary FROM observations WHERE session_id = ? ORDER BY observed_at DESC LIMIT 1""".trimIndent(),
         arrayOf(sessionId)
     ).use { cursor ->
         if (!cursor.moveToFirst()) null else VisualObservation(
-            id = cursor.getString(0), sessionId = sessionId, mediaPath = cursor.getString(1), observedAtMs = cursor.getLong(2), availableAtMs = cursor.getLong(3),
-            timing = ObservationTiming(cursor.getLong(4), cursor.getLong(5), cursor.getLong(6)),
-            confidence = if (cursor.isNull(7)) null else cursor.getDouble(7),
-            stability = ContextStability.valueOf(cursor.getString(8)), motionState = MotionState.valueOf(cursor.getString(9)),
-            sceneFingerprint = if (cursor.isNull(10)) null else cursor.getString(10), summary = if (cursor.isNull(11)) null else cursor.getString(11),
+            id = cursor.getString(0), sessionId = sessionId,
+            media = MediaRef(cursor.getString(2) ?: cursor.getString(0), cursor.getString(1), cursor.getString(3), cursor.getInt(4), cursor.getInt(5), cursor.getLong(6), cursor.getString(7),
+                MediaPurpose.valueOf(cursor.getString(8)), cursor.getLong(9), cursor.getLong(10)),
+            observedAtMs = cursor.getLong(11), availableAtMs = cursor.getLong(12),
+            timing = ObservationTiming(cursor.getLong(13), cursor.getLong(14), cursor.getLong(15)),
+            confidence = if (cursor.isNull(16)) null else cursor.getDouble(16),
+            stability = ContextStability.valueOf(cursor.getString(17)), motionState = MotionState.valueOf(cursor.getString(18)),
+            sceneFingerprint = if (cursor.isNull(19)) null else cursor.getString(19), summary = if (cursor.isNull(20)) null else cursor.getString(20),
         )
     }
 

@@ -50,3 +50,17 @@ For the first live MVP harness, Atlas will support command-backed adapters selec
 The command seam is intentionally an edge integration path. It lets the CLI call local OpenClaw/Android wrappers without importing OpenClaw runtime/tool APIs into `@atlas/core`.
 
 This is not the final daemon/runtime shape. It is a low-friction bridge for proving the loop, gathering latency/timing data, and keeping provider/device boundaries honest before building a persistent native runtime.
+
+## 2026-09-03 — Android-owned runtime supersedes the bridge
+
+The native Android app is the v0.1 product direction. OpenClaw and its camera bridge remain historical prototype adapters; neither owns the mobile session nor defines the media contract. Atlas Core on the phone owns lifecycle, capture, freshness, heartbeat, interaction, routing, and the audit trail.
+
+Captured camera files are normalized behind `MediaRepository`. Raw camera output is temporary. Durable observations reference an opaque private artifact with dimensions, size, digest, purpose, and processing latency. Provider adapters receive image bytes, never Android filesystem paths.
+
+## 2026-09-03 — BYOI plus an optional metered Atlas Cloud adapter
+
+Bring-your-own inference remains usable without an Atlas identity or Atlas-operated service. Atlas Cloud is an optional provider endpoint, not a session runtime or control plane.
+
+Managed inference uses user authentication and a server-held inference credential. Product pricing is expressed through an internal integer credit ledger. Each call atomically reserves a maximum charge and settles against provider-reported usage. Stripe subscriptions grant recurring allowance; one-time purchases grant non-expiring credit blocks. Capability routes and rates remain server configuration so the Android runtime is not coupled to provider model names.
+
+Modulo integration remains deferred until Atlas's phone-owned loop is independently dependable and Modulo presents a stable adapter target.

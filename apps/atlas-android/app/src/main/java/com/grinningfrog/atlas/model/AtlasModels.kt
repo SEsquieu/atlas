@@ -8,6 +8,7 @@ enum class RouteCapability { FAST, VISION, REASONING, FALLBACK }
 enum class ContextStability { STABLE, TRANSITIONING, UNKNOWN }
 enum class MotionState { STATIONARY, HANDHELD_STABLE, TURNING, WALKING, VEHICLE, UNKNOWN }
 enum class PermissionPolicy { NEVER, USER_REQUEST, ACTIVE_SESSION }
+enum class MediaPurpose { HEARTBEAT, STANDARD_VISION, DETAIL_VISION }
 
 data class SessionPermissions(
     val observe: Boolean = true,
@@ -35,10 +36,32 @@ data class ObservationTiming(
     val providerMs: Long? = null,
 )
 
+data class MediaRef(
+    val id: String,
+    val storageKey: String,
+    val mimeType: String,
+    val width: Int,
+    val height: Int,
+    val byteSize: Long,
+    val sha256: String,
+    val purpose: MediaPurpose,
+    val rawByteSize: Long,
+    val processingMs: Long,
+)
+
+data class InferenceImage(
+    val mediaId: String,
+    val mimeType: String,
+    val width: Int,
+    val height: Int,
+    val sha256: String,
+    val bytes: ByteArray,
+)
+
 data class VisualObservation(
     val id: String = UUID.randomUUID().toString(),
     val sessionId: String,
-    val mediaPath: String,
+    val media: MediaRef,
     val observedAtMs: Long,
     val availableAtMs: Long,
     val timing: ObservationTiming,
@@ -81,6 +104,7 @@ data class InferenceRequest(
     val systemPrompt: String,
     val userText: String,
     val observation: VisualObservation? = null,
+    val image: InferenceImage? = null,
     val contextNote: String? = null,
 )
 

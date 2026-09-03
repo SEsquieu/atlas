@@ -10,14 +10,14 @@ Native Kotlin is deliberate for the POC: foreground-service rules, CameraX lifec
 flowchart TD
     UI["Android reference UI"] --> Core["Atlas session service"]
     Core --> Device["Camera · mic · speech · sensors"]
-    Core --> Store["SQLite event and observation store"]
+    Core --> Store["SQLite + private media repository"]
     Core --> Policy["Freshness · heartbeat · action policy"]
     Policy --> Router["Capability router"]
     Router --> BYOI["Local · LAN · user cloud"]
-    Router -. future .-> Managed["Authenticated managed gateway"]
+    Router --> Managed["Optional authenticated gateway"]
 ```
 
-The solid arrows exist in the POC. The managed gateway does not.
+All solid arrows now have repository implementations. The managed gateway is optional deployment plumbing, not a hosted production service in this repository.
 
 ## Ownership boundary
 
@@ -25,14 +25,14 @@ The solid arrows exist in the POC. The managed gateway does not.
 | --- | --- | --- |
 | Session ID, lifecycle, goal | Owns | Receives scoped prompt context |
 | Device permissions | Owns and enforces | Cannot grant or bypass |
-| Observation media and timestamps | Captures and stores | Receives selected sample |
+| Observation media and timestamps | Normalizes, budgets, hashes, stores, and selects | Receives bytes for one selected sample; never a device path |
 | Context freshness | Computes before inference | Must respect supplied age |
 | Heartbeat schedule | Owns | Reviews selected changes only |
 | Tool execution | Authorizes, executes, records | May eventually propose calls |
 | Speech and interruption | Owns | Produces candidate response text |
 | Provider failover | Owns capability route | Is one replaceable endpoint |
 | Audit and replay | Owns ordered event stream | Correlates through request ID |
-| Billing and entitlements | Future app/control-plane seam | Never represented by a shared secret in the app |
+| Billing and entitlements | Optional account adapter; never session authority | Gateway meters user credits; provider secret stays server-side |
 
 ## Runtime lifecycle
 
@@ -52,11 +52,17 @@ The local event table uses an auto-incrementing sequence. Wall-clock timestamps 
 6. Atlas preserves a textual answer even if speech synthesis fails; speech can be interrupted locally.
 7. Heartbeat independently adapts observation cadence to motion, battery, and thermal pressure. Deterministic scene difference gates model review and unsolicited speech defaults off.
 
-## Commercial seam without premature SaaS
+## Media boundary
 
-Direct BYOI is the default and does not require an Atlas account. A managed plan can later be represented as a provider endpoint whose credential is a short-lived user token, not the operator's model API key. The server side would need authentication, entitlement checks, quotas, per-request metering, provider-key custody, abuse controls, and cost observability.
+Camera output first lands in a temporary cache file. Core then performs sampled decode, EXIF correction, proportional resizing, iterative JPEG compression, and further downscaling until the artifact meets its purpose-specific pixel and byte budget. Only that normalized artifact is committed to app-private storage. Observation persistence uses an opaque storage key plus integrity and performance metadata; providers receive an in-memory image value.
 
-That system is intentionally absent until the device loop is good enough to justify selling. The client-side boundary exists now so introducing it later does not require changing session semantics.
+This makes image cost and upload latency bounded inputs to policy rather than accidental properties of a phone camera. Heartbeats use the smallest budget, normal questions use a middle budget, and high-risk/detail refreshes may use the largest budget.
+
+## Optional commercial seam
+
+Direct BYOI is the default and does not require an Atlas account. The optional `apps/atlas-cloud` adapter uses a short-lived Supabase user token, never the operator's model key. It provides capability routing, reserve/settle credit metering, a subscription allowance, and one-time credit blocks. Stripe grants and inference charges are idempotent ledger entries.
+
+The gateway owns identity, entitlement, metering, and provider-key custody only. It receives no durable Atlas session and cannot schedule a heartbeat, operate a device, or execute a tool. Public operation still requires rate limiting, abuse controls, reconciliation, alerts, legal/payment policy, and a deliberate pricing configuration.
 
 ## Legitimate v0.1 boundary
 
@@ -82,7 +88,7 @@ Experiments to keep out of v0.1:
 - multi-device session handoff;
 - generalized memory/sidecar systems;
 - provider marketplaces or model benchmarking;
-- Atlas-hosted frontier inference and subscription infrastructure;
+- additional managed inference providers, tiers, or a generalized model marketplace;
 - premature shared cross-platform UI architecture.
 
 The next milestone is not more adapters. It is making this one loop dependable, legible, safe, and pleasant on a phone.

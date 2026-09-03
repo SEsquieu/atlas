@@ -16,6 +16,7 @@ The Android POC currently includes:
 - a foreground, device-owned session service;
 - durable SQLite sessions, observations, and monotonically ordered events;
 - CameraX capture plus motion-aware freshness decisions;
+- a Core-owned media repository that rotates, downsizes, recompresses, hashes, and enforces per-purpose byte budgets before inference;
 - voice input and interruptible spoken responses;
 - resource-aware heartbeat and deterministic scene-change gating;
 - capability routes (`fast`, `vision`, `reasoning`, `fallback`);
@@ -23,7 +24,9 @@ The Android POC currently includes:
 - Android Keystore-encrypted provider credentials; and
 - in-app session, inference, health, context, and event-stream views.
 
-It intentionally does **not** include an Atlas-hosted frontier model, account system, billing system, remote control plane, or Modulo dependency. A future paid managed-inference gateway belongs behind the existing provider boundary and must use user authentication, metering, quotas, and server-held credentials.
+`apps/atlas-cloud` is the optional managed-inference seam: Supabase authentication, a server-held provider key, capability routes, atomic credit metering, Stripe subscriptions, and purchasable credit blocks. It is not required for BYOI and does not own physical-session state. It must be deployed and configured before the managed card in the Android app is enabled.
+
+Atlas intentionally does **not** depend on Modulo, a remote session control plane, or a hosted device-state service.
 
 ## Run the Android POC
 
@@ -32,6 +35,8 @@ Open [`apps/atlas-android`](./apps/atlas-android) as a project in Android Studio
 Configure an OpenAI-compatible endpoint in the app. For LAN inference, use the computer's LAN address from a phone; `10.0.2.2` is only the Android emulator's alias for its host.
 
 See [`apps/atlas-android/README.md`](./apps/atlas-android/README.md) for setup and compatibility details and [`docs/android-runtime-architecture.md`](./docs/android-runtime-architecture.md) for the architecture and release boundary.
+
+See [`apps/atlas-cloud/README.md`](./apps/atlas-cloud/README.md) for the optional managed-inference gateway and billing setup.
 
 ## TypeScript prototype
 

@@ -46,6 +46,10 @@ class SecureSettings(context: Context) {
 
     fun apiKey(endpoint: ProviderEndpoint): String? = SecretStore.get(endpoint.apiKeyAlias ?: endpoint.id, prefs)
 
+    fun putSecret(alias: String, value: String) = SecretStore.put(alias, value, prefs)
+    fun secret(alias: String): String? = SecretStore.get(alias, prefs)
+    fun removeSecret(alias: String) = SecretStore.remove(alias, prefs)
+
     fun saveRoutes(routes: RouteTable) = prefs.edit().putString("routes", JSONObject().apply {
         put("fast", JSONArray(routes.fast)); put("vision", JSONArray(routes.vision)); put("reasoning", JSONArray(routes.reasoning)); put("fallback", JSONArray(routes.fallback))
     }.toString()).apply()

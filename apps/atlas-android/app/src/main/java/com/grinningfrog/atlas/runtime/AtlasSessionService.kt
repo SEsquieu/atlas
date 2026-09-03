@@ -48,14 +48,14 @@ class AtlasSessionService : LifecycleService() {
 
         val app = application as AtlasApplication
         val motion = MotionMonitor(this)
-        val camera = CameraController(this, this, motion)
+        val camera = CameraController(this, this, motion, app.mediaRepository)
         val speech = SpeechController(this)
         val health = DeviceHealthMonitor(this, motion)
         val router = CapabilityRouter(
             backend = OpenAiCompatibleBackend(),
             endpoints = app.settings::loadProviders,
             routes = app.settings::loadRoutes,
-            apiKey = app.settings::apiKey,
+            apiKey = { endpoint -> if (endpoint.id == com.grinningfrog.atlas.cloud.ManagedAccountClient.ENDPOINT_ID) app.managedAccount.accessToken() else app.settings.apiKey(endpoint) },
             onAttempt = { endpoint, success, error ->
                 app.database.loadLatestSession()?.let { session ->
                     app.database.appendEvent(session.id, "provider.route_attempted", JSONObject().apply {
@@ -67,7 +67,7 @@ class AtlasSessionService : LifecycleService() {
                 }
             },
         )
-        runtime = AtlasMobileRuntime(app.database, camera, speech, motion, health, router, serviceScope)
+        runtime = AtlasMobileRuntime(app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope)
         serviceScope.launch {
             runCatching { runtime.initialize() }.onFailure { error ->
                 app.database.loadLatestSession()?.let { session ->
