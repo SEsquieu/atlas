@@ -24,7 +24,7 @@ The Android POC currently includes:
 - Android Keystore-encrypted provider credentials; and
 - in-app session, inference, health, context, and event-stream views.
 
-`apps/atlas-cloud` is the optional managed-inference seam: Supabase authentication, a server-held provider key, capability routes, atomic credit metering, Stripe subscriptions, and purchasable credit blocks. It is not required for BYOI and does not own physical-session state. It must be deployed and configured before the managed card in the Android app is enabled.
+`apps/atlas-cloud` is the optional managed-inference seam: Supabase authentication, a server-held provider key, deterministic risk/latency-aware model selection, atomic credit metering, Stripe subscriptions, and purchasable credit blocks. It is not required for BYOI and does not own physical-session state. It must be deployed and configured before the managed card in the Android app is enabled.
 
 Atlas intentionally does **not** depend on Modulo, a remote session control plane, or a hosted device-state service.
 
@@ -37,6 +37,7 @@ Configure an OpenAI-compatible endpoint in the app. For LAN inference, use the c
 See [`apps/atlas-android/README.md`](./apps/atlas-android/README.md) for setup and compatibility details and [`docs/android-runtime-architecture.md`](./docs/android-runtime-architecture.md) for the architecture and release boundary.
 
 See [`apps/atlas-cloud/README.md`](./apps/atlas-cloud/README.md) for the optional managed-inference gateway and billing setup.
+See [`docs/model-routing.md`](./docs/model-routing.md) for the two-layer provider/model routing boundary and calibration rules.
 
 ## TypeScript prototype
 

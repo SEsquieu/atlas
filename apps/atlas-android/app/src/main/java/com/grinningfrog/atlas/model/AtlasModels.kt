@@ -5,6 +5,8 @@ import java.util.UUID
 enum class SessionStatus { IDLE, ACTIVE, PAUSED, DONE, ERROR }
 enum class RuntimePhase { STOPPED, STARTING, READY, LISTENING, CAPTURING, THINKING, SPEAKING, DEGRADED, ERROR }
 enum class RouteCapability { FAST, VISION, REASONING, FALLBACK }
+enum class InferenceRisk { NORMAL, ELEVATED, SAFETY_CRITICAL }
+enum class LatencyClass { LATENCY_CRITICAL, INTERACTIVE, BACKGROUND }
 enum class ContextStability { STABLE, TRANSITIONING, UNKNOWN }
 enum class MotionState { STATIONARY, HANDHELD_STABLE, TURNING, WALKING, VEHICLE, UNKNOWN }
 enum class PermissionPolicy { NEVER, USER_REQUEST, ACTIVE_SESSION }
@@ -106,6 +108,8 @@ data class InferenceRequest(
     val observation: VisualObservation? = null,
     val image: InferenceImage? = null,
     val contextNote: String? = null,
+    val risk: InferenceRisk = InferenceRisk.NORMAL,
+    val latencyClass: LatencyClass = LatencyClass.INTERACTIVE,
 )
 
 data class InferenceResponse(
@@ -114,6 +118,10 @@ data class InferenceResponse(
     val text: String,
     val latencyMs: Long,
     val degraded: Boolean = false,
+    val selectedModel: String? = null,
+    val routingProfile: String? = null,
+    val routingReason: String? = null,
+    val routingRevision: String? = null,
 )
 
 data class AtlasEvent(

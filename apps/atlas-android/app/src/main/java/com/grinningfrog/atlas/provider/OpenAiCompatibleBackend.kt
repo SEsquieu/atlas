@@ -33,6 +33,8 @@ class OpenAiCompatibleBackend(
             .header("Content-Type", "application/json")
             .header("X-Atlas-Request-Id", request.requestId)
             .header("X-Atlas-Capability", request.capability.name.lowercase())
+            .header("X-Atlas-Risk", request.risk.name.lowercase())
+            .header("X-Atlas-Latency-Class", request.latencyClass.name.lowercase())
             .apply { request.observation?.media?.purpose?.let { header("X-Atlas-Media-Purpose", it.name.lowercase()) } }
             .apply { if (!apiKey.isNullOrBlank()) header("Authorization", "Bearer $apiKey") }
             .post(payload.toString().toRequestBody("application/json".toMediaType()))
@@ -48,7 +50,16 @@ class OpenAiCompatibleBackend(
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) throw InferenceUnavailableException("${endpoint.name} returned HTTP ${response.code}: ${body.take(300)}")
             val text = extractText(body) ?: throw InferenceUnavailableException("${endpoint.name} returned no assistant text")
-            InferenceResponse(request.requestId, endpoint.id, text, elapsedMs(started))
+            InferenceResponse(
+                requestId = request.requestId,
+                endpointId = endpoint.id,
+                text = text,
+                latencyMs = elapsedMs(started),
+                selectedModel = response.header("X-Atlas-Model"),
+                routingProfile = response.header("X-Atlas-Profile"),
+                routingReason = response.header("X-Atlas-Route-Reason"),
+                routingRevision = response.header("X-Atlas-Route-Revision"),
+            )
         }
     }
 

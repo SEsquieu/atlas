@@ -77,8 +77,12 @@ The POC uses non-streaming OpenAI-compatible chat completions:
 - vision requests include a base64 data URL in an `image_url` content part;
 - `Authorization: Bearer …` is omitted when no key is configured;
 - `X-Atlas-Request-Id` supports cross-system tracing.
+- `X-Atlas-Capability`, `X-Atlas-Risk`, `X-Atlas-Latency-Class`, and `X-Atlas-Media-Purpose` describe the job without naming a vendor model.
+- compatible gateways may return `X-Atlas-Model`, `X-Atlas-Profile`, `X-Atlas-Route-Reason`, and `X-Atlas-Route-Revision`; Core records them in the event log.
 
 Routes are expressed as capabilities, not model names. The initial UI adds each configured endpoint to `fast`, `reasoning`, and `fallback`, and adds image-capable endpoints to `vision`. Core tries routes in order and records each attempt.
+
+See [`../../docs/model-routing.md`](../../docs/model-routing.md) for the managed model-selection policy. Direct OpenAI-compatible endpoints may ignore the Atlas headers.
 
 ## Known POC limitations
 

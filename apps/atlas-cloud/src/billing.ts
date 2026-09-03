@@ -1,18 +1,8 @@
-import { z } from "zod";
 import { env } from "./env";
-
-const ratesSchema = z.record(z.string(), z.object({ inputCreditsPerMillion: z.number().nonnegative(), outputCreditsPerMillion: z.number().nonnegative() }));
-const routesSchema = z.object({ fast: z.string(), vision: z.string(), reasoning: z.string(), fallback: z.string() });
-
-export type Capability = "fast" | "vision" | "reasoning" | "fallback";
-
-export function routedModel(capability: string) {
-  const routes = routesSchema.parse(JSON.parse(env().ATLAS_MODEL_ROUTES_JSON));
-  return routes[(capability.toLowerCase() as Capability) in routes ? capability.toLowerCase() as Capability : "fallback"];
-}
+import { parseModelCatalog } from "./model-router";
 
 export function usageChargeMicros(model: string, inputTokens: number, outputTokens: number) {
-  const rate = ratesSchema.parse(JSON.parse(env().ATLAS_MODEL_RATES_JSON))[model];
+  const rate = parseModelCatalog(env().ATLAS_MODEL_CATALOG_JSON).find((candidate) => candidate.id === model);
   if (!rate) throw new Error(`No Atlas credit rate configured for ${model}`);
   return usageChargeForRate(rate, inputTokens, outputTokens);
 }

@@ -146,14 +146,21 @@ class AtlasMobileRuntime(
 
         publish(phase = RuntimePhase.THINKING)
         val capability = if (freshness.useCase != VisualUseCase.NONE) RouteCapability.VISION else RouteCapability.REASONING
+        val risk = when (freshness.useCase) {
+            VisualUseCase.HIGH_RISK -> com.grinningfrog.atlas.model.InferenceRisk.SAFETY_CRITICAL
+            VisualUseCase.NAVIGATION -> com.grinningfrog.atlas.model.InferenceRisk.ELEVATED
+            else -> com.grinningfrog.atlas.model.InferenceRisk.NORMAL
+        }
         val request = InferenceRequest(
             sessionId = session.id, capability = capability,
             systemPrompt = systemPrompt(session), userText = text,
             observation = if (capability == RouteCapability.VISION) observation else null,
             image = if (capability == RouteCapability.VISION) observation?.let { mediaRepository.inferenceImage(it.media) } else null,
             contextNote = observation?.let { "Observed ${System.currentTimeMillis() - it.observedAtMs}ms ago; stability=${it.stability}; motion=${it.motionState}." },
+            risk = risk,
         )
-        database.appendEvent(session.id, "provider.requested", JSONObject().put("turnId", turnId).put("requestId", request.requestId).put("capability", capability.name))
+        database.appendEvent(session.id, "provider.requested", JSONObject().put("turnId", turnId).put("requestId", request.requestId)
+            .put("capability", capability.name).put("risk", request.risk.name).put("latencyClass", request.latencyClass.name))
         try {
             val response = router.route(request)
             if (generation.get() != operationGeneration || mutableState.value.session?.status != SessionStatus.ACTIVE) {
@@ -161,7 +168,9 @@ class AtlasMobileRuntime(
                 return@withLock
             }
             database.appendEvent(session.id, "provider.responded", JSONObject().put("turnId", turnId).put("requestId", request.requestId)
-                .put("endpointId", response.endpointId).put("latencyMs", response.latencyMs).put("degraded", response.degraded).put("text", response.text))
+                .put("endpointId", response.endpointId).put("model", response.selectedModel).put("routingProfile", response.routingProfile)
+                .put("routingReason", response.routingReason).put("routingRevision", response.routingRevision)
+                .put("latencyMs", response.latencyMs).put("degraded", response.degraded).put("text", response.text))
             publish(response = response.text, error = null, phase = RuntimePhase.READY)
             if (voice || session.permissions.speakResponses) speakLocked(session, response.text)
         } catch (error: Exception) {
@@ -238,11 +247,16 @@ class AtlasMobileRuntime(
             userText = "Briefly assess this changed scene. Mention only an immediately useful or safety-relevant change; otherwise reply NO_ACTION.",
             observation = observation, contextNote = "Deterministic scene delta=$delta",
             image = mediaRepository.inferenceImage(observation.media),
+            risk = com.grinningfrog.atlas.model.InferenceRisk.ELEVATED,
+            latencyClass = com.grinningfrog.atlas.model.LatencyClass.BACKGROUND,
         )
-        database.appendEvent(session.id, "provider.requested", JSONObject().put("source", "heartbeat").put("requestId", request.requestId).put("capability", "FAST"))
+        database.appendEvent(session.id, "provider.requested", JSONObject().put("source", "heartbeat").put("requestId", request.requestId)
+            .put("capability", "FAST").put("risk", request.risk.name).put("latencyClass", request.latencyClass.name))
         runCatching { router.route(request) }.onSuccess { response ->
             database.appendEvent(session.id, "provider.responded", JSONObject().put("source", "heartbeat").put("requestId", request.requestId)
-                .put("endpointId", response.endpointId).put("latencyMs", response.latencyMs).put("text", response.text))
+                .put("endpointId", response.endpointId).put("model", response.selectedModel).put("routingProfile", response.routingProfile)
+                .put("routingReason", response.routingReason).put("routingRevision", response.routingRevision)
+                .put("latencyMs", response.latencyMs).put("text", response.text))
             if (!response.text.equals("NO_ACTION", ignoreCase = true) && session.permissions.proactiveSpeech) {
                 scope.launch { operations.withLock { speakLocked(session, response.text) } }
             } else database.appendEvent(session.id, "agent.speech_suppressed", JSONObject().put("source", "heartbeat").put("text", response.text))

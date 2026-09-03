@@ -13,8 +13,8 @@ const schema = z.object({
   ATLAS_SUBSCRIPTION_CREDITS_MICROS: z.coerce.number().int().positive(),
   ATLAS_CREDIT_BLOCK_CREDITS_MICROS: z.coerce.number().int().positive(),
   ATLAS_MAX_REQUEST_CREDITS_MICROS: z.coerce.number().int().positive(),
-  ATLAS_MODEL_ROUTES_JSON: z.string(),
-  ATLAS_MODEL_RATES_JSON: z.string(),
+  ATLAS_MODEL_CATALOG_JSON: z.string(),
+  ATLAS_MODEL_CATALOG_REVISION: z.string().min(1),
 });
 
 export function env() { return schema.parse(process.env); }
