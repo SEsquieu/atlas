@@ -26,6 +26,7 @@ export const modelCatalogSchema = z.array(z.object({
   id: z.string().min(1),
   enabled: z.boolean().default(true),
   supportsVision: z.boolean(),
+  supportsTools: z.boolean().default(true),
   reasoningEfforts: z.array(reasoningEffortSchema).min(1),
   quality: qualitySchema,
   speed: z.number().min(0).max(1),
@@ -48,6 +49,7 @@ export interface RoutingIntent {
   latencyClass: LatencyClass;
   mediaPurpose: MediaPurpose;
   hasImage: boolean;
+  requiresTools?: boolean;
 }
 
 export interface ModelSelection {
@@ -102,10 +104,11 @@ export function selectModel(intent: RoutingIntent, catalog: ModelCatalogEntry[])
   const minimumQuality = qualityFloor(intent.risk);
   const eligible = catalog.filter((model) => model.enabled)
     .filter((model) => !intent.hasImage || model.supportsVision)
+    .filter((model) => !intent.requiresTools || model.supportsTools)
     .filter((model) => model.reasoningEfforts.includes(effort))
     .filter((model) => model.quality[intent.capability] >= minimumQuality);
   if (eligible.length === 0) {
-    throw new NoEligibleModelError(`No enabled model satisfies image=${intent.hasImage}, reasoning=${effort}, and quality>=${minimumQuality}`);
+    throw new NoEligibleModelError(`No enabled model satisfies image=${intent.hasImage}, tools=${Boolean(intent.requiresTools)}, reasoning=${effort}, and quality>=${minimumQuality}`);
   }
 
   const routeWeights = weights(intent);

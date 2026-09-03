@@ -80,7 +80,7 @@ class ManagedAccountClient(context: Context, private val settings: SecureSetting
 
     fun endpoint() = ProviderEndpoint(
         id = ENDPOINT_ID, name = "Atlas Cloud", baseUrl = "${gateway()}/api", model = "atlas/auto",
-        apiKeyAlias = null, supportsVision = true, supportsTools = false, timeoutMs = 90_000,
+        apiKeyAlias = null, supportsVision = true, supportsTools = true, timeoutMs = 90_000,
     )
 
     private suspend fun authenticate(url: String, email: String, password: String) = withBusy {

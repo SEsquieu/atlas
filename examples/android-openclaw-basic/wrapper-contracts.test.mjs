@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -267,6 +267,11 @@ async function createFakeOpenClawInvoke(name, response) {
     `#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ...${JSON.stringify(response)}, argv: process.argv.slice(2) }) + '\\n');\n`,
     'utf8'
   );
+  if (process.platform !== 'win32') {
+    const shim = path.join(fakeNpmDir, 'openclaw');
+    await writeFile(shim, `#!/bin/sh\nexec "${process.execPath}" "${path.join(fakeModuleDir, 'openclaw.mjs')}" "$@"\n`, 'utf8');
+    await chmod(shim, 0o755);
+  }
   return process.platform === 'win32' ? path.join(fakeNpmDir, 'openclaw.cmd') : path.join(fakeNpmDir, 'openclaw');
 }
 
@@ -279,6 +284,11 @@ async function createFakeOpenClawCamera(name) {
     `#!/usr/bin/env node\nimport fs from 'node:fs';\nconst argv = process.argv.slice(2);\nif (argv[0] === 'nodes' && argv[1] === 'camera' && argv[2] === 'snap') {\n  const imagePath = process.env.FAKE_OPENCLAW_IMAGE_PATH;\n  fs.writeFileSync(imagePath, 'fake image bytes');\n  process.stdout.write('MEDIA:' + imagePath + '\\n');\n  process.exit(0);\n}\nif (argv[0] === 'infer') {\n  process.stderr.write('cold infer should not be used when worker registry is healthy\\n');\n  process.exit(99);\n}\nprocess.stdout.write(JSON.stringify({ ok: true, argv }) + '\\n');\n`,
     'utf8'
   );
+  if (process.platform !== 'win32') {
+    const shim = path.join(fakeNpmDir, 'openclaw');
+    await writeFile(shim, `#!/bin/sh\nexec "${process.execPath}" "${path.join(fakeModuleDir, 'openclaw.mjs')}" "$@"\n`, 'utf8');
+    await chmod(shim, 0o755);
+  }
   return process.platform === 'win32' ? path.join(fakeNpmDir, 'openclaw.cmd') : path.join(fakeNpmDir, 'openclaw');
 }
 

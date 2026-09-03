@@ -12,6 +12,7 @@ media-cache/
 
 # Android / IntelliJ
 .gradle/
+.kotlin/
 .idea/
 local.properties
 *.iml

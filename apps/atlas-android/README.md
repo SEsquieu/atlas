@@ -18,10 +18,11 @@ The default APK leaves Atlas Cloud disabled. A gateway deployment can enable acc
 1. Grant camera, microphone, and notification access. Atlas acquires camera, microphone, speech, and motion resources on session start/resume and releases them on pause/end.
 2. Open **Inference** and add an endpoint name, base URL, model, and optional API key.
 3. Mark the endpoint as image-capable only if its chat-completions API accepts an `image_url` content part.
-4. Open **Session**, enter a durable goal, and start. New sessions begin with **Live Context** off.
-5. Tap **Observe**, type a question, or tap **Ask** for speech recognition.
-6. Enable **Live Context** only when Atlas should maintain rolling physical context in the background.
-7. Inspect **Events** to see the ordered session trace.
+4. Mark it tool-capable only if it accepts OpenAI-compatible function tools and returns assistant `tool_calls`.
+5. Open **Session**, enter a durable goal, and start. New sessions begin with **Live Context** off.
+6. Tap **Observe**, type a question, or tap **Ask** for speech recognition.
+7. Enable **Live Context** only when Atlas should maintain rolling physical context in the background.
+8. Inspect **Events** to see the ordered session trace.
 
 Examples of base URLs:
 
@@ -86,26 +87,32 @@ This is not yet production privacy UX. Before external beta, Atlas needs retenti
 
 ## Provider contract
 
-The POC uses non-streaming OpenAI-compatible chat completions:
+The POC uses non-streaming OpenAI-compatible chat completions and function tools:
 
-- text requests contain system and user messages;
+- text requests contain the bounded Atlas-owned conversation, not a provider-owned thread;
 - vision requests include a base64 data URL in an `image_url` content part;
+- tool-capable endpoints receive JSON-schema function definitions and must return standard assistant `tool_calls`;
+- Atlas records, authorizes, executes, and returns `role: tool` results in subsequent model steps;
 - `Authorization: Bearer …` is omitted when no key is configured;
 - `X-Atlas-Request-Id` supports cross-system tracing.
 - `X-Atlas-Capability`, `X-Atlas-Risk`, `X-Atlas-Latency-Class`, and `X-Atlas-Media-Purpose` describe the job without naming a vendor model.
 - compatible gateways may return `X-Atlas-Model`, `X-Atlas-Profile`, `X-Atlas-Route-Reason`, and `X-Atlas-Route-Revision`; Core records them in the event log.
 
-Routes are expressed as capabilities, not model names. The initial UI adds each configured endpoint to `fast`, `reasoning`, and `fallback`, and adds image-capable endpoints to `vision`. Core tries routes in order and records each attempt.
+Routes are expressed as capabilities, not model names. The initial UI adds each configured endpoint to `fast`, `reasoning`, and `fallback`, and adds image-capable endpoints to `vision`. Tool-bearing steps only use endpoints that explicitly advertise support. Core retries another route only when the prior attempt is known not to have been accepted; ambiguous outcomes stop to avoid duplicate cost.
+
+Existing endpoint cards expose **Vision** and **Tools** capability toggles. Enable **Tools** only when the endpoint implements OpenAI-compatible function calling; Atlas will continue to use a text-only endpoint for conversation but will never send it a tool-bearing step.
+
+See [`../../docs/agent-runtime.md`](../../docs/agent-runtime.md) for turn persistence, context assembly, memory admission, tools, recovery, and loop budgets.
 
 See [`../../docs/model-routing.md`](../../docs/model-routing.md) for the managed model-selection policy. Direct OpenAI-compatible endpoints may ignore the Atlas headers.
 
 ## Known POC limitations
 
 - The UI does not yet reorder routes or assign separate endpoints per capability.
-- Chat completions are non-streaming and tool-call responses are not yet supported.
+- Chat completions are non-streaming.
 - Speech recognition uses the Android-installed recognition service and may itself be cloud-backed.
 - A single latest session is resumed after process restart.
-- Session permissions use conservative defaults and are not yet editable or persisted per session.
+- Session permissions use conservative persisted defaults but are not yet editable in the UI.
 - Observation retention is unbounded.
 - There is no signed release build or Play distribution. Atlas Cloud plumbing exists but is not a production service until deployed, configured, abuse-protected, and operationally monitored.
 

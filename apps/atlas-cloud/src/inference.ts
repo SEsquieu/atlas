@@ -16,8 +16,27 @@ const contentPart = z.union([
     }),
   }),
 ]);
+const toolCall = z.object({
+  id: z.string().min(1).max(200),
+  type: z.literal("function"),
+  function: z.object({ name: z.string().min(1).max(100), arguments: z.string().max(16_384) }),
+});
+const toolDefinition = z.object({
+  type: z.literal("function"),
+  function: z.object({
+    name: z.string().min(1).max(100),
+    description: z.string().max(2_000).optional(),
+    parameters: z.record(z.string(), z.unknown()),
+  }),
+});
 const requestSchema = z.object({
-  messages: z.array(z.object({ role: z.enum(["system", "user", "assistant"]), content: z.union([z.string().max(20_000), z.array(contentPart).max(4)]) })).min(1).max(24),
+  messages: z.array(z.object({
+    role: z.enum(["system", "user", "assistant", "tool"]),
+    content: z.union([z.string().max(32_000), z.array(contentPart).max(4), z.null()]),
+    tool_call_id: z.string().max(200).optional(),
+    tool_calls: z.array(toolCall).max(12).optional(),
+  })).min(1).max(48),
+  tools: z.array(toolDefinition).max(32).optional(),
 });
 
 export async function runInference(request: Request, userId: string) {
@@ -31,9 +50,10 @@ export async function runInference(request: Request, userId: string) {
   const latencyClass = latencyClassSchema.catch("interactive").parse(request.headers.get("x-atlas-latency-class") ?? "interactive");
   const mediaPurpose = mediaPurposeSchema.catch("standard_vision").parse(request.headers.get("x-atlas-media-purpose") ?? "standard_vision");
   const hasImage = body.messages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === "image_url"));
+  const requiresTools = body.tools !== undefined && body.tools.length > 0;
   let selection: ReturnType<typeof selectModel>;
   try {
-    selection = selectModel({ capability, risk, latencyClass, mediaPurpose, hasImage }, parseModelCatalog(env().ATLAS_MODEL_CATALOG_JSON));
+    selection = selectModel({ capability, risk, latencyClass, mediaPurpose, hasImage, requiresTools }, parseModelCatalog(env().ATLAS_MODEL_CATALOG_JSON));
   } catch (error) {
     if (error instanceof NoEligibleModelError) throw new HttpError(503, error.message, "no_eligible_model");
     throw error;
@@ -42,33 +62,36 @@ export async function runInference(request: Request, userId: string) {
   const routeRevision = `${env().ATLAS_MODEL_CATALOG_REVISION}/policy-${MODEL_ROUTER_POLICY_VERSION}`;
   console.info("atlas.model.selected", {
     requestId, model, routeRevision, capability, risk, latencyClass, mediaPurpose,
-    hasImage, profile: selection.profile, score: selection.score, eligibleCount: selection.eligibleCount,
+    hasImage, requiresTools, profile: selection.profile, score: selection.score, eligibleCount: selection.eligibleCount,
   });
   const reserved = env().ATLAS_MAX_REQUEST_CREDITS_MICROS;
   await reserveCredits(userId, requestId, reserved);
   const started = performance.now();
   try {
-    const system = body.messages.filter((message) => message.role === "system").map((message) => typeof message.content === "string" ? message.content : "").join("\n\n");
-    const turns = body.messages.filter((message) => message.role !== "system").map((message) => ({
-      role: message.role,
-      content: typeof message.content === "string" ? message.content : message.content.map((part) => part.type === "text"
-        ? { type: "input_text", text: part.text }
-        : { type: "input_image", image_url: part.image_url.url, detail: selection.imageDetail }),
-    }));
-    const response = await openai().responses.create({
-      model,
-      instructions: system || undefined,
-      input: turns as never,
-      max_output_tokens: selection.maxOutputTokens,
-      reasoning: { effort: selection.reasoningEffort },
+    const normalizedMessages = body.messages.map((message) => {
+      if (Array.isArray(message.content)) {
+        return { ...message, content: message.content.map((part) => part.type === "text"
+          ? { type: "text", text: part.text }
+          : { type: "image_url", image_url: { url: part.image_url.url, detail: selection.imageDetail } }) };
+      }
+      return message;
     });
-    const inputTokens = response.usage?.input_tokens ?? 0;
-    const outputTokens = response.usage?.output_tokens ?? 0;
+    const response = await openai().chat.completions.create({
+      model,
+      messages: normalizedMessages as never,
+      tools: body.tools as never,
+      max_completion_tokens: selection.maxOutputTokens,
+      reasoning_effort: selection.reasoningEffort === "none" ? "low" : selection.reasoningEffort as never,
+    });
+    const inputTokens = response.usage?.prompt_tokens ?? 0;
+    const outputTokens = response.usage?.completion_tokens ?? 0;
     const charge = usageChargeMicros(model, inputTokens, outputTokens);
     await settleCredits({ userId, requestId, reserved, actual: charge, model, inputTokens, outputTokens, latencyMs: Math.round(performance.now() - started), status: "succeeded" });
     return Response.json({
-      id: response.id, object: "chat.completion", created: Math.floor(Date.now() / 1000), model,
-      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: response.output_text } }],
+      id: response.id, object: "chat.completion", created: response.created, model,
+      choices: response.choices.map((choice) => ({ index: choice.index, finish_reason: choice.finish_reason, message: {
+        role: "assistant", content: choice.message.content, tool_calls: choice.message.tool_calls,
+      } })),
       usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens },
     }, { headers: {
       "X-Atlas-Request-Id": requestId,

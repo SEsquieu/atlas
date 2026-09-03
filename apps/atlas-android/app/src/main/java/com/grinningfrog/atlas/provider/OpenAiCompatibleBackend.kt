@@ -3,7 +3,11 @@ package com.grinningfrog.atlas.provider
 import android.util.Base64
 import com.grinningfrog.atlas.model.InferenceRequest
 import com.grinningfrog.atlas.model.InferenceResponse
+import com.grinningfrog.atlas.model.InferenceMessage
+import com.grinningfrog.atlas.model.MessageRole
 import com.grinningfrog.atlas.model.ProviderEndpoint
+import com.grinningfrog.atlas.model.ToolCallProposal
+import com.grinningfrog.atlas.model.ToolDefinition
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Call
 import okhttp3.Callback
@@ -14,6 +18,8 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.net.ConnectException
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -28,10 +34,8 @@ class OpenAiCompatibleBackend(
             put("model", endpoint.model)
             put("stream", false)
             put("temperature", 0.2)
-            put("messages", JSONArray().apply {
-                put(JSONObject().put("role", "system").put("content", request.systemPrompt))
-                put(JSONObject().put("role", "user").put("content", userContent(request)))
-            })
+            put("messages", requestMessages(request))
+            if (request.tools.isNotEmpty()) put("tools", JSONArray(request.tools.map(::toolJson)))
         }
         val httpRequest = Request.Builder()
             .url(chatCompletionsUrl(endpoint.baseUrl))
@@ -40,6 +44,7 @@ class OpenAiCompatibleBackend(
             .header("X-Atlas-Capability", request.capability.name.lowercase())
             .header("X-Atlas-Risk", request.risk.name.lowercase())
             .header("X-Atlas-Latency-Class", request.latencyClass.name.lowercase())
+            .header("X-Atlas-Requires-Tools", (request.tools.isNotEmpty()).toString())
             .apply { request.observation?.media?.purpose?.let { header("X-Atlas-Media-Purpose", it.name.lowercase()) } }
             .apply { if (!apiKey.isNullOrBlank()) header("Authorization", "Bearer $apiKey") }
             .post(payload.toString().toRequestBody("application/json".toMediaType()))
@@ -51,19 +56,32 @@ class OpenAiCompatibleBackend(
             .callTimeout(endpoint.timeoutMs, TimeUnit.MILLISECONDS)
             .build()
 
-        return client.newCall(httpRequest).await().use { response ->
+        val networkResponse = try {
+            client.newCall(httpRequest).await()
+        } catch (error: IOException) {
+            val definitelyNotAccepted = error is ConnectException || error is UnknownHostException
+            throw InferenceUnavailableException("${endpoint.name} request failed: ${error.message ?: error.javaClass.simpleName}", error, outcomeAmbiguous = !definitelyNotAccepted)
+        }
+        return networkResponse.use { response ->
             val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) throw InferenceUnavailableException("${endpoint.name} returned HTTP ${response.code}: ${body.take(300)}")
-            val text = extractText(body) ?: throw InferenceUnavailableException("${endpoint.name} returned no assistant text")
+            if (!response.isSuccessful) {
+                val safeToTryAnotherRoute = response.code in setOf(401, 403, 404, 429)
+                throw InferenceUnavailableException("${endpoint.name} returned HTTP ${response.code}: ${body.take(300)}", outcomeAmbiguous = !safeToTryAnotherRoute)
+            }
+            val parsed = parseAssistant(body)
+            if (parsed.text.isBlank() && parsed.toolCalls.isEmpty()) throw InferenceUnavailableException("${endpoint.name} returned neither assistant text nor tool calls")
             InferenceResponse(
                 requestId = request.requestId,
                 endpointId = endpoint.id,
-                text = text,
+                text = parsed.text,
                 latencyMs = elapsedMs(started),
                 selectedModel = response.header("X-Atlas-Model"),
                 routingProfile = response.header("X-Atlas-Profile"),
                 routingReason = response.header("X-Atlas-Route-Reason"),
                 routingRevision = response.header("X-Atlas-Route-Revision"),
+                toolCalls = parsed.toolCalls,
+                finishReason = parsed.finishReason,
+                providerContinuationId = parsed.responseId,
             )
         }
     }
@@ -81,23 +99,66 @@ class OpenAiCompatibleBackend(
         })
     }
 
-    private fun userContent(request: InferenceRequest): Any {
+    private fun requestMessages(request: InferenceRequest): JSONArray {
+        val source = request.messages.ifEmpty { listOf(InferenceMessage(MessageRole.USER, request.userText)) }
+        val result = JSONArray().put(JSONObject().put("role", "system").put("content", request.systemPrompt))
+        val attachToLastUser = request.image != null && source.lastOrNull()?.role == MessageRole.USER
+        source.forEachIndexed { index, message ->
+            val attachImage = attachToLastUser && index == source.lastIndex
+            result.put(messageJson(message, request.takeIf { attachImage }))
+        }
+        if (request.image != null && !attachToLastUser) {
+            result.put(JSONObject().put("role", "user").put("content", imageContent(request, "Atlas tool supplied this current observation.")))
+        }
+        return result
+    }
+
+    private fun messageJson(message: InferenceMessage, imageRequest: InferenceRequest?): JSONObject = JSONObject().apply {
+        put("role", message.role.name.lowercase())
+        when (message.role) {
+            MessageRole.TOOL -> {
+                put("content", message.content); put("tool_call_id", requireNotNull(message.toolCallId))
+            }
+            MessageRole.ASSISTANT -> {
+                put("content", message.content.ifBlank { JSONObject.NULL })
+                if (message.toolCalls.isNotEmpty()) put("tool_calls", JSONArray(message.toolCalls.map { proposal ->
+                    JSONObject().put("id", proposal.id).put("type", "function").put("function", JSONObject().put("name", proposal.name).put("arguments", proposal.argumentsJson))
+                }))
+            }
+            MessageRole.USER -> put("content", imageRequest?.let { imageContent(it, message.content) } ?: message.content)
+        }
+    }
+
+    private fun imageContent(request: InferenceRequest, text: String): JSONArray {
         val image = request.image
-        if (image == null) return listOfNotNull(request.userText, request.contextNote).joinToString("\n\n")
+            ?: return JSONArray().put(JSONObject().put("type", "text").put("text", text))
         val encoded = Base64.encodeToString(image.bytes, Base64.NO_WRAP)
         return JSONArray().apply {
             put(JSONObject().put("type", "text").put("text", buildString {
-                append(request.userText)
+                append(text)
                 request.contextNote?.let { append("\n\nAtlas context: ").append(it) }
             }))
             put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:${image.mimeType};base64,$encoded")))
         }
     }
 
-    private fun extractText(raw: String): String? = runCatching {
+    private fun toolJson(tool: ToolDefinition) = JSONObject().put("type", "function").put("function", JSONObject().apply {
+        put("name", tool.name); put("description", tool.description); put("parameters", JSONObject(tool.parametersJson))
+    })
+
+    private data class ParsedAssistant(
+        val text: String,
+        val toolCalls: List<ToolCallProposal>,
+        val finishReason: String?,
+        val responseId: String?,
+    )
+
+    private fun parseAssistant(raw: String): ParsedAssistant = runCatching {
         val root = JSONObject(raw)
-        val content = root.getJSONArray("choices").getJSONObject(0).getJSONObject("message").opt("content")
-        when (content) {
+        val choice = root.getJSONArray("choices").getJSONObject(0)
+        val message = choice.getJSONObject("message")
+        val content = message.opt("content")
+        val text = when (content) {
             is String -> content.trim().ifBlank { null }
             is JSONArray -> buildList {
                 for (index in 0 until content.length()) {
@@ -106,8 +167,16 @@ class OpenAiCompatibleBackend(
                 }
             }.joinToString("\n").trim().ifBlank { null }
             else -> null
-        }
-    }.getOrNull()
+        }.orEmpty()
+        val toolCalls = message.optJSONArray("tool_calls")?.let { array -> buildList {
+            for (index in 0 until array.length()) {
+                val item = array.getJSONObject(index)
+                val function = item.getJSONObject("function")
+                add(ToolCallProposal(item.getString("id"), function.getString("name"), function.optString("arguments", "{}")))
+            }
+        } }.orEmpty()
+        ParsedAssistant(text, toolCalls, choice.optString("finish_reason").ifBlank { null }, root.optString("id").ifBlank { null })
+    }.getOrElse { throw InferenceUnavailableException("Provider returned malformed assistant output", it, outcomeAmbiguous = true) }
 
     private fun chatCompletionsUrl(baseUrl: String): String {
         val normalized = baseUrl.trim().trimEnd('/')

@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.History
@@ -39,7 +40,6 @@ import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
@@ -84,12 +84,15 @@ import com.grinningfrog.atlas.data.SecureSettings
 import com.grinningfrog.atlas.cloud.ManagedAccountClient
 import com.grinningfrog.atlas.media.MediaRepository
 import com.grinningfrog.atlas.model.AtlasEvent
+import com.grinningfrog.atlas.model.MessageKind
+import com.grinningfrog.atlas.model.MessageRole
 import com.grinningfrog.atlas.model.ContextMode
 import com.grinningfrog.atlas.model.ProviderEndpoint
 import com.grinningfrog.atlas.model.RouteTable
 import com.grinningfrog.atlas.model.RuntimePhase
 import com.grinningfrog.atlas.model.RuntimeSnapshot
 import com.grinningfrog.atlas.model.SessionStatus
+import com.grinningfrog.atlas.model.ToolCallStatus
 import com.grinningfrog.atlas.runtime.AtlasMobileRuntime
 import com.grinningfrog.atlas.runtime.AtlasSessionService
 import kotlinx.coroutines.launch
@@ -325,13 +328,75 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
             }
         }
 
-        if (snapshot.latestResponse != null) item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Atlas", fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(6.dp))
-                    Text(snapshot.latestResponse)
-                    if (snapshot.phase == RuntimePhase.SPEAKING) TextButtonCompact("Stop speaking") { runtime.stopSpeaking() }
+        val dialogue = snapshot.messages.filter { it.kind == MessageKind.DIALOGUE && it.content.isNotBlank() }.takeLast(30)
+        if (dialogue.isNotEmpty()) {
+            item { Text("Conversation", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+            items(dialogue, key = { it.id }) { message ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.role == MessageRole.USER) Arrangement.End else Arrangement.Start) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(.88f),
+                        colors = CardDefaults.cardColors(containerColor = if (message.role == MessageRole.USER) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer),
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text(if (message.role == MessageRole.USER) "You" else "Atlas", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
+                            Spacer(Modifier.height(4.dp)); Text(message.content)
+                        }
+                    }
+                }
+            }
+            if (snapshot.phase == RuntimePhase.SPEAKING) item { TextButtonCompact("Stop speaking") { runtime.stopSpeaking() } }
+        }
+
+        snapshot.activeTurn?.let { turn ->
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                    Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Agent turn · ${turn.status.name.lowercase().replace('_', ' ')}", fontWeight = FontWeight.SemiBold)
+                            Text("step ${turn.stepCount} · durable turn ${turn.id.take(8)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (turn.status != com.grinningfrog.atlas.model.TurnStatus.WAITING_FOR_CONFIRMATION) {
+                            OutlinedButton({ runtime.cancelActiveTurn() }) { Text("Cancel") }
+                        }
+                    }
+                }
+            }
+        }
+
+        items(snapshot.pendingToolCalls.filter { it.status == ToolCallStatus.WAITING_FOR_CONFIRMATION }, key = { it.id }) { call ->
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = .65f))) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Atlas wants permission", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(call.name, fontWeight = FontWeight.SemiBold)
+                    call.reason?.let { Text(it) }
+                    Text(call.argumentsJson.take(500), style = MaterialTheme.typography.bodySmall)
+                    Text("Risk: ${call.risk.name.lowercase().replace('_', ' ')}", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button({ runAction { runtime.resolveToolCall(call.id, true) } }) { Text("Allow") }
+                        OutlinedButton({ runAction { runtime.resolveToolCall(call.id, false) } }) { Text("Decline") }
+                    }
+                }
+            }
+        }
+
+        if (snapshot.pendingToolCalls.any { it.status == ToolCallStatus.UNKNOWN }) item {
+            NoticeCard("Tool outcome needs review", "Atlas was restarted while a tool was running. It will not retry the action automatically.")
+        }
+
+        if (snapshot.memories.isNotEmpty()) item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text("What Atlas is carrying forward", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    snapshot.memories.take(12).forEach { memory ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(memory.kind.name.lowercase(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                Text(memory.content, style = MaterialTheme.typography.bodySmall)
+                            }
+                            TextButtonCompact("Forget") { runtime.forgetMemory(memory.id) }
+                        }
+                    }
+                    snapshot.sessionSummary?.let { Text("Older conversation checkpointed through message ${it.throughMessageSequence}.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
         }
@@ -345,17 +410,17 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
                 value = prompt,
                 onValueChange = { prompt = it },
                 label = { Text("Ask about here and now") },
-                enabled = active,
+                enabled = active && snapshot.activeTurn == null,
                 modifier = Modifier.fillMaxWidth(),
-                trailingIcon = { IconButton(enabled = active && prompt.isNotBlank(), onClick = { val text = prompt; prompt = ""; runAction { runtime.ask(text) } }) { Icon(Icons.Default.Send, "Send") } },
+                trailingIcon = { IconButton(enabled = active && snapshot.activeTurn == null && prompt.isNotBlank(), onClick = { val text = prompt; prompt = ""; runAction { runtime.ask(text) } }) { Icon(Icons.AutoMirrored.Filled.Send, "Send") } },
                 keyboardActions = KeyboardActions(onSend = { if (prompt.isNotBlank()) { val text = prompt; prompt = ""; runAction { runtime.ask(text) } } }),
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Send),
             )
         }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button({ runAction { runtime.listenAndAsk() } }, enabled = active, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Mic, null); Text(" Ask") }
-                OutlinedButton({ runAction { runtime.captureNow() } }, enabled = active, modifier = Modifier.weight(1f)) { Icon(Icons.Default.CameraAlt, null); Text(" Observe") }
+                Button({ runAction { runtime.listenAndAsk() } }, enabled = active && snapshot.activeTurn == null, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Mic, null); Text(" Ask") }
+                OutlinedButton({ runAction { runtime.captureNow() } }, enabled = active && snapshot.activeTurn == null, modifier = Modifier.weight(1f)) { Icon(Icons.Default.CameraAlt, null); Text(" Observe") }
             }
         }
         item { HealthCard(snapshot) }
@@ -369,6 +434,7 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
     var model by remember { mutableStateOf("") }
     var apiKey by remember { mutableStateOf("") }
     var vision by remember { mutableStateOf(true) }
+    var tools by remember { mutableStateOf(true) }
 
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
@@ -390,8 +456,23 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(endpoint.name, fontWeight = FontWeight.SemiBold)
-                        Text("${endpoint.model} · ${if (endpoint.supportsVision) "vision + text" else "text"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${endpoint.model} · ${listOfNotNull("text", "vision".takeIf { endpoint.supportsVision }, "tools".takeIf { endpoint.supportsTools }).joinToString(" + ")}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(endpoint.baseUrl, style = MaterialTheme.typography.bodySmall)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(endpoint.supportsVision, { enabled ->
+                                settings.updateProviderCapabilities(endpoint.id, enabled, endpoint.supportsTools)
+                                val all = settings.loadProviders()
+                                val ids = all.map { it.id }
+                                settings.saveRoutes(RouteTable(ids, all.filter { it.supportsVision }.map { it.id }, ids, ids))
+                                onChanged()
+                            })
+                            Text("Vision")
+                            Checkbox(endpoint.supportsTools, { enabled ->
+                                settings.updateProviderCapabilities(endpoint.id, endpoint.supportsVision, enabled)
+                                onChanged()
+                            })
+                            Text("Tools")
+                        }
                     }
                     TextButtonCompact("Remove") {
                         settings.deleteProvider(endpoint.id)
@@ -413,11 +494,14 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(vision, { vision = it }); Text("Endpoint accepts image input")
                     }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(tools, { tools = it }); Text("Endpoint supports OpenAI-compatible tool calls")
+                    }
                     Button(
                         enabled = name.isNotBlank() && baseUrl.isNotBlank() && model.isNotBlank(),
                         onClick = {
                             val id = UUID.randomUUID().toString()
-                            settings.saveProvider(ProviderEndpoint(id, name.trim(), baseUrl.trim(), model.trim(), id, supportsVision = vision), apiKey)
+                            settings.saveProvider(ProviderEndpoint(id, name.trim(), baseUrl.trim(), model.trim(), id, supportsVision = vision, supportsTools = tools), apiKey)
                             val all = settings.loadProviders()
                             val allIds = all.map { it.id }
                             settings.saveRoutes(RouteTable(allIds, all.filter { it.supportsVision }.map { it.id }, allIds, allIds))

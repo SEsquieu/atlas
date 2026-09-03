@@ -15,6 +15,7 @@ function model(id: string, values: Partial<ModelCatalogEntry> = {}): ModelCatalo
     id,
     enabled: true,
     supportsVision: true,
+    supportsTools: true,
     reasoningEfforts: ["none", "low", "medium", "high"],
     quality: { fast: 0.8, vision: 0.8, reasoning: 0.8, fallback: 0.8 },
     speed: 0.8,
@@ -59,6 +60,15 @@ test("hard constraints reject models without the required modality or effort", (
     model("eligible"),
   ]);
   assert.equal(result.model.id, "eligible");
+  assert.equal(result.eligibleCount, 1);
+});
+
+test("tool-capable work excludes models without function calling", () => {
+  const result = selectModel({ ...baseIntent, requiresTools: true }, [
+    model("fast-text", { supportsTools: false, speed: 1 }),
+    model("agent", { supportsTools: true }),
+  ]);
+  assert.equal(result.model.id, "agent");
   assert.equal(result.eligibleCount, 1);
 });
 

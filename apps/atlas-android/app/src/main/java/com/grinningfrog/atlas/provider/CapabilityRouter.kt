@@ -13,11 +13,23 @@ class CapabilityRouter(
     private val apiKey: suspend (ProviderEndpoint) -> String?,
     private val onAttempt: suspend (endpoint: ProviderEndpoint, success: Boolean, error: String?) -> Unit = { _, _, _ -> },
 ) {
+    fun hasToolCapableRoute(request: InferenceRequest): Boolean {
+        return hasToolCapableRoute(request.capability, request.image != null)
+    }
+
+    fun hasToolCapableRoute(capability: com.grinningfrog.atlas.model.RouteCapability, requiresVision: Boolean): Boolean {
+        val configured = endpoints().associateBy { it.id }
+        return routes().candidates(capability).mapNotNull(configured::get).any {
+            it.supportsTools && (!requiresVision || it.supportsVision)
+        }
+    }
+
     suspend fun route(request: InferenceRequest): InferenceResponse {
         val configured = endpoints().associateBy { it.id }
         val candidates = routes().candidates(request.capability)
             .mapNotNull(configured::get)
             .filter { request.image == null || it.supportsVision }
+            .filter { request.tools.isEmpty() || it.supportsTools }
         if (candidates.isEmpty()) throw InferenceUnavailableException("No endpoint is configured for ${request.capability.name.lowercase()}")
 
         val failures = mutableListOf<String>()
@@ -32,6 +44,7 @@ class CapabilityRouter(
                 val message = error.message ?: error::class.java.simpleName
                 failures += "${endpoint.name}: $message"
                 onAttempt(endpoint, false, message)
+                if (error !is InferenceUnavailableException || error.outcomeAmbiguous) throw error
             }
         }
         throw InferenceUnavailableException("All ${request.capability.name.lowercase()} routes failed: ${failures.joinToString("; ")}")

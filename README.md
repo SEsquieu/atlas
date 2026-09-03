@@ -14,7 +14,9 @@ There are now two implementation tracks in this repository:
 The Android POC currently includes:
 
 - a foreground, device-owned session service;
-- durable SQLite sessions, observations, and monotonically ordered events;
+- durable SQLite sessions, turns, messages, tool calls, admitted memory, observations, and monotonically ordered events;
+- provider-independent multi-turn context reconstruction with whole-turn truncation and rolling conversation checkpoints;
+- an iterative model/tool/model harness with policy, confirmation, idempotency, cancellation, and restart-safe failure states;
 - CameraX capture plus motion-aware freshness decisions;
 - a Core-owned media repository that rotates, downsizes, recompresses, hashes, and enforces per-purpose byte budgets before inference;
 - voice input and interruptible spoken responses;
@@ -34,7 +36,7 @@ Open [`apps/atlas-android`](./apps/atlas-android) as a project in Android Studio
 
 Configure an OpenAI-compatible endpoint in the app. For LAN inference, use the computer's LAN address from a phone; `10.0.2.2` is only the Android emulator's alias for its host.
 
-See [`apps/atlas-android/README.md`](./apps/atlas-android/README.md) for setup and compatibility details and [`docs/android-runtime-architecture.md`](./docs/android-runtime-architecture.md) for the architecture and release boundary.
+See [`apps/atlas-android/README.md`](./apps/atlas-android/README.md) for setup and compatibility details, [`docs/android-runtime-architecture.md`](./docs/android-runtime-architecture.md) for the mobile architecture, [`docs/agent-runtime.md`](./docs/agent-runtime.md) for the durable turn, memory, and tool contract, and [`docs/alpha-loop-test-plan.md`](./docs/alpha-loop-test-plan.md) for physical-device release gates.
 
 See [`apps/atlas-cloud/README.md`](./apps/atlas-cloud/README.md) for the optional managed-inference gateway and billing setup.
 See [`docs/model-routing.md`](./docs/model-routing.md) for the two-layer provider/model routing boundary and calibration rules.

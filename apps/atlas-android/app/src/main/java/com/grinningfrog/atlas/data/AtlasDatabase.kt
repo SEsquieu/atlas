@@ -5,19 +5,114 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.grinningfrog.atlas.model.AtlasEvent
+import com.grinningfrog.atlas.model.AgentTurn
+import com.grinningfrog.atlas.model.AtlasMessage
 import com.grinningfrog.atlas.model.AtlasSession
+import com.grinningfrog.atlas.model.AtlasToolCall
 import com.grinningfrog.atlas.model.ContextStability
 import com.grinningfrog.atlas.model.ContextMode
 import com.grinningfrog.atlas.model.MotionState
+import com.grinningfrog.atlas.model.MemoryItem
+import com.grinningfrog.atlas.model.MemoryKind
+import com.grinningfrog.atlas.model.MemoryStatus
+import com.grinningfrog.atlas.model.MessageKind
+import com.grinningfrog.atlas.model.MessageRole
 import com.grinningfrog.atlas.model.MediaPurpose
 import com.grinningfrog.atlas.model.MediaRef
 import com.grinningfrog.atlas.model.ObservationTiming
+import com.grinningfrog.atlas.model.PermissionPolicy
+import com.grinningfrog.atlas.model.SessionPermissions
 import com.grinningfrog.atlas.model.SessionStatus
+import com.grinningfrog.atlas.model.SessionSummary
+import com.grinningfrog.atlas.model.ToolCallStatus
+import com.grinningfrog.atlas.model.ToolRisk
+import com.grinningfrog.atlas.model.TurnStatus
 import com.grinningfrog.atlas.model.VisualObservation
 import org.json.JSONObject
 import java.util.UUID
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 3) {
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 5) {
+    private fun createAgentRuntimeTables(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS turns (
+                turn_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                trigger TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                step_count INTEGER NOT NULL DEFAULT 0,
+                error TEXT,
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+            )""".trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS turns_session_time ON turns(session_id, created_at DESC)")
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS messages (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT NOT NULL UNIQUE,
+                session_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                content TEXT NOT NULL,
+                tool_call_id TEXT,
+                tool_calls_json TEXT,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id),
+                FOREIGN KEY(turn_id) REFERENCES turns(turn_id)
+            )""".trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS messages_session_sequence ON messages(session_id, sequence)")
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS tool_calls (
+                tool_call_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                arguments_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                risk TEXT NOT NULL,
+                requires_confirmation INTEGER NOT NULL,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                reason TEXT,
+                result_json TEXT,
+                error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id),
+                FOREIGN KEY(turn_id) REFERENCES turns(turn_id)
+            )""".trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS tool_calls_turn_status ON tool_calls(turn_id, status)")
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS memory_items (
+                memory_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                content TEXT NOT NULL,
+                status TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                source_turn_id TEXT,
+                evidence_observation_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                expires_at INTEGER,
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+            )""".trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS memory_session_status ON memory_items(session_id, status, kind)")
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS session_summaries (
+                session_id TEXT PRIMARY KEY,
+                summary TEXT NOT NULL,
+                through_message_sequence INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+            )""".trimIndent()
+        )
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """CREATE TABLE sessions (
@@ -27,7 +122,8 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 status TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
-                context_mode TEXT NOT NULL DEFAULT 'MANUAL'
+                context_mode TEXT NOT NULL DEFAULT 'MANUAL',
+                permissions_json TEXT NOT NULL DEFAULT '{}'
             )""".trimIndent()
         )
         db.execSQL(
@@ -71,6 +167,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             )""".trimIndent()
         )
         db.execSQL("CREATE INDEX observations_session_time ON observations(session_id, observed_at DESC)")
+        createAgentRuntimeTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -90,6 +187,13 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             db.execSQL("ALTER TABLE sessions ADD COLUMN context_mode TEXT NOT NULL DEFAULT 'MANUAL'")
             db.execSQL("ALTER TABLE observations ADD COLUMN interpreted_at INTEGER")
         }
+        if (oldVersion < 4) {
+            db.execSQL("ALTER TABLE sessions ADD COLUMN permissions_json TEXT NOT NULL DEFAULT '{}'")
+            createAgentRuntimeTables(db)
+        }
+        if (oldVersion in 4 until 5) {
+            db.execSQL("ALTER TABLE memory_items ADD COLUMN evidence_observation_id TEXT")
+        }
     }
 
     @Synchronized
@@ -102,6 +206,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             insertOrThrow("sessions", null, ContentValues().apply {
                 put("session_id", session.id); put("name", name); put("goal", goal)
                 put("status", session.status.name); put("created_at", nowMs); put("updated_at", nowMs); put("context_mode", session.contextMode.name)
+                put("permissions_json", session.permissions.toJson().toString())
             })
             appendEventLocked(this, session.id, "session.created", nowMs, JSONObject().put("source", "atlas-android").toString())
         }
@@ -125,12 +230,12 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     fun loadLatestSession(): AtlasSession? = readableDatabase.rawQuery(
-        "SELECT session_id,name,goal,status,created_at,updated_at,context_mode FROM sessions ORDER BY updated_at DESC LIMIT 1", null
+        "SELECT session_id,name,goal,status,created_at,updated_at,context_mode,permissions_json FROM sessions ORDER BY updated_at DESC LIMIT 1", null
     ).use { cursor ->
         if (!cursor.moveToFirst()) null else AtlasSession(
             id = cursor.getString(0), name = cursor.getString(1), goal = cursor.getString(2),
             status = SessionStatus.valueOf(cursor.getString(3)), createdAtMs = cursor.getLong(4), updatedAtMs = cursor.getLong(5),
-            contextMode = ContextMode.valueOf(cursor.getString(6)),
+            contextMode = ContextMode.valueOf(cursor.getString(6)), permissions = permissionsFromJson(cursor.getString(7)),
         )
     }
 
@@ -216,7 +321,281 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             while (cursor.moveToNext()) add(AtlasEvent(cursor.getLong(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5)))
         }.reversed()
     }
+
+    @Synchronized
+    fun createTurn(sessionId: String, trigger: String, turnId: String = UUID.randomUUID().toString(), nowMs: Long = System.currentTimeMillis()): AgentTurn {
+        val turn = AgentTurn(turnId, sessionId, TurnStatus.CREATED, trigger, nowMs, nowMs)
+        writableDatabase.transaction {
+            insertOrThrow("turns", null, ContentValues().apply {
+                put("turn_id", turn.id); put("session_id", sessionId); put("status", turn.status.name)
+                put("trigger", trigger); put("created_at", nowMs); put("updated_at", nowMs); put("step_count", 0)
+            })
+            appendEventLocked(this, sessionId, "turn.created", nowMs, JSONObject().put("turnId", turn.id).put("trigger", trigger).toString())
+        }
+        return turn
+    }
+
+    @Synchronized
+    fun updateTurn(turnId: String, status: TurnStatus, stepCount: Int? = null, error: String? = null, nowMs: Long = System.currentTimeMillis()) {
+        writableDatabase.transaction {
+            val sessionId = checkNotNull(sessionIdForTurn(this, turnId)) { "Unknown turn $turnId" }
+            update("turns", ContentValues().apply {
+                put("status", status.name); put("updated_at", nowMs); if (stepCount != null) put("step_count", stepCount)
+                if (error == null) putNull("error") else put("error", error.take(1_000))
+            }, "turn_id = ?", arrayOf(turnId))
+            appendEventLocked(this, sessionId, "turn.${status.name.lowercase()}", nowMs, JSONObject().put("turnId", turnId).apply {
+                stepCount?.let { put("stepCount", it) }; error?.let { put("error", it.take(1_000)) }
+            }.toString())
+        }
+    }
+
+    fun loadTurn(turnId: String): AgentTurn? = readableDatabase.rawQuery(
+        "SELECT turn_id,session_id,status,trigger,created_at,updated_at,step_count,error FROM turns WHERE turn_id = ?", arrayOf(turnId)
+    ).use { cursor -> if (!cursor.moveToFirst()) null else cursor.toTurn() }
+
+    fun loadActiveTurn(sessionId: String): AgentTurn? = readableDatabase.rawQuery(
+        "SELECT turn_id,session_id,status,trigger,created_at,updated_at,step_count,error FROM turns WHERE session_id = ? AND status NOT IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY created_at DESC LIMIT 1",
+        arrayOf(sessionId),
+    ).use { cursor -> if (!cursor.moveToFirst()) null else cursor.toTurn() }
+
+    @Synchronized
+    fun insertMessage(message: AtlasMessage): AtlasMessage {
+        var sequence = 0L
+        writableDatabase.transaction {
+            sequence = insertOrThrow("messages", null, ContentValues().apply {
+                put("message_id", message.id); put("session_id", message.sessionId); put("turn_id", message.turnId)
+                put("role", message.role.name); put("kind", message.kind.name); put("content", message.content)
+                put("tool_call_id", message.toolCallId); put("tool_calls_json", message.toolCallsJson); put("created_at", message.createdAtMs)
+            })
+            appendEventLocked(this, message.sessionId, "message.recorded", message.createdAtMs, JSONObject().apply {
+                put("messageId", message.id); put("turnId", message.turnId); put("role", message.role.name.lowercase())
+                put("kind", message.kind.name.lowercase()); put("content", message.content)
+                message.toolCallId?.let { put("toolCallId", it) }
+            }.toString())
+        }
+        return message.copy(sequence = sequence)
+    }
+
+    fun loadMessages(sessionId: String, afterSequence: Long = 0, limit: Int = 80): List<AtlasMessage> = readableDatabase.rawQuery(
+        """SELECT sequence,message_id,session_id,turn_id,role,content,created_at,kind,tool_call_id,tool_calls_json
+            FROM messages WHERE session_id = ? AND sequence > ? ORDER BY sequence DESC LIMIT ?""".trimIndent(),
+        arrayOf(sessionId, afterSequence.toString(), limit.toString()),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toMessage()) }.reversed() }
+
+    /** Oldest-first page used by checkpointing so a failed backlog can never be skipped. */
+    fun loadMessagesForCompaction(sessionId: String, afterSequence: Long, limit: Int): List<AtlasMessage> = readableDatabase.rawQuery(
+        """SELECT sequence,message_id,session_id,turn_id,role,content,created_at,kind,tool_call_id,tool_calls_json
+            FROM messages WHERE session_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT ?""".trimIndent(),
+        arrayOf(sessionId, afterSequence.toString(), limit.toString()),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toMessage()) } }
+
+    fun messageCountAfter(sessionId: String, afterSequence: Long): Int = readableDatabase.rawQuery(
+        "SELECT COUNT(*) FROM messages WHERE session_id = ? AND sequence > ?", arrayOf(sessionId, afterSequence.toString())
+    ).use { cursor -> cursor.moveToFirst(); cursor.getInt(0) }
+
+    @Synchronized
+    fun insertToolCall(call: AtlasToolCall) {
+        writableDatabase.transaction {
+            insertOrThrow("tool_calls", null, ContentValues().apply {
+                put("tool_call_id", call.id); put("session_id", call.sessionId); put("turn_id", call.turnId); put("name", call.name)
+                put("arguments_json", call.argumentsJson); put("status", call.status.name); put("risk", call.risk.name)
+                put("requires_confirmation", if (call.requiresConfirmation) 1 else 0); put("idempotency_key", call.idempotencyKey)
+                put("reason", call.reason); put("created_at", call.createdAtMs); put("updated_at", call.updatedAtMs)
+            })
+            appendEventLocked(this, call.sessionId, "tool.proposed", call.createdAtMs, JSONObject().apply {
+                put("turnId", call.turnId); put("toolCallId", call.id); put("tool", call.name); put("arguments", JSONObject(call.argumentsJson))
+                put("risk", call.risk.name.lowercase()); put("requiresConfirmation", call.requiresConfirmation)
+            }.toString())
+        }
+    }
+
+    @Synchronized
+    fun updateToolCall(callId: String, status: ToolCallStatus, resultJson: String? = null, error: String? = null, nowMs: Long = System.currentTimeMillis()) {
+        writableDatabase.transaction {
+            val call = loadToolCallLocked(this, callId) ?: error("Unknown tool call $callId")
+            update("tool_calls", ContentValues().apply {
+                put("status", status.name); put("updated_at", nowMs)
+                if (resultJson != null) put("result_json", resultJson); if (error != null) put("error", error.take(1_000))
+            }, "tool_call_id = ?", arrayOf(callId))
+            appendEventLocked(this, call.sessionId, "tool.${status.name.lowercase()}", nowMs, JSONObject().apply {
+                put("turnId", call.turnId); put("toolCallId", call.id); put("tool", call.name)
+                resultJson?.let { put("result", runCatching { JSONObject(it) }.getOrElse { it }) }; error?.let { put("error", it.take(1_000)) }
+            }.toString())
+        }
+    }
+
+    fun loadToolCall(callId: String): AtlasToolCall? = loadToolCallLocked(readableDatabase, callId)
+
+    fun loadPendingToolCalls(sessionId: String): List<AtlasToolCall> = readableDatabase.rawQuery(
+        """SELECT tool_call_id,session_id,turn_id,name,arguments_json,status,risk,requires_confirmation,idempotency_key,reason,result_json,error,created_at,updated_at
+            FROM tool_calls WHERE session_id = ? AND status IN ('PROPOSED','WAITING_FOR_CONFIRMATION','APPROVED','RUNNING','UNKNOWN') ORDER BY created_at""".trimIndent(), arrayOf(sessionId)
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toToolCall()) } }
+
+    fun loadTurnToolCalls(turnId: String): List<AtlasToolCall> = readableDatabase.rawQuery(
+        """SELECT tool_call_id,session_id,turn_id,name,arguments_json,status,risk,requires_confirmation,idempotency_key,reason,result_json,error,created_at,updated_at
+            FROM tool_calls WHERE turn_id = ? ORDER BY created_at""".trimIndent(), arrayOf(turnId)
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toToolCall()) } }
+
+    @Synchronized
+    fun markRunningToolsUnknown(turnId: String, reason: String, nowMs: Long = System.currentTimeMillis()) {
+        writableDatabase.transaction {
+            val sessionId = sessionIdForTurn(this, turnId) ?: return@transaction
+            val changed = update("tool_calls", ContentValues().apply {
+                put("status", ToolCallStatus.UNKNOWN.name); put("updated_at", nowMs); put("error", reason.take(1_000))
+            }, "turn_id = ? AND status = 'RUNNING'", arrayOf(turnId))
+            if (changed > 0) appendEventLocked(this, sessionId, "tool.unknown", nowMs, JSONObject().put("turnId", turnId).put("reason", reason).toString())
+        }
+    }
+
+    @Synchronized
+    fun cancelOpenSessionWork(sessionId: String, reason: String, nowMs: Long = System.currentTimeMillis()) {
+        writableDatabase.transaction {
+            update("turns", ContentValues().apply { put("status", TurnStatus.CANCELLED.name); put("updated_at", nowMs); put("error", reason.take(1_000)) },
+                "session_id = ? AND status NOT IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED')", arrayOf(sessionId))
+            update("tool_calls", ContentValues().apply { put("status", ToolCallStatus.REJECTED.name); put("updated_at", nowMs); put("error", reason.take(1_000)) },
+                "session_id = ? AND status IN ('PROPOSED','WAITING_FOR_CONFIRMATION','APPROVED')", arrayOf(sessionId))
+            appendEventLocked(this, sessionId, "runtime.open_work_cancelled", nowMs, JSONObject().put("reason", reason).toString())
+        }
+    }
+
+    @Synchronized
+    fun saveMemory(item: MemoryItem) {
+        writableDatabase.transaction {
+            insertWithOnConflict("memory_items", null, ContentValues().apply {
+                put("memory_id", item.id); put("session_id", item.sessionId); put("kind", item.kind.name); put("content", item.content)
+                put("status", item.status.name); put("confidence", item.confidence); put("source_turn_id", item.sourceTurnId)
+                put("evidence_observation_id", item.evidenceObservationId)
+                put("created_at", item.createdAtMs); put("updated_at", item.updatedAtMs); put("expires_at", item.expiresAtMs)
+            }, SQLiteDatabase.CONFLICT_REPLACE)
+            appendEventLocked(this, item.sessionId, "memory.${item.status.name.lowercase()}", item.updatedAtMs, JSONObject().apply {
+                put("memoryId", item.id); put("kind", item.kind.name.lowercase()); put("content", item.content)
+                put("confidence", item.confidence); item.sourceTurnId?.let { put("sourceTurnId", it) }
+                item.evidenceObservationId?.let { put("evidenceObservationId", it) }
+            }.toString())
+        }
+    }
+
+    @Synchronized
+    fun forgetMemory(memoryId: String, nowMs: Long = System.currentTimeMillis(), actorSessionId: String? = null) {
+        writableDatabase.transaction {
+            val sessionId = rawQuery("SELECT session_id FROM memory_items WHERE memory_id = ?", arrayOf(memoryId)).use { cursor ->
+                if (!cursor.moveToFirst()) null else cursor.getString(0)
+            } ?: return@transaction
+            update("memory_items", ContentValues().apply { put("status", MemoryStatus.FORGOTTEN.name); put("updated_at", nowMs) }, "memory_id = ?", arrayOf(memoryId))
+            appendEventLocked(this, sessionId, "memory.forgotten", nowMs, JSONObject().put("memoryId", memoryId).toString())
+            if (actorSessionId != null && actorSessionId != sessionId) {
+                appendEventLocked(this, actorSessionId, "memory.forgotten", nowMs, JSONObject().put("memoryId", memoryId).put("originSessionId", sessionId).toString())
+            }
+        }
+    }
+
+    fun memoryIsAccessible(memoryId: String, sessionId: String): Boolean = readableDatabase.rawQuery(
+        "SELECT 1 FROM memory_items WHERE memory_id = ? AND (session_id = ? OR kind = 'DURABLE') LIMIT 1",
+        arrayOf(memoryId, sessionId),
+    ).use { it.moveToFirst() }
+
+    fun accessibleMemoryKind(memoryId: String, sessionId: String): MemoryKind? = readableDatabase.rawQuery(
+        "SELECT kind FROM memory_items WHERE memory_id = ? AND (session_id = ? OR kind = 'DURABLE') LIMIT 1",
+        arrayOf(memoryId, sessionId),
+    ).use { cursor -> if (cursor.moveToFirst()) MemoryKind.valueOf(cursor.getString(0)) else null }
+
+    fun observationBelongsToSession(observationId: String, sessionId: String): Boolean = readableDatabase.rawQuery(
+        "SELECT 1 FROM observations WHERE observation_id = ? AND session_id = ? LIMIT 1",
+        arrayOf(observationId, sessionId),
+    ).use { it.moveToFirst() }
+
+    fun loadActiveMemories(sessionId: String, nowMs: Long = System.currentTimeMillis()): List<MemoryItem> = readableDatabase.rawQuery(
+        """SELECT memory_id,session_id,kind,content,status,confidence,source_turn_id,evidence_observation_id,created_at,updated_at,expires_at
+            FROM memory_items WHERE (session_id = ? OR kind = 'DURABLE') AND status = 'ACTIVE' AND (expires_at IS NULL OR expires_at > ?)
+            ORDER BY kind,updated_at DESC""".trimIndent(),
+        arrayOf(sessionId, nowMs.toString()),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toMemory()) } }
+
+    @Synchronized
+    fun saveSummary(summary: SessionSummary) {
+        writableDatabase.transaction {
+            insertWithOnConflict("session_summaries", null, ContentValues().apply {
+                put("session_id", summary.sessionId); put("summary", summary.summary)
+                put("through_message_sequence", summary.throughMessageSequence); put("updated_at", summary.updatedAtMs)
+            }, SQLiteDatabase.CONFLICT_REPLACE)
+            appendEventLocked(this, summary.sessionId, "memory.summary_checkpointed", summary.updatedAtMs, JSONObject().apply {
+                put("throughMessageSequence", summary.throughMessageSequence); put("summary", summary.summary)
+            }.toString())
+        }
+    }
+
+    fun loadSummary(sessionId: String): SessionSummary? = readableDatabase.rawQuery(
+        "SELECT session_id,summary,through_message_sequence,updated_at FROM session_summaries WHERE session_id = ?", arrayOf(sessionId)
+    ).use { cursor -> if (!cursor.moveToFirst()) null else SessionSummary(cursor.getString(0), cursor.getString(1), cursor.getLong(2), cursor.getLong(3)) }
+
+    /** Never retries an ambiguous external operation after process death. */
+    @Synchronized
+    fun recoverInterruptedRuntime(sessionId: String, nowMs: Long = System.currentTimeMillis()) {
+        writableDatabase.transaction {
+            val turnIds = mutableListOf<String>()
+            rawQuery("SELECT turn_id FROM turns WHERE session_id = ? AND status IN ('CREATED','ASSEMBLING_CONTEXT','WAITING_FOR_MODEL','EXECUTING_TOOL')", arrayOf(sessionId)).use { cursor ->
+                while (cursor.moveToNext()) turnIds += cursor.getString(0)
+            }
+            turnIds.forEach { turnId ->
+                update("turns", ContentValues().apply { put("status", TurnStatus.INTERRUPTED.name); put("updated_at", nowMs); put("error", "Interrupted by process restart; no external operation was retried") }, "turn_id = ?", arrayOf(turnId))
+                appendEventLocked(this, sessionId, "turn.interrupted", nowMs, JSONObject().put("turnId", turnId).put("reason", "process_restart").toString())
+            }
+            val unknown = update("tool_calls", ContentValues().apply { put("status", ToolCallStatus.UNKNOWN.name); put("updated_at", nowMs); put("error", "Outcome unknown after process restart") },
+                "session_id = ? AND status = 'RUNNING'", arrayOf(sessionId))
+            if (unknown > 0) appendEventLocked(this, sessionId, "tool.unknown", nowMs, JSONObject().put("reason", "process_restart").put("count", unknown).toString())
+            val cancelled = update("tool_calls", ContentValues().apply { put("status", ToolCallStatus.REJECTED.name); put("updated_at", nowMs); put("error", "Cancelled before execution by process restart") },
+                "session_id = ? AND status IN ('PROPOSED','APPROVED')", arrayOf(sessionId))
+            if (cancelled > 0) appendEventLocked(this, sessionId, "tool.pre_execution_cancelled", nowMs, JSONObject().put("reason", "process_restart").put("count", cancelled).toString())
+        }
+    }
+
+    private fun sessionIdForTurn(db: SQLiteDatabase, turnId: String): String? = db.rawQuery(
+        "SELECT session_id FROM turns WHERE turn_id = ?", arrayOf(turnId)
+    ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+
+    private fun loadToolCallLocked(db: SQLiteDatabase, callId: String): AtlasToolCall? = db.rawQuery(
+        """SELECT tool_call_id,session_id,turn_id,name,arguments_json,status,risk,requires_confirmation,idempotency_key,reason,result_json,error,created_at,updated_at
+            FROM tool_calls WHERE tool_call_id = ?""".trimIndent(), arrayOf(callId)
+    ).use { cursor -> if (!cursor.moveToFirst()) null else cursor.toToolCall() }
 }
+
+private fun android.database.Cursor.toTurn() = AgentTurn(
+    getString(0), getString(1), TurnStatus.valueOf(getString(2)), getString(3), getLong(4), getLong(5), getInt(6), if (isNull(7)) null else getString(7),
+)
+
+private fun android.database.Cursor.toMessage() = AtlasMessage(
+    getLong(0), getString(1), getString(2), getString(3), MessageRole.valueOf(getString(4)), getString(5), getLong(6),
+    MessageKind.valueOf(getString(7)), if (isNull(8)) null else getString(8), if (isNull(9)) null else getString(9),
+)
+
+private fun android.database.Cursor.toToolCall() = AtlasToolCall(
+    id = getString(0), sessionId = getString(1), turnId = getString(2), name = getString(3), argumentsJson = getString(4),
+    status = ToolCallStatus.valueOf(getString(5)), risk = ToolRisk.valueOf(getString(6)), requiresConfirmation = getInt(7) != 0,
+    idempotencyKey = getString(8), reason = if (isNull(9)) null else getString(9), resultJson = if (isNull(10)) null else getString(10),
+    error = if (isNull(11)) null else getString(11), createdAtMs = getLong(12), updatedAtMs = getLong(13),
+)
+
+private fun android.database.Cursor.toMemory() = MemoryItem(
+    getString(0), getString(1), MemoryKind.valueOf(getString(2)), getString(3), MemoryStatus.valueOf(getString(4)), getDouble(5),
+    if (isNull(6)) null else getString(6), if (isNull(7)) null else getString(7), getLong(8), getLong(9), if (isNull(10)) null else getLong(10),
+)
+
+private fun SessionPermissions.toJson() = JSONObject().apply {
+    put("observe", observe); put("captureImage", captureImage.name); put("microphone", microphone.name)
+    put("speakResponses", speakResponses); put("proactiveSpeech", proactiveSpeech)
+    put("externalActionsRequireConfirmation", externalActionsRequireConfirmation)
+}
+
+private fun permissionsFromJson(raw: String?) = runCatching {
+    val json = JSONObject(raw ?: "{}")
+    SessionPermissions(
+        observe = json.optBoolean("observe", true),
+        captureImage = PermissionPolicy.valueOf(json.optString("captureImage", PermissionPolicy.ACTIVE_SESSION.name)),
+        microphone = PermissionPolicy.valueOf(json.optString("microphone", PermissionPolicy.USER_REQUEST.name)),
+        speakResponses = json.optBoolean("speakResponses", true), proactiveSpeech = json.optBoolean("proactiveSpeech", false),
+        externalActionsRequireConfirmation = json.optBoolean("externalActionsRequireConfirmation", true),
+    )
+}.getOrElse { SessionPermissions() }
 
 private inline fun <T> SQLiteDatabase.transaction(block: SQLiteDatabase.() -> T): T {
     beginTransaction()

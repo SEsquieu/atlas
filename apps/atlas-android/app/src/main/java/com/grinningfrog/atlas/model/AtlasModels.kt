@@ -12,6 +12,16 @@ enum class ContextStability { STABLE, TRANSITIONING, UNKNOWN }
 enum class MotionState { STATIONARY, HANDHELD_STABLE, TURNING, WALKING, VEHICLE, UNKNOWN }
 enum class PermissionPolicy { NEVER, USER_REQUEST, ACTIVE_SESSION }
 enum class MediaPurpose { HEARTBEAT, STANDARD_VISION, DETAIL_VISION }
+enum class MessageRole { USER, ASSISTANT, TOOL }
+enum class MessageKind { DIALOGUE, TOOL_RESULT, INTERNAL }
+enum class TurnStatus {
+    CREATED, ASSEMBLING_CONTEXT, WAITING_FOR_MODEL, WAITING_FOR_CONFIRMATION,
+    EXECUTING_TOOL, COMPLETED, FAILED, CANCELLED, INTERRUPTED,
+}
+enum class ToolCallStatus { PROPOSED, WAITING_FOR_CONFIRMATION, APPROVED, RUNNING, COMPLETED, REJECTED, FAILED, UNKNOWN }
+enum class ToolRisk { READ_ONLY, SESSION_WRITE, PERSONAL_DATA, EXTERNAL_EFFECT }
+enum class MemoryKind { WORKING, TASK, ENVIRONMENT, DURABLE }
+enum class MemoryStatus { ACTIVE, SUPERSEDED, FORGOTTEN }
 
 data class SessionPermissions(
     val observe: Boolean = true,
@@ -62,6 +72,91 @@ data class InferenceImage(
     val bytes: ByteArray,
 )
 
+data class AtlasMessage(
+    val sequence: Long = 0,
+    val id: String = UUID.randomUUID().toString(),
+    val sessionId: String,
+    val turnId: String,
+    val role: MessageRole,
+    val content: String,
+    val createdAtMs: Long,
+    val kind: MessageKind = MessageKind.DIALOGUE,
+    val toolCallId: String? = null,
+    val toolCallsJson: String? = null,
+)
+
+data class AgentTurn(
+    val id: String,
+    val sessionId: String,
+    val status: TurnStatus,
+    val trigger: String,
+    val createdAtMs: Long,
+    val updatedAtMs: Long,
+    val stepCount: Int = 0,
+    val error: String? = null,
+)
+
+data class ToolDefinition(
+    val name: String,
+    val description: String,
+    val parametersJson: String,
+    val risk: ToolRisk,
+    val requiresConfirmation: Boolean = false,
+    val maxCallsPerTurn: Int = 2,
+)
+
+data class ToolCallProposal(
+    val id: String,
+    val name: String,
+    val argumentsJson: String,
+    val reason: String? = null,
+)
+
+data class AtlasToolCall(
+    val id: String,
+    val sessionId: String,
+    val turnId: String,
+    val name: String,
+    val argumentsJson: String,
+    val status: ToolCallStatus,
+    val risk: ToolRisk,
+    val requiresConfirmation: Boolean,
+    val idempotencyKey: String,
+    val reason: String? = null,
+    val resultJson: String? = null,
+    val error: String? = null,
+    val createdAtMs: Long,
+    val updatedAtMs: Long,
+)
+
+data class MemoryItem(
+    val id: String,
+    val sessionId: String,
+    val kind: MemoryKind,
+    val content: String,
+    val status: MemoryStatus,
+    val confidence: Double,
+    val sourceTurnId: String?,
+    val evidenceObservationId: String? = null,
+    val createdAtMs: Long,
+    val updatedAtMs: Long,
+    val expiresAtMs: Long? = null,
+)
+
+data class SessionSummary(
+    val sessionId: String,
+    val summary: String,
+    val throughMessageSequence: Long,
+    val updatedAtMs: Long,
+)
+
+data class InferenceMessage(
+    val role: MessageRole,
+    val content: String,
+    val toolCallId: String? = null,
+    val toolCalls: List<ToolCallProposal> = emptyList(),
+)
+
 data class VisualObservation(
     val id: String = UUID.randomUUID().toString(),
     val sessionId: String,
@@ -108,6 +203,10 @@ data class InferenceRequest(
     val capability: RouteCapability,
     val systemPrompt: String,
     val userText: String,
+    val turnId: String? = null,
+    val step: Int = 0,
+    val messages: List<InferenceMessage> = emptyList(),
+    val tools: List<ToolDefinition> = emptyList(),
     val observation: VisualObservation? = null,
     val image: InferenceImage? = null,
     val contextNote: String? = null,
@@ -125,6 +224,9 @@ data class InferenceResponse(
     val routingProfile: String? = null,
     val routingReason: String? = null,
     val routingRevision: String? = null,
+    val toolCalls: List<ToolCallProposal> = emptyList(),
+    val finishReason: String? = null,
+    val providerContinuationId: String? = null,
 )
 
 data class AtlasEvent(
@@ -154,4 +256,9 @@ data class RuntimeSnapshot(
     val nextHeartbeatAtMs: Long? = null,
     val deviceHealth: DeviceHealth = DeviceHealth(),
     val recentEvents: List<AtlasEvent> = emptyList(),
+    val messages: List<AtlasMessage> = emptyList(),
+    val activeTurn: AgentTurn? = null,
+    val pendingToolCalls: List<AtlasToolCall> = emptyList(),
+    val memories: List<MemoryItem> = emptyList(),
+    val sessionSummary: SessionSummary? = null,
 )

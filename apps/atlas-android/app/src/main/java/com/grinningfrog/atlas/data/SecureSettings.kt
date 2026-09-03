@@ -30,6 +30,13 @@ class SecureSettings(context: Context) {
         SecretStore.remove(endpoint?.apiKeyAlias ?: id, prefs)
     }
 
+    fun updateProviderCapabilities(id: String, supportsVision: Boolean, supportsTools: Boolean) {
+        val providers = loadProviders().map {
+            if (it.id == id) it.copy(supportsVision = supportsVision, supportsTools = supportsTools) else it
+        }
+        prefs.edit().putString("providers", JSONArray(providers.map(::endpointJson)).toString()).apply()
+    }
+
     fun loadProviders(): List<ProviderEndpoint> = runCatching {
         val array = JSONArray(prefs.getString("providers", "[]"))
         buildList {
@@ -55,7 +62,7 @@ class SecureSettings(context: Context) {
     }.toString()).apply()
 
     fun loadRoutes(): RouteTable = runCatching {
-        val json = JSONObject(prefs.getString("routes", "{}"))
+        val json = JSONObject(prefs.getString("routes", "{}") ?: "{}")
         RouteTable(json.strings("fast"), json.strings("vision"), json.strings("reasoning"), json.strings("fallback"))
     }.getOrDefault(RouteTable())
 

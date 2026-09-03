@@ -28,7 +28,7 @@ All solid arrows now have repository implementations. The managed gateway is opt
 | Observation media and timestamps | Normalizes, budgets, hashes, stores, and selects | Receives bytes for one selected sample; never a device path |
 | Context freshness | Computes before inference | Must respect supplied age |
 | Heartbeat schedule | Owns | Reviews selected changes only |
-| Tool execution | Authorizes, executes, records | May eventually propose calls |
+| Tool execution | Validates, authorizes, executes, records, and returns results | Proposes typed calls only |
 | Speech and interruption | Owns | Produces candidate response text |
 | Provider failover | Owns capability route | Is one replaceable endpoint |
 | Audit and replay | Owns ordered event stream | Correlates through request ID |
@@ -47,10 +47,12 @@ The local event table uses an auto-incrementing sequence. Wall-clock timestamps 
 1. User input is classified by whether it requires present visual context.
 2. Atlas evaluates observation age, motion, stability, risk, and expected refresh latency.
 3. Atlas captures when a current claim requires it; high-risk questions fail closed if refresh fails.
-4. Atlas selects a capability (`fast`, `vision`, or `reasoning`) and invokes configured endpoints in order.
-5. Atlas records request, route attempts, latency, result or failure, and lifecycle disposition.
-6. Atlas preserves a textual answer even if speech synthesis fails; speech can be interrupted locally.
-7. Live Context, when explicitly enabled, adapts observation cadence to motion, battery, and thermal pressure. Deterministic scene difference gates model review, a durable rolling window limits proactive inference, and unsolicited speech defaults off.
+4. Atlas reconstructs bounded multi-turn context from messages, admitted memory, a rolling checkpoint, and current physical state.
+5. Atlas selects a capability (`fast`, `vision`, or `reasoning`) and invokes a compatible endpoint.
+6. A provider may return a final answer or propose tools. Core validates, gates, executes, persists, and returns tool results until the turn completes or reaches a hard budget.
+7. Atlas records request, route attempts, latency, result or failure, and lifecycle disposition.
+8. Atlas preserves a textual answer even if speech synthesis fails; speech and an active inference turn can be interrupted locally.
+9. Live Context, when explicitly enabled, adapts observation cadence to motion, battery, and thermal pressure. Deterministic scene difference gates model review, a durable rolling window limits proactive inference, and unsolicited speech defaults off.
 
 New sessions use manual context mode. Manual mode performs no background capture or inference but retains explicit asks, voice requests, and Observe. Live mode is persisted with the session and visible in both the UI and foreground notification. Pausing or ending cancels its heartbeat immediately.
 
@@ -79,7 +81,7 @@ Must-have before tagging v0.1:
 - explicit per-capability route editor and connection test;
 - streaming response cancellation and strict request-size limits;
 - session permission editor plus retention, delete, and export controls;
-- structured tool proposal/authorization/execution boundary with one safe reference tool;
+- physical-device validation of the durable tool/confirmation/restart loop;
 - database migrations, crash recovery tests, and deterministic replay fixture;
 - network security configuration, privacy copy, and secret-handling review;
 - onboarding, troubleshooting, signed artifacts, and one end-to-end sample endpoint guide;
@@ -90,7 +92,7 @@ Experiments to keep out of v0.1:
 - Modulo integration or co-development;
 - autonomous background sessions without prominent user control;
 - multi-device session handoff;
-- generalized memory/sidecar systems;
+- embedding/vector retrieval and cross-device memory sync;
 - provider marketplaces or model benchmarking;
 - additional managed inference providers, tiers, or a generalized model marketplace;
 - premature shared cross-platform UI architecture.
