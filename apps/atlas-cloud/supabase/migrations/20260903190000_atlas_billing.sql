@@ -38,6 +38,9 @@ create table public.atlas_stripe_events (
   processed_at timestamptz not null default now()
 );
 
+create index atlas_credit_ledger_user_id_idx on public.atlas_credit_ledger(user_id);
+create index atlas_inference_usage_user_id_idx on public.atlas_inference_usage(user_id);
+
 alter table public.atlas_billing_accounts enable row level security;
 alter table public.atlas_credit_ledger enable row level security;
 alter table public.atlas_inference_usage enable row level security;
@@ -50,7 +53,7 @@ grant usage, select on all sequences in schema public to service_role;
 create or replace function public.atlas_reserve_credits(p_user_id uuid, p_request_id uuid, p_amount bigint)
 returns boolean
 language plpgsql
-security definer
+security invoker
 set search_path = ''
 as $$
 declare available bigint;
@@ -71,7 +74,7 @@ create or replace function public.atlas_settle_credits(
   p_input_tokens integer, p_output_tokens integer, p_latency_ms integer, p_status text
 ) returns void
 language plpgsql
-security definer
+security invoker
 set search_path = ''
 as $$
 declare refund bigint;
@@ -92,7 +95,7 @@ $$;
 create or replace function public.atlas_grant_credits(p_user_id uuid, p_amount bigint, p_reference text, p_kind text)
 returns void
 language plpgsql
-security definer
+security invoker
 set search_path = ''
 as $$
 begin
