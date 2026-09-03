@@ -8,3 +8,12 @@ coverage/
 .atlas-cache/
 .atlas-runs/
 media-cache/
+
+# Android / IntelliJ
+.gradle/
+.idea/
+local.properties
+*.iml
+apps/atlas-android/build/
+apps/atlas-android/app/build/
+captures/

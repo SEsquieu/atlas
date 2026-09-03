@@ -1,95 +1,50 @@
 # Atlas
 
-Atlas is a provider-agnostic physical agent loop framework.
+Atlas is a device-owned runtime for physical AI agents. It keeps a model situated in a changing physical environment without allowing the inference provider to own the session.
 
-It binds real-world devices — phones, cameras, microphones, speakers, GPS, and future sensors — to upstream agent runtimes so an agent can operate as a situated, living helper in the physical world.
+Atlas Core owns durable session state, device permissions, observations, context age and confidence, heartbeat policy, speech, tool execution, lifecycle, and the event log. Inference endpoints are replaceable downstream intelligence.
 
-Atlas is not an OpenClaw-native layer. OpenClaw is the first upstream provider adapter. Android is the first downstream device adapter.
+## Current implementation
 
-## MVP Stack
+There are now two implementation tracks in this repository:
 
-```text
-Android phone downstream
-  → Atlas device adapter
-  → Atlas session core
-  → Atlas OpenClaw provider adapter
-  → OpenClaw upstream runtime
-```
+- `apps/atlas-android` is the v0.1 direction: a native Android reference app that runs the physical session loop on the phone and connects directly to user-configured inference.
+- `packages/*` is the original TypeScript prototype. It contains useful session, freshness, heartbeat, replay, adapter, CLI, and test-harness work. Its OpenClaw integration is a legacy adapter, not Atlas's product boundary.
 
-## Core Idea
+The Android POC currently includes:
 
-Atlas owns the durable physical session loop:
+- a foreground, device-owned session service;
+- durable SQLite sessions, observations, and monotonically ordered events;
+- CameraX capture plus motion-aware freshness decisions;
+- voice input and interruptible spoken responses;
+- resource-aware heartbeat and deterministic scene-change gating;
+- capability routes (`fast`, `vision`, `reasoning`, `fallback`);
+- direct OpenAI-compatible local, LAN, and cloud endpoints;
+- Android Keystore-encrypted provider credentials; and
+- in-app session, inference, health, context, and event-stream views.
 
-- device bindings
-- heartbeat/perception loop
-- user interaction loop
-- context freshness/confidence
-- observation state
-- tool execution
-- audit trail
+It intentionally does **not** include an Atlas-hosted frontier model, account system, billing system, remote control plane, or Modulo dependency. A future paid managed-inference gateway belongs behind the existing provider boundary and must use user authentication, metering, quotas, and server-held credentials.
 
-Provider adapters should stay thin. Device adapters should stay swappable.
+## Run the Android POC
 
-## Repository Layout
+Open [`apps/atlas-android`](./apps/atlas-android) as a project in Android Studio, let Gradle sync, and run it on a physical Android device. Camera and microphone access are required for a full physical session.
 
-```text
-atlas/
-  BUILD_DOC.md
-  README.md
-  docs/
-  packages/
-    atlas-core/
-    atlas-config/
-    atlas-device-android/
-    atlas-provider-openclaw/
-    atlas-test-harness/
-  examples/
-    android-openclaw-basic/
-```
+Configure an OpenAI-compatible endpoint in the app. For LAN inference, use the computer's LAN address from a phone; `10.0.2.2` is only the Android emulator's alias for its host.
 
-## Start Here
+See [`apps/atlas-android/README.md`](./apps/atlas-android/README.md) for setup and compatibility details and [`docs/android-runtime-architecture.md`](./docs/android-runtime-architecture.md) for the architecture and release boundary.
 
-Read [`BUILD_DOC.md`](./BUILD_DOC.md) first. It is the current source of truth for architecture and MVP scope.
+## TypeScript prototype
 
-Then read [`ROADMAP.md`](./ROADMAP.md) for the implementation sequence.
-
-For the preserved future architecture shape around context lanes, weighted belief memory, spillover quarantine, provider sidebands, and budgeted inference sidecars, read [`docs/context-memory-and-sidecars.md`](./docs/context-memory-and-sidecars.md).
-
-## Development Workflow
-
-Before committing Atlas changes, run:
+Node.js 20+ is required.
 
 ```bash
+npm ci
 npm run build
-npm test
+npm run typecheck
 ```
 
-Useful harness commands:
+The original prototype and harness remain useful for contract exploration and replay work. See [`BUILD_DOC.md`](./BUILD_DOC.md), [`docs/adapter-contracts.md`](./docs/adapter-contracts.md), and [`docs/context-memory-and-sidecars.md`](./docs/context-memory-and-sidecars.md). Treat references to OpenClaw as historical implementation detail, not the target architecture.
 
-```bash
-npm --workspace @atlas/test-harness run demo
-npm --workspace @atlas/test-harness run demo:android-bridge
-npm --workspace @atlas/test-harness run inspect -- demo-session
-npm run demo:live-android -- "What am I looking at?"
-```
+## v0.1 principle
 
-Useful CLI commands after building:
-
-```bash
-node packages/atlas-cli/dist/index.js session create demo-session --name "Demo" --goal "Try Atlas"
-node packages/atlas-cli/dist/index.js session start demo-session
-node packages/atlas-cli/dist/index.js session heartbeat demo-session --config atlas.config.json
-node packages/atlas-cli/dist/index.js session ask demo-session --text "What am I looking at?" --config atlas.config.json
-node packages/atlas-cli/dist/index.js config inspect
-node packages/atlas-cli/dist/index.js sessions list
-node packages/atlas-cli/dist/index.js session inspect demo-session
-```
-
-`session inspect` includes a timing report when enough events/bridge telemetry are available, including capture round-trip, bridge capture/stage/analysis timings, provider round-trip, and total user-turn latency.
-
-Config-selected command adapters are available for live harness work:
-
-- `@atlas/device-android/bridge-command`
-- `@atlas/provider-openclaw/command`
-
-See [`docs/adapter-contracts.md`](./docs/adapter-contracts.md) for the command JSON contracts.
+One Android phone, one durable Atlas session, one excellent observe–reason–respond loop, user-owned inference, and enough evidence to explain every decision. Breadth comes after that loop is trustworthy.

@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Atlas</string>
+    <string name="session_channel_name">Physical session</string>
+    <string name="session_channel_description">Shows when Atlas owns camera and microphone access for an active session.</string>
+</resources>
