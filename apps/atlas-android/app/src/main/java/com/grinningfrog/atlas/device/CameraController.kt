@@ -58,7 +58,7 @@ class CameraController(
         val directory = File(context.filesDir, "captures/$sessionId").apply { mkdirs() }
         val output = File(directory, "${observedAtMs}-${reason.safeName()}.jpg")
         val captureStarted = System.nanoTime()
-        imageCapture.takePicture(ImageCapture.OutputFileOptions.Builder(output).build()).await()
+        imageCapture.takePicture(ImageCapture.OutputFileOptions.Builder(output).build())
         val captureMs = elapsedMs(captureStarted)
         val processingStarted = System.nanoTime()
         val fingerprint = withContext(Dispatchers.Default) { fingerprint(output) }

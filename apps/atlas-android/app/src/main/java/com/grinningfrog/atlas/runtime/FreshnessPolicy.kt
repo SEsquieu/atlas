@@ -55,21 +55,21 @@ object FreshnessPolicy {
 
     fun heartbeatWindow(motion: MotionState, batteryConstrained: Boolean): Long {
         val base = when (motion) {
-            MotionState.STATIONARY -> 60_000
-            MotionState.HANDHELD_STABLE -> 30_000
-            MotionState.WALKING, MotionState.TURNING -> 10_000
-            MotionState.VEHICLE -> 5_000
-            MotionState.UNKNOWN -> 20_000
+            MotionState.STATIONARY -> 60_000L
+            MotionState.HANDHELD_STABLE -> 30_000L
+            MotionState.WALKING, MotionState.TURNING -> 10_000L
+            MotionState.VEHICLE -> 5_000L
+            MotionState.UNKNOWN -> 20_000L
         }
         return if (batteryConstrained) (base * 2).coerceAtMost(120_000) else base
     }
 
     private fun staleWindow(motion: MotionState, useCase: VisualUseCase): Long = when (motion) {
-        MotionState.STATIONARY -> when (useCase) { VisualUseCase.DESCRIPTIVE -> 120_000; VisualUseCase.CONFIRMATION -> 45_000; else -> 30_000 }
-        MotionState.HANDHELD_STABLE -> when (useCase) { VisualUseCase.DESCRIPTIVE -> 60_000; VisualUseCase.CONFIRMATION -> 30_000; else -> 15_000 }
-        MotionState.WALKING, MotionState.TURNING -> when (useCase) { VisualUseCase.DESCRIPTIVE -> 10_000; else -> 5_000 }
-        MotionState.VEHICLE -> 2_000
-        MotionState.UNKNOWN -> 15_000
+        MotionState.STATIONARY -> when (useCase) { VisualUseCase.DESCRIPTIVE -> 120_000L; VisualUseCase.CONFIRMATION -> 45_000L; else -> 30_000L }
+        MotionState.HANDHELD_STABLE -> when (useCase) { VisualUseCase.DESCRIPTIVE -> 60_000L; VisualUseCase.CONFIRMATION -> 30_000L; else -> 15_000L }
+        MotionState.WALKING, MotionState.TURNING -> when (useCase) { VisualUseCase.DESCRIPTIVE -> 10_000L; else -> 5_000L }
+        MotionState.VEHICLE -> 2_000L
+        MotionState.UNKNOWN -> 15_000L
     }
 }
 
