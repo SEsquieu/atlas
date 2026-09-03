@@ -13,7 +13,7 @@ Open this directory directly in Android Studio and run the `app` configuration. 
 
 ## First run
 
-1. Grant camera, microphone, and notification access. Atlas only binds camera and microphone while its foreground session service is running.
+1. Grant camera, microphone, and notification access. Atlas acquires camera, microphone, speech, and motion resources on session start/resume and releases them on pause/end.
 2. Open **Inference** and add an endpoint name, base URL, model, and optional API key.
 3. Mark the endpoint as image-capable only if its chat-completions API accepts an `image_url` content part.
 4. Open **Session**, enter a durable goal, and start.

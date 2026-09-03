@@ -41,18 +41,19 @@ class AtlasMobileRuntime(
     private val mutableState = MutableStateFlow(RuntimeSnapshot())
     val state: StateFlow<RuntimeSnapshot> = mutableState.asStateFlow()
     private var heartbeatJob: Job? = null
+    private var devicesStarted = false
 
     suspend fun initialize() {
-        motion.start()
-        camera.start()
-        speech.start()
         val session = database.loadLatestSession()
         val observation = session?.let { database.loadLatestObservation(it.id) }
+        if (session?.status == SessionStatus.ACTIVE) startDevices()
         publish(session = session, observation = observation, phase = if (session?.status == SessionStatus.ACTIVE) RuntimePhase.READY else RuntimePhase.STOPPED)
         if (session?.status == SessionStatus.ACTIVE) startHeartbeat()
     }
 
     suspend fun createAndStartSession(name: String, goal: String): AtlasSession = operations.withLock {
+        publish(phase = RuntimePhase.STARTING)
+        startDevices()
         val session = database.createSession(name.ifBlank { "Atlas session" }, goal)
         database.updateSessionStatus(session.id, SessionStatus.ACTIVE)
         val active = session.copy(status = SessionStatus.ACTIVE, updatedAtMs = System.currentTimeMillis())
@@ -64,6 +65,8 @@ class AtlasMobileRuntime(
     suspend fun resumeSession() = operations.withLock {
         val session = requireSession()
         if (session.status == SessionStatus.DONE) throw IllegalStateException("Completed sessions cannot be resumed")
+        publish(phase = RuntimePhase.STARTING)
+        startDevices()
         database.updateSessionStatus(session.id, SessionStatus.ACTIVE)
         publish(session = session.copy(status = SessionStatus.ACTIVE), phase = RuntimePhase.READY)
         startHeartbeat()
@@ -74,6 +77,7 @@ class AtlasMobileRuntime(
         generation.incrementAndGet()
         heartbeatJob?.cancel(); heartbeatJob = null
         speech.stopSpeaking()
+        stopDevices()
         database.updateSessionStatus(session.id, SessionStatus.PAUSED)
         publish(session = session.copy(status = SessionStatus.PAUSED), phase = RuntimePhase.STOPPED)
     }
@@ -83,6 +87,7 @@ class AtlasMobileRuntime(
         generation.incrementAndGet()
         heartbeatJob?.cancel(); heartbeatJob = null
         speech.stopSpeaking()
+        stopDevices()
         database.updateSessionStatus(session.id, SessionStatus.DONE)
         publish(session = session.copy(status = SessionStatus.DONE), phase = RuntimePhase.STOPPED)
     }
@@ -162,7 +167,25 @@ class AtlasMobileRuntime(
 
     fun close() {
         heartbeatJob?.cancel()
+        stopDevices()
+    }
+
+    private suspend fun startDevices() {
+        if (devicesStarted) return
+        motion.start()
+        try {
+            camera.start()
+            speech.start()
+            devicesStarted = true
+        } catch (error: Exception) {
+            camera.stop(); motion.stop(); speech.close()
+            throw error
+        }
+    }
+
+    private fun stopDevices() {
         camera.stop(); motion.stop(); speech.close()
+        devicesStarted = false
     }
 
     private fun startHeartbeat() {

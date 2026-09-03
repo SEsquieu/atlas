@@ -104,7 +104,7 @@ class AtlasSessionService : LifecycleService() {
     private fun notification() = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(R.drawable.ic_atlas)
         .setContentTitle("Atlas physical session")
-        .setContentText("Camera, speech, context freshness, and heartbeat are active")
+        .setContentText("Device resources are used only while a session is active")
         .setContentIntent(
             PendingIntent.getActivity(
                 this,
