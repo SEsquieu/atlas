@@ -16,6 +16,8 @@ The Android reference runtime provides these boundaries:
 8. Calls left running during process death become `UNKNOWN`; Atlas does not guess that they failed or retry them.
 9. Provider failures with ambiguous outcomes stop routing, preventing an automatic second paid inference attempt.
 10. Provider continuation identifiers are telemetry and cache hints only. Conversation authority stays in Atlas.
+11. Provider streams are normalized into Core-owned text/tool events; non-streaming providers implement the same contract through a compatibility wrapper.
+12. Spoken responses are persisted as sentence segments. Atlas separately records generated text and the sentences whose playback completed.
 
 ## Durable projections
 
@@ -29,6 +31,7 @@ SQLite is the device-local authority. The append-only event stream remains the a
 | `memory_items` | Explicit working, task, environment, and durable memory |
 | `session_summaries` | Replaceable checkpoint of compacted older dialogue |
 | `observations` | Physical evidence and media metadata |
+| `speech_segments` | Sentence-level queue, start, completion, interruption, skip, and failure state |
 
 Projection writes also append audit events. A future event materializer can rebuild these tables without changing the provider contract.
 
@@ -103,11 +106,28 @@ The Android backend uses the OpenAI-compatible messages and function-tools shape
 
 Providers that do not support tools still receive durable multi-turn dialogue and physical context. They cannot be selected for tool-capable steps. Model names remain endpoint configuration, never Core policy.
 
+Streaming is an endpoint capability, not a new session type. SSE-capable endpoints expose OpenAI-compatible chat-completion deltas; the router converts them into provider-neutral text and tool-call events. Endpoints that do not advertise streaming still work through the same runtime path, but their complete response arrives as one delta. Once any streamed output has been accepted, Atlas will not fall through to another provider because the first request may already be billable.
+
+## Speech and delivery truth
+
+Voice is an Atlas-owned presentation layer over the durable turn:
+
+1. Push-to-talk enters a visible preparing state.
+2. Android's recognition service signals that the microphone is ready; only then does Atlas emit the short haptic and subtle chirp and show **Speak now**.
+3. Partial recognition updates the local UI. The final transcript becomes the durable user message.
+4. Provider text is incrementally segmented at safe sentence boundaries and cleaned for speech without changing the stored source response.
+5. Each sentence is persisted before it enters Android TTS and transitions through `QUEUED`, `STARTED`, and a terminal delivery state.
+6. Tapping **Interrupt and talk** stops queued speech and cancels active generation. Completed sentences remain confirmed as heard; an in-progress sentence and queued remainder are not represented to the next model as shared dialogue.
+
+Core supplies a response contract based on interaction mode and risk. Ordinary speech targets roughly 35 words, immediate answers are shorter, explicit explanation requests get a larger budget, and physical/safety guidance is action-first. This combines prompt policy with a provider output-token ceiling; model branding does not control Atlas's conversational style.
+
 ## Failure semantics
 
 - Connect and DNS failures may proceed to a declared fallback route.
 - Timeouts, malformed successful responses, and most post-dispatch failures are ambiguous and do not fall through automatically.
 - Cancelling a turn cancels the in-flight HTTP call and persists `CANCELLED`.
+- Barge-in cancels inference and TTS together, then starts recognition only after the prior turn releases the session mutation lock.
+- A process restart marks started speech interrupted and queued speech skipped, preserving the last fully delivered sentence boundary.
 - Process restart marks in-flight model turns `INTERRUPTED`.
 - Process restart marks running tool calls `UNKNOWN` and never reruns them.
 - Process restart rejects proposed/approved calls that had not entered `RUNNING`; these are known not to have executed.

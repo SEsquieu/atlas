@@ -11,6 +11,7 @@ import com.grinningfrog.atlas.model.AtlasSession
 import com.grinningfrog.atlas.model.AtlasToolCall
 import com.grinningfrog.atlas.model.ContextStability
 import com.grinningfrog.atlas.model.ContextMode
+import com.grinningfrog.atlas.model.DeliveryStatus
 import com.grinningfrog.atlas.model.MotionState
 import com.grinningfrog.atlas.model.MemoryItem
 import com.grinningfrog.atlas.model.MemoryKind
@@ -24,6 +25,8 @@ import com.grinningfrog.atlas.model.PermissionPolicy
 import com.grinningfrog.atlas.model.SessionPermissions
 import com.grinningfrog.atlas.model.SessionStatus
 import com.grinningfrog.atlas.model.SessionSummary
+import com.grinningfrog.atlas.model.SpeechSegment
+import com.grinningfrog.atlas.model.SpeechSegmentStatus
 import com.grinningfrog.atlas.model.ToolCallStatus
 import com.grinningfrog.atlas.model.ToolRisk
 import com.grinningfrog.atlas.model.TurnStatus
@@ -31,7 +34,7 @@ import com.grinningfrog.atlas.model.VisualObservation
 import org.json.JSONObject
 import java.util.UUID
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 5) {
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 6) {
     private fun createAgentRuntimeTables(db: SQLiteDatabase) {
         db.execSQL(
             """CREATE TABLE IF NOT EXISTS turns (
@@ -58,12 +61,33 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 content TEXT NOT NULL,
                 tool_call_id TEXT,
                 tool_calls_json TEXT,
+                delivery_status TEXT NOT NULL DEFAULT 'NOT_APPLICABLE',
+                delivered_content TEXT,
+                interrupted_sentence TEXT,
                 created_at INTEGER NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id),
                 FOREIGN KEY(turn_id) REFERENCES turns(turn_id)
             )""".trimIndent()
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS messages_session_sequence ON messages(session_id, sequence)")
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS speech_segments (
+                segment_id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                sentence_index INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                status TEXT NOT NULL,
+                queued_at INTEGER NOT NULL,
+                started_at INTEGER,
+                completed_at INTEGER,
+                UNIQUE(message_id, sentence_index),
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id),
+                FOREIGN KEY(turn_id) REFERENCES turns(turn_id)
+            )""".trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS speech_message_index ON speech_segments(message_id, sentence_index)")
         db.execSQL(
             """CREATE TABLE IF NOT EXISTS tool_calls (
                 tool_call_id TEXT PRIMARY KEY,
@@ -193,6 +217,29 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         }
         if (oldVersion in 4 until 5) {
             db.execSQL("ALTER TABLE memory_items ADD COLUMN evidence_observation_id TEXT")
+        }
+        if (oldVersion in 4 until 6) {
+            db.execSQL("ALTER TABLE messages ADD COLUMN delivery_status TEXT NOT NULL DEFAULT 'NOT_APPLICABLE'")
+            db.execSQL("ALTER TABLE messages ADD COLUMN delivered_content TEXT")
+            db.execSQL("ALTER TABLE messages ADD COLUMN interrupted_sentence TEXT")
+            db.execSQL(
+                """CREATE TABLE IF NOT EXISTS speech_segments (
+                    segment_id TEXT PRIMARY KEY,
+                    message_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    turn_id TEXT NOT NULL,
+                    sentence_index INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    queued_at INTEGER NOT NULL,
+                    started_at INTEGER,
+                    completed_at INTEGER,
+                    UNIQUE(message_id, sentence_index),
+                    FOREIGN KEY(session_id) REFERENCES sessions(session_id),
+                    FOREIGN KEY(turn_id) REFERENCES turns(turn_id)
+                )""".trimIndent()
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS speech_message_index ON speech_segments(message_id, sentence_index)")
         }
     }
 
@@ -366,6 +413,8 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 put("message_id", message.id); put("session_id", message.sessionId); put("turn_id", message.turnId)
                 put("role", message.role.name); put("kind", message.kind.name); put("content", message.content)
                 put("tool_call_id", message.toolCallId); put("tool_calls_json", message.toolCallsJson); put("created_at", message.createdAtMs)
+                put("delivery_status", message.deliveryStatus.name); put("delivered_content", message.deliveredContent)
+                put("interrupted_sentence", message.interruptedSentence)
             })
             appendEventLocked(this, message.sessionId, "message.recorded", message.createdAtMs, JSONObject().apply {
                 put("messageId", message.id); put("turnId", message.turnId); put("role", message.role.name.lowercase())
@@ -376,15 +425,23 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         return message.copy(sequence = sequence)
     }
 
+    @Synchronized
+    fun updateAssistantMessage(messageId: String, content: String, toolCallsJson: String? = null) {
+        writableDatabase.update("messages", ContentValues().apply {
+            put("content", content)
+            put("tool_calls_json", toolCallsJson)
+        }, "message_id = ?", arrayOf(messageId))
+    }
+
     fun loadMessages(sessionId: String, afterSequence: Long = 0, limit: Int = 80): List<AtlasMessage> = readableDatabase.rawQuery(
-        """SELECT sequence,message_id,session_id,turn_id,role,content,created_at,kind,tool_call_id,tool_calls_json
+        """SELECT sequence,message_id,session_id,turn_id,role,content,created_at,kind,tool_call_id,tool_calls_json,delivery_status,delivered_content,interrupted_sentence
             FROM messages WHERE session_id = ? AND sequence > ? ORDER BY sequence DESC LIMIT ?""".trimIndent(),
         arrayOf(sessionId, afterSequence.toString(), limit.toString()),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toMessage()) }.reversed() }
 
     /** Oldest-first page used by checkpointing so a failed backlog can never be skipped. */
     fun loadMessagesForCompaction(sessionId: String, afterSequence: Long, limit: Int): List<AtlasMessage> = readableDatabase.rawQuery(
-        """SELECT sequence,message_id,session_id,turn_id,role,content,created_at,kind,tool_call_id,tool_calls_json
+        """SELECT sequence,message_id,session_id,turn_id,role,content,created_at,kind,tool_call_id,tool_calls_json,delivery_status,delivered_content,interrupted_sentence
             FROM messages WHERE session_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT ?""".trimIndent(),
         arrayOf(sessionId, afterSequence.toString(), limit.toString()),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toMessage()) } }
@@ -392,6 +449,73 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     fun messageCountAfter(sessionId: String, afterSequence: Long): Int = readableDatabase.rawQuery(
         "SELECT COUNT(*) FROM messages WHERE session_id = ? AND sequence > ?", arrayOf(sessionId, afterSequence.toString())
     ).use { cursor -> cursor.moveToFirst(); cursor.getInt(0) }
+
+    @Synchronized
+    fun saveSpeechSegment(segment: SpeechSegment) {
+        writableDatabase.transaction {
+            insertOrThrow("speech_segments", null, ContentValues().apply {
+                put("segment_id", segment.id); put("message_id", segment.messageId); put("session_id", segment.sessionId)
+                put("turn_id", segment.turnId); put("sentence_index", segment.sentenceIndex); put("text", segment.text)
+                put("status", segment.status.name); put("queued_at", segment.queuedAtMs)
+                put("started_at", segment.startedAtMs); put("completed_at", segment.completedAtMs)
+            })
+            appendEventLocked(this, segment.sessionId, "speech.segment_queued", segment.queuedAtMs, JSONObject().apply {
+                put("segmentId", segment.id); put("messageId", segment.messageId); put("turnId", segment.turnId)
+                put("sentenceIndex", segment.sentenceIndex); put("text", segment.text)
+            }.toString())
+        }
+    }
+
+    @Synchronized
+    fun updateSpeechSegment(segmentId: String, status: SpeechSegmentStatus, atMs: Long = System.currentTimeMillis(), error: String? = null) {
+        writableDatabase.transaction {
+            val identity = rawQuery("SELECT message_id,session_id,turn_id FROM speech_segments WHERE segment_id = ?", arrayOf(segmentId)).use { cursor ->
+                if (!cursor.moveToFirst()) null else Triple(cursor.getString(0), cursor.getString(1), cursor.getString(2))
+            } ?: return@transaction
+            update("speech_segments", ContentValues().apply {
+                put("status", status.name)
+                if (status == SpeechSegmentStatus.STARTED) put("started_at", atMs)
+                if (status in setOf(SpeechSegmentStatus.COMPLETED, SpeechSegmentStatus.INTERRUPTED, SpeechSegmentStatus.SKIPPED, SpeechSegmentStatus.FAILED)) put("completed_at", atMs)
+            }, "segment_id = ?", arrayOf(segmentId))
+            appendEventLocked(this, identity.second, "speech.segment_${status.name.lowercase()}", atMs, JSONObject().apply {
+                put("segmentId", segmentId); put("messageId", identity.first); put("turnId", identity.third); error?.let { put("error", it.take(500)) }
+            }.toString())
+            refreshMessageDeliveryLocked(this, identity.first)
+        }
+    }
+
+    @Synchronized
+    fun refreshMessageDelivery(messageId: String, fallbackStatus: DeliveryStatus? = null) {
+        writableDatabase.transaction { refreshMessageDeliveryLocked(this, messageId, fallbackStatus) }
+    }
+
+    private fun refreshMessageDeliveryLocked(db: SQLiteDatabase, messageId: String, fallbackStatus: DeliveryStatus? = null) {
+        val completed = mutableListOf<String>()
+        var interrupted: String? = null
+        var skipped = false
+        var failed = false
+        var pending = false
+        db.rawQuery("SELECT text,status FROM speech_segments WHERE message_id = ? ORDER BY sentence_index", arrayOf(messageId)).use { cursor ->
+            while (cursor.moveToNext()) when (SpeechSegmentStatus.valueOf(cursor.getString(1))) {
+                SpeechSegmentStatus.COMPLETED -> completed += cursor.getString(0)
+                SpeechSegmentStatus.INTERRUPTED -> if (interrupted == null) interrupted = cursor.getString(0)
+                SpeechSegmentStatus.SKIPPED -> skipped = true
+                SpeechSegmentStatus.FAILED -> failed = true
+                SpeechSegmentStatus.QUEUED, SpeechSegmentStatus.STARTED -> pending = true
+            }
+        }
+        val status = when {
+            interrupted != null || skipped -> DeliveryStatus.INTERRUPTED
+            pending -> DeliveryStatus.PENDING
+            failed -> DeliveryStatus.FAILED
+            completed.isNotEmpty() -> DeliveryStatus.DELIVERED
+            else -> fallbackStatus ?: return
+        }
+        db.update("messages", ContentValues().apply {
+            put("delivery_status", status.name); put("delivered_content", completed.joinToString(" ").ifBlank { null })
+            put("interrupted_sentence", interrupted)
+        }, "message_id = ?", arrayOf(messageId))
+    }
 
     @Synchronized
     fun insertToolCall(call: AtlasToolCall) {
@@ -546,6 +670,16 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             val cancelled = update("tool_calls", ContentValues().apply { put("status", ToolCallStatus.REJECTED.name); put("updated_at", nowMs); put("error", "Cancelled before execution by process restart") },
                 "session_id = ? AND status IN ('PROPOSED','APPROVED')", arrayOf(sessionId))
             if (cancelled > 0) appendEventLocked(this, sessionId, "tool.pre_execution_cancelled", nowMs, JSONObject().put("reason", "process_restart").put("count", cancelled).toString())
+            val interruptedSpeech = mutableSetOf<String>()
+            rawQuery("SELECT DISTINCT message_id FROM speech_segments WHERE session_id = ? AND status IN ('QUEUED','STARTED')", arrayOf(sessionId)).use { cursor ->
+                while (cursor.moveToNext()) interruptedSpeech += cursor.getString(0)
+            }
+            update("speech_segments", ContentValues().apply { put("status", SpeechSegmentStatus.SKIPPED.name); put("completed_at", nowMs) },
+                "session_id = ? AND status = 'QUEUED'", arrayOf(sessionId))
+            update("speech_segments", ContentValues().apply { put("status", SpeechSegmentStatus.INTERRUPTED.name); put("completed_at", nowMs) },
+                "session_id = ? AND status = 'STARTED'", arrayOf(sessionId))
+            interruptedSpeech.forEach { messageId -> refreshMessageDeliveryLocked(this, messageId, DeliveryStatus.INTERRUPTED) }
+            if (interruptedSpeech.isNotEmpty()) appendEventLocked(this, sessionId, "speech.recovered_interrupted", nowMs, JSONObject().put("messageCount", interruptedSpeech.size).toString())
         }
     }
 
@@ -566,6 +700,7 @@ private fun android.database.Cursor.toTurn() = AgentTurn(
 private fun android.database.Cursor.toMessage() = AtlasMessage(
     getLong(0), getString(1), getString(2), getString(3), MessageRole.valueOf(getString(4)), getString(5), getLong(6),
     MessageKind.valueOf(getString(7)), if (isNull(8)) null else getString(8), if (isNull(9)) null else getString(9),
+    DeliveryStatus.valueOf(getString(10)), if (isNull(11)) null else getString(11), if (isNull(12)) null else getString(12),
 )
 
 private fun android.database.Cursor.toToolCall() = AtlasToolCall(

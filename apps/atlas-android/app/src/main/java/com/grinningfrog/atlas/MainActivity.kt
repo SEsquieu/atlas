@@ -84,6 +84,8 @@ import com.grinningfrog.atlas.data.SecureSettings
 import com.grinningfrog.atlas.cloud.ManagedAccountClient
 import com.grinningfrog.atlas.media.MediaRepository
 import com.grinningfrog.atlas.model.AtlasEvent
+import com.grinningfrog.atlas.model.DeliveryStatus
+import com.grinningfrog.atlas.model.ListeningState
 import com.grinningfrog.atlas.model.MessageKind
 import com.grinningfrog.atlas.model.MessageRole
 import com.grinningfrog.atlas.model.ContextMode
@@ -307,6 +309,55 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
             }
         }
 
+        if (session != null && session.status != SessionStatus.DONE) item {
+            val canTalk = active && (snapshot.activeTurn == null || snapshot.phase == RuntimePhase.SPEAKING)
+            val title = when {
+                snapshot.listeningState == ListeningState.PREPARING -> "Getting the microphone ready"
+                snapshot.listeningState == ListeningState.READY -> "Speak now"
+                snapshot.listeningState == ListeningState.HEARING -> "I’m listening"
+                snapshot.listeningState == ListeningState.PROCESSING -> "Got it"
+                snapshot.phase == RuntimePhase.SPEAKING -> "Atlas is speaking"
+                snapshot.phase == RuntimePhase.THINKING -> "Atlas is thinking"
+                else -> "Talk to Atlas"
+            }
+            val detail = when {
+                !active -> "Resume the session to talk."
+                snapshot.listeningState == ListeningState.PREPARING -> "Wait for the soft chirp and haptic pulse."
+                snapshot.listeningState == ListeningState.READY -> "The microphone is live."
+                snapshot.listeningState == ListeningState.HEARING -> snapshot.partialTranscript ?: "Keep going — Atlas will detect when you finish."
+                snapshot.listeningState == ListeningState.PROCESSING -> snapshot.partialTranscript ?: "Turning your speech into a message."
+                snapshot.phase == RuntimePhase.SPEAKING -> "Tap below to interrupt and speak. Atlas remembers only completed sentences as heard."
+                snapshot.phase == RuntimePhase.THINKING -> "Building a short, context-aware response."
+                else -> "Tap once, then begin after the subtle haptic and chirp."
+            }
+            Card(colors = CardDefaults.cardColors(containerColor = when {
+                snapshot.listeningState in setOf(ListeningState.READY, ListeningState.HEARING) -> MaterialTheme.colorScheme.primaryContainer
+                snapshot.phase == RuntimePhase.SPEAKING -> MaterialTheme.colorScheme.secondaryContainer
+                else -> MaterialTheme.colorScheme.surface
+            })) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Icon(if (snapshot.phase == RuntimePhase.SPEAKING) Icons.Default.GraphicEq else Icons.Default.Mic, null, Modifier.size(30.dp), tint = MaterialTheme.colorScheme.primary)
+                        Column(Modifier.weight(1f)) {
+                            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    snapshot.streamingResponse?.takeIf(String::isNotBlank)?.let {
+                        Text(it.takeLast(360), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Button(
+                        onClick = { runAction { runtime.listenAndAsk() } },
+                        enabled = canTalk,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.Mic, null)
+                        Text(if (snapshot.phase == RuntimePhase.SPEAKING) " Interrupt and talk" else " Talk")
+                    }
+                }
+            }
+        }
+
         snapshot.latestObservation?.let { observation ->
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
@@ -340,6 +391,15 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
                         Column(Modifier.padding(14.dp)) {
                             Text(if (message.role == MessageRole.USER) "You" else "Atlas", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
                             Spacer(Modifier.height(4.dp)); Text(message.content)
+                            if (message.role == MessageRole.ASSISTANT && message.deliveryStatus in setOf(DeliveryStatus.INTERRUPTED, DeliveryStatus.FAILED)) {
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    if (message.deliveryStatus == DeliveryStatus.INTERRUPTED) "Speech was interrupted; the unheard remainder will not be treated as shared context."
+                                    else "Speech playback failed; the text remains available here.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }
@@ -418,9 +478,8 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
             )
         }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button({ runAction { runtime.listenAndAsk() } }, enabled = active && snapshot.activeTurn == null, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Mic, null); Text(" Ask") }
-                OutlinedButton({ runAction { runtime.captureNow() } }, enabled = active && snapshot.activeTurn == null, modifier = Modifier.weight(1f)) { Icon(Icons.Default.CameraAlt, null); Text(" Observe") }
+            OutlinedButton({ runAction { runtime.captureNow() } }, enabled = active && snapshot.activeTurn == null, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.CameraAlt, null); Text(" Observe now")
             }
         }
         item { HealthCard(snapshot) }
@@ -435,6 +494,7 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
     var apiKey by remember { mutableStateOf("") }
     var vision by remember { mutableStateOf(true) }
     var tools by remember { mutableStateOf(true) }
+    var streaming by remember { mutableStateOf(true) }
 
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
@@ -456,22 +516,29 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(endpoint.name, fontWeight = FontWeight.SemiBold)
-                        Text("${endpoint.model} · ${listOfNotNull("text", "vision".takeIf { endpoint.supportsVision }, "tools".takeIf { endpoint.supportsTools }).joinToString(" + ")}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${endpoint.model} · ${listOfNotNull("text", "vision".takeIf { endpoint.supportsVision }, "tools".takeIf { endpoint.supportsTools }, "streaming".takeIf { endpoint.supportsStreaming }).joinToString(" + ")}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(endpoint.baseUrl, style = MaterialTheme.typography.bodySmall)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(endpoint.supportsVision, { enabled ->
-                                settings.updateProviderCapabilities(endpoint.id, enabled, endpoint.supportsTools)
+                                settings.updateProviderCapabilities(endpoint.id, enabled, endpoint.supportsTools, endpoint.supportsStreaming)
                                 val all = settings.loadProviders()
                                 val ids = all.map { it.id }
                                 settings.saveRoutes(RouteTable(ids, all.filter { it.supportsVision }.map { it.id }, ids, ids))
                                 onChanged()
                             })
                             Text("Vision")
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(endpoint.supportsTools, { enabled ->
-                                settings.updateProviderCapabilities(endpoint.id, endpoint.supportsVision, enabled)
+                                settings.updateProviderCapabilities(endpoint.id, endpoint.supportsVision, enabled, endpoint.supportsStreaming)
                                 onChanged()
                             })
                             Text("Tools")
+                            Checkbox(endpoint.supportsStreaming, { enabled ->
+                                settings.updateProviderCapabilities(endpoint.id, endpoint.supportsVision, endpoint.supportsTools, enabled)
+                                onChanged()
+                            })
+                            Text("Stream")
                         }
                     }
                     TextButtonCompact("Remove") {
@@ -497,11 +564,14 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(tools, { tools = it }); Text("Endpoint supports OpenAI-compatible tool calls")
                     }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(streaming, { streaming = it }); Text("Endpoint supports SSE streaming")
+                    }
                     Button(
                         enabled = name.isNotBlank() && baseUrl.isNotBlank() && model.isNotBlank(),
                         onClick = {
                             val id = UUID.randomUUID().toString()
-                            settings.saveProvider(ProviderEndpoint(id, name.trim(), baseUrl.trim(), model.trim(), id, supportsVision = vision, supportsTools = tools), apiKey)
+                            settings.saveProvider(ProviderEndpoint(id, name.trim(), baseUrl.trim(), model.trim(), id, supportsVision = vision, supportsTools = tools, supportsStreaming = streaming), apiKey)
                             val all = settings.loadProviders()
                             val allIds = all.map { it.id }
                             settings.saveRoutes(RouteTable(allIds, all.filter { it.supportsVision }.map { it.id }, allIds, allIds))

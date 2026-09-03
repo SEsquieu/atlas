@@ -2,6 +2,7 @@ package com.grinningfrog.atlas.runtime
 
 import com.grinningfrog.atlas.model.AtlasMessage
 import com.grinningfrog.atlas.model.AtlasSession
+import com.grinningfrog.atlas.model.DeliveryStatus
 import com.grinningfrog.atlas.model.InferenceMessage
 import com.grinningfrog.atlas.model.MemoryItem
 import com.grinningfrog.atlas.model.MemoryKind
@@ -120,10 +121,29 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
 
     private fun toInferenceMessage(message: AtlasMessage): InferenceMessage = InferenceMessage(
         role = message.role,
-        content = message.content,
+        content = deliveryAwareContent(message),
         toolCallId = message.toolCallId,
         toolCalls = parseToolCalls(message.toolCallsJson),
     )
+
+    private fun deliveryAwareContent(message: AtlasMessage): String {
+        if (message.role != MessageRole.ASSISTANT || message.toolCallsJson != null) return message.content
+        return when (message.deliveryStatus) {
+            DeliveryStatus.INTERRUPTED -> buildString {
+                append(message.deliveredContent.orEmpty())
+                if (isNotEmpty()) append("\n")
+                append("[Atlas delivery note: the user interrupted playback")
+                message.interruptedSentence?.let { append(" during: ").append(it) }
+                append(". Do not assume the unheard remainder was communicated.]")
+            }
+            DeliveryStatus.FAILED -> buildString {
+                append(message.deliveredContent.orEmpty())
+                if (isNotEmpty()) append("\n")
+                append("[Atlas delivery note: speech playback failed; do not assume the full response was heard.]")
+            }
+            else -> message.content
+        }
+    }
 
     private fun parseToolCalls(raw: String?): List<ToolCallProposal> = runCatching {
         val array = JSONArray(raw ?: return emptyList())

@@ -1,6 +1,7 @@
 package com.grinningfrog.atlas.provider
 
 import com.grinningfrog.atlas.model.InferenceMessage
+import com.grinningfrog.atlas.model.InferenceStreamEvent
 import com.grinningfrog.atlas.model.InferenceRequest
 import com.grinningfrog.atlas.model.MessageRole
 import com.grinningfrog.atlas.model.ProviderEndpoint
@@ -9,6 +10,7 @@ import com.grinningfrog.atlas.model.ToolCallProposal
 import com.grinningfrog.atlas.model.ToolDefinition
 import com.grinningfrog.atlas.model.ToolRisk
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.flow.toList
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONObject
@@ -77,6 +79,31 @@ class OpenAiCompatibleBackendTest {
             val messages = JSONObject(server.takeRequest().body.readUtf8()).getJSONArray("messages")
             assertEquals("call-1", messages.getJSONObject(2).getJSONArray("tool_calls").getJSONObject(0).getString("id"))
             assertEquals("call-1", messages.getJSONObject(3).getString("tool_call_id"))
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test fun normalizesSseTextAndSplitToolCalls() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+            "data: {\"id\":\"stream-1\",\"model\":\"chosen\",\"choices\":[{\"delta\":{\"content\":\"Look \"}}]}\n\n" +
+                "data: {\"id\":\"stream-1\",\"choices\":[{\"delta\":{\"content\":\"left.\"}}]}\n\n" +
+                "data: {\"id\":\"stream-1\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"function\":{\"name\":\"look\",\"arguments\":\"{\\\"\"}}]}}]}\n\n" +
+                "data: {\"id\":\"stream-1\",\"choices\":[{\"finish_reason\":\"tool_calls\",\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"side\\\":\\\"left\\\"}\"}}]}}]}\n\n" +
+                "data: [DONE]\n\n"
+        ))
+        server.start()
+        try {
+            val endpoint = ProviderEndpoint("test", "test", server.url("/v1").toString(), "model", supportsTools = true, supportsStreaming = true)
+            val request = InferenceRequest("request", "session", RouteCapability.FAST, "system", "look")
+            val events = OpenAiCompatibleBackend().stream(endpoint, null, request).toList()
+
+            assertEquals("Look left.", events.filterIsInstance<InferenceStreamEvent.TextDelta>().joinToString("") { it.text })
+            val response = events.filterIsInstance<InferenceStreamEvent.Completed>().single().response
+            assertEquals("chosen", response.selectedModel)
+            assertEquals(ToolCallProposal("call-1", "look", "{\"side\":\"left\"}"), response.toolCalls.single())
+            assertEquals(true, JSONObject(server.takeRequest().body.readUtf8()).getBoolean("stream"))
         } finally {
             server.shutdown()
         }

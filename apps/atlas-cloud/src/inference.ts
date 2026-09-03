@@ -37,6 +37,8 @@ const requestSchema = z.object({
     tool_calls: z.array(toolCall).max(12).optional(),
   })).min(1).max(48),
   tools: z.array(toolDefinition).max(32).optional(),
+  stream: z.boolean().default(false),
+  max_tokens: z.number().int().min(1).max(8_000).optional(),
 });
 
 export async function runInference(request: Request, userId: string) {
@@ -76,11 +78,52 @@ export async function runInference(request: Request, userId: string) {
       }
       return message;
     });
+    const outputLimit = Math.min(body.max_tokens ?? selection.maxOutputTokens, selection.maxOutputTokens);
+    const responseHeaders = {
+      "X-Atlas-Request-Id": requestId,
+      "X-Atlas-Model": model,
+      "X-Atlas-Profile": selection.profile,
+      "X-Atlas-Route-Reason": selection.reason,
+      "X-Atlas-Route-Revision": routeRevision,
+      "Cache-Control": "no-store",
+    };
+    if (body.stream) {
+      const providerStream = await openai().chat.completions.create({
+        model,
+        messages: normalizedMessages as never,
+        tools: body.tools as never,
+        max_completion_tokens: outputLimit,
+        reasoning_effort: selection.reasoningEffort === "none" ? "low" : selection.reasoningEffort as never,
+        stream: true,
+        stream_options: { include_usage: true },
+      }, { signal: request.signal });
+      const encoder = new TextEncoder();
+      return new Response(new ReadableStream<Uint8Array>({
+        async start(controller) {
+          let inputTokens = 0;
+          let outputTokens = 0;
+          try {
+            for await (const chunk of providerStream) {
+              inputTokens = chunk.usage?.prompt_tokens ?? inputTokens;
+              outputTokens = chunk.usage?.completion_tokens ?? outputTokens;
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+            }
+            const charge = usageChargeMicros(model, inputTokens, outputTokens);
+            await settleCredits({ userId, requestId, reserved, actual: charge, model, inputTokens, outputTokens, latencyMs: Math.round(performance.now() - started), status: "succeeded" });
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          } catch (error) {
+            await settleCredits({ userId, requestId, reserved, actual: 0, model, inputTokens, outputTokens, latencyMs: Math.round(performance.now() - started), status: "failed" });
+            controller.error(error);
+          }
+        },
+      }), { headers: { ...responseHeaders, "Content-Type": "text/event-stream; charset=utf-8", "X-Accel-Buffering": "no" } });
+    }
     const response = await openai().chat.completions.create({
       model,
       messages: normalizedMessages as never,
       tools: body.tools as never,
-      max_completion_tokens: selection.maxOutputTokens,
+      max_completion_tokens: outputLimit,
       reasoning_effort: selection.reasoningEffort === "none" ? "low" : selection.reasoningEffort as never,
     });
     const inputTokens = response.usage?.prompt_tokens ?? 0;
@@ -94,13 +137,8 @@ export async function runInference(request: Request, userId: string) {
       } })),
       usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens },
     }, { headers: {
-      "X-Atlas-Request-Id": requestId,
+      ...responseHeaders,
       "X-Atlas-Charge-Micros": String(charge),
-      "X-Atlas-Model": model,
-      "X-Atlas-Profile": selection.profile,
-      "X-Atlas-Route-Reason": selection.reason,
-      "X-Atlas-Route-Revision": routeRevision,
-      "Cache-Control": "no-store",
     } });
   } catch (error) {
     await settleCredits({ userId, requestId, reserved, actual: 0, model, inputTokens: 0, outputTokens: 0, latencyMs: Math.round(performance.now() - started), status: "failed" });

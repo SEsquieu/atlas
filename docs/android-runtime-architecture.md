@@ -51,8 +51,9 @@ The local event table uses an auto-incrementing sequence. Wall-clock timestamps 
 5. Atlas selects a capability (`fast`, `vision`, or `reasoning`) and invokes a compatible endpoint.
 6. A provider may return a final answer or propose tools. Core validates, gates, executes, persists, and returns tool results until the turn completes or reaches a hard budget.
 7. Atlas records request, route attempts, latency, result or failure, and lifecycle disposition.
-8. Atlas preserves a textual answer even if speech synthesis fails; speech and an active inference turn can be interrupted locally.
-9. Live Context, when explicitly enabled, adapts observation cadence to motion, battery, and thermal pressure. Deterministic scene difference gates model review, a durable rolling window limits proactive inference, and unsolicited speech defaults off.
+8. Provider deltas cross a normalized stream boundary. Core checkpoints text, splits safe spoken sentences, and records delivery independently of generation.
+9. Atlas preserves a textual answer even if speech synthesis fails. Barge-in cancels TTS and generation, and only fully completed sentences count as heard.
+10. Live Context, when explicitly enabled, adapts observation cadence to motion, battery, and thermal pressure. Deterministic scene difference gates model review, a durable rolling window limits proactive inference, and unsolicited speech defaults off.
 
 New sessions use manual context mode. Manual mode performs no background capture or inference but retains explicit asks, voice requests, and Observe. Live mode is persisted with the session and visible in both the UI and foreground notification. Pausing or ending cancels its heartbeat immediately.
 

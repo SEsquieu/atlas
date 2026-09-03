@@ -3,7 +3,8 @@ package com.grinningfrog.atlas.model
 import java.util.UUID
 
 enum class SessionStatus { IDLE, ACTIVE, PAUSED, DONE, ERROR }
-enum class RuntimePhase { STOPPED, STARTING, READY, LISTENING, CAPTURING, THINKING, SPEAKING, DEGRADED, ERROR }
+enum class RuntimePhase { STOPPED, STARTING, READY, LISTENING, TRANSCRIBING, CAPTURING, THINKING, SPEAKING, DEGRADED, ERROR }
+enum class ListeningState { INACTIVE, PREPARING, READY, HEARING, PROCESSING }
 enum class ContextMode { MANUAL, LIVE }
 enum class RouteCapability { FAST, VISION, REASONING, FALLBACK }
 enum class InferenceRisk { NORMAL, ELEVATED, SAFETY_CRITICAL }
@@ -22,6 +23,9 @@ enum class ToolCallStatus { PROPOSED, WAITING_FOR_CONFIRMATION, APPROVED, RUNNIN
 enum class ToolRisk { READ_ONLY, SESSION_WRITE, PERSONAL_DATA, EXTERNAL_EFFECT }
 enum class MemoryKind { WORKING, TASK, ENVIRONMENT, DURABLE }
 enum class MemoryStatus { ACTIVE, SUPERSEDED, FORGOTTEN }
+enum class DeliveryStatus { NOT_APPLICABLE, PENDING, DELIVERED, INTERRUPTED, TEXT_ONLY, FAILED }
+enum class SpeechSegmentStatus { QUEUED, STARTED, COMPLETED, INTERRUPTED, SKIPPED, FAILED }
+enum class ResponseMode { IMMEDIATE, DEFAULT, PHYSICAL_GUIDANCE, SAFETY, EXPLANATION }
 
 data class SessionPermissions(
     val observe: Boolean = true,
@@ -83,6 +87,31 @@ data class AtlasMessage(
     val kind: MessageKind = MessageKind.DIALOGUE,
     val toolCallId: String? = null,
     val toolCallsJson: String? = null,
+    val deliveryStatus: DeliveryStatus = DeliveryStatus.NOT_APPLICABLE,
+    val deliveredContent: String? = null,
+    val interruptedSentence: String? = null,
+)
+
+data class SpeechSegment(
+    val id: String = UUID.randomUUID().toString(),
+    val messageId: String,
+    val sessionId: String,
+    val turnId: String,
+    val sentenceIndex: Int,
+    val text: String,
+    val status: SpeechSegmentStatus,
+    val queuedAtMs: Long,
+    val startedAtMs: Long? = null,
+    val completedAtMs: Long? = null,
+)
+
+data class ResponseContract(
+    val mode: ResponseMode,
+    val targetWords: Int,
+    val hardMaxWords: Int,
+    val maxSentences: Int,
+    val maxOutputTokens: Int,
+    val actionFirst: Boolean = false,
 )
 
 data class AgentTurn(
@@ -180,6 +209,7 @@ data class ProviderEndpoint(
     val apiKeyAlias: String? = null,
     val supportsVision: Boolean = false,
     val supportsTools: Boolean = false,
+    val supportsStreaming: Boolean = false,
     val timeoutMs: Long = 60_000,
 )
 
@@ -212,6 +242,7 @@ data class InferenceRequest(
     val contextNote: String? = null,
     val risk: InferenceRisk = InferenceRisk.NORMAL,
     val latencyClass: LatencyClass = LatencyClass.INTERACTIVE,
+    val responseContract: ResponseContract? = null,
 )
 
 data class InferenceResponse(
@@ -227,7 +258,14 @@ data class InferenceResponse(
     val toolCalls: List<ToolCallProposal> = emptyList(),
     val finishReason: String? = null,
     val providerContinuationId: String? = null,
+    val firstTokenLatencyMs: Long? = null,
 )
+
+sealed interface InferenceStreamEvent {
+    data class TextDelta(val text: String) : InferenceStreamEvent
+    data class ToolCallDelta(val index: Int, val id: String?, val name: String?, val argumentsDelta: String) : InferenceStreamEvent
+    data class Completed(val response: InferenceResponse) : InferenceStreamEvent
+}
 
 data class AtlasEvent(
     val sequence: Long,
@@ -261,4 +299,7 @@ data class RuntimeSnapshot(
     val pendingToolCalls: List<AtlasToolCall> = emptyList(),
     val memories: List<MemoryItem> = emptyList(),
     val sessionSummary: SessionSummary? = null,
+    val listeningState: ListeningState = ListeningState.INACTIVE,
+    val partialTranscript: String? = null,
+    val streamingResponse: String? = null,
 )

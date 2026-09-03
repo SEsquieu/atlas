@@ -18,9 +18,9 @@ The default APK leaves Atlas Cloud disabled. A gateway deployment can enable acc
 1. Grant camera, microphone, and notification access. Atlas acquires camera, microphone, speech, and motion resources on session start/resume and releases them on pause/end.
 2. Open **Inference** and add an endpoint name, base URL, model, and optional API key.
 3. Mark the endpoint as image-capable only if its chat-completions API accepts an `image_url` content part.
-4. Mark it tool-capable only if it accepts OpenAI-compatible function tools and returns assistant `tool_calls`.
+4. Mark it tool-capable only if it accepts OpenAI-compatible function tools and returns assistant `tool_calls`. Enable **Stream** only for endpoints that return chat-completion SSE deltas.
 5. Open **Session**, enter a durable goal, and start. New sessions begin with **Live Context** off.
-6. Tap **Observe**, type a question, or tap **Ask** for speech recognition.
+6. Tap **Observe**, type a question, or tap **Talk**. Begin speaking after the haptic and soft chirp when the card says **Speak now**.
 7. Enable **Live Context** only when Atlas should maintain rolling physical context in the background.
 8. Inspect **Events** to see the ordered session trace.
 
@@ -85,9 +85,17 @@ The app authenticates directly with Supabase, stores the session tokens with And
 
 This is not yet production privacy UX. Before external beta, Atlas needs retention controls, session deletion/export, redaction options, a privacy disclosure, and security review.
 
+## Speech loop
+
+Speech is the default response surface for active sessions. Push-to-talk uses the Android-installed recognition service; its readiness callback—not the button tap—drives the haptic, chirp, and **Speak now** indicator. Partial transcripts remain UI state until recognition completes.
+
+Atlas streams provider text into Android TTS one complete sentence at a time. Markdown is rendered into speakable text, while the exact provider response remains in the transcript. Tap **Interrupt and talk** while Atlas is speaking to stop playback, cancel remaining generation, and immediately begin another turn. Atlas records completed sentences separately so the next model is never told that an interrupted remainder was heard.
+
+Ordinary spoken answers are intentionally brief. Explicit requests for an explanation receive a larger response contract; physical guidance and safety-sensitive answers lead with the action. TTS failure never removes the text response.
+
 ## Provider contract
 
-The POC uses non-streaming OpenAI-compatible chat completions and function tools:
+The app uses OpenAI-compatible chat completions and function tools:
 
 - text requests contain the bounded Atlas-owned conversation, not a provider-owned thread;
 - vision requests include a base64 data URL in an `image_url` content part;
@@ -97,10 +105,12 @@ The POC uses non-streaming OpenAI-compatible chat completions and function tools
 - `X-Atlas-Request-Id` supports cross-system tracing.
 - `X-Atlas-Capability`, `X-Atlas-Risk`, `X-Atlas-Latency-Class`, and `X-Atlas-Media-Purpose` describe the job without naming a vendor model.
 - compatible gateways may return `X-Atlas-Model`, `X-Atlas-Profile`, `X-Atlas-Route-Reason`, and `X-Atlas-Route-Revision`; Core records them in the event log.
+- streaming endpoints return standard `data: {...}` SSE chat-completion chunks followed by `data: [DONE]`; text and split tool-call arguments are normalized before they reach Core.
+- non-streaming endpoints use the same internal stream contract and remain fully supported, but cannot start speech before the complete response arrives.
 
 Routes are expressed as capabilities, not model names. The initial UI adds each configured endpoint to `fast`, `reasoning`, and `fallback`, and adds image-capable endpoints to `vision`. Tool-bearing steps only use endpoints that explicitly advertise support. Core retries another route only when the prior attempt is known not to have been accepted; ambiguous outcomes stop to avoid duplicate cost.
 
-Existing endpoint cards expose **Vision** and **Tools** capability toggles. Enable **Tools** only when the endpoint implements OpenAI-compatible function calling; Atlas will continue to use a text-only endpoint for conversation but will never send it a tool-bearing step.
+Existing endpoint cards expose **Vision**, **Tools**, and **Stream** capability toggles. Enable only the behavior that endpoint actually implements; Atlas will continue to use a text-only/non-streaming endpoint for conversation but will never send it unsupported modalities.
 
 See [`../../docs/agent-runtime.md`](../../docs/agent-runtime.md) for turn persistence, context assembly, memory admission, tools, recovery, and loop budgets.
 
@@ -109,8 +119,9 @@ See [`../../docs/model-routing.md`](../../docs/model-routing.md) for the managed
 ## Known POC limitations
 
 - The UI does not yet reorder routes or assign separate endpoints per capability.
-- Chat completions are non-streaming.
 - Speech recognition uses the Android-installed recognition service and may itself be cloud-backed.
+- Speech uses platform TTS voices and does not yet expose voice, rate, cue, or language controls.
+- Audio focus, Bluetooth-route validation, and noisy-environment tuning require physical-device alpha testing.
 - A single latest session is resumed after process restart.
 - Session permissions use conservative persisted defaults but are not yet editable in the UI.
 - Observation retention is unbounded.

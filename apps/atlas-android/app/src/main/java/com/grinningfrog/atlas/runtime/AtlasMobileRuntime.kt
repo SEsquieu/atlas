@@ -6,13 +6,19 @@ import com.grinningfrog.atlas.device.CameraController
 import com.grinningfrog.atlas.device.DeviceHealthMonitor
 import com.grinningfrog.atlas.device.MotionMonitor
 import com.grinningfrog.atlas.device.SpeechController
+import com.grinningfrog.atlas.device.ListeningCallbacks
+import com.grinningfrog.atlas.device.SpeechCallbacks
 import com.grinningfrog.atlas.model.AtlasSession
 import com.grinningfrog.atlas.model.AtlasMessage
 import com.grinningfrog.atlas.model.AtlasToolCall
 import com.grinningfrog.atlas.model.ContextMode
+import com.grinningfrog.atlas.model.DeliveryStatus
 import com.grinningfrog.atlas.model.InferenceRequest
+import com.grinningfrog.atlas.model.InferenceResponse
+import com.grinningfrog.atlas.model.InferenceStreamEvent
 import com.grinningfrog.atlas.model.InferenceMessage
 import com.grinningfrog.atlas.model.MediaPurpose
+import com.grinningfrog.atlas.model.ListeningState
 import com.grinningfrog.atlas.model.RouteCapability
 import com.grinningfrog.atlas.model.RuntimePhase
 import com.grinningfrog.atlas.model.RuntimeSnapshot
@@ -20,6 +26,8 @@ import com.grinningfrog.atlas.model.SessionStatus
 import com.grinningfrog.atlas.model.MessageKind
 import com.grinningfrog.atlas.model.MessageRole
 import com.grinningfrog.atlas.model.SessionSummary
+import com.grinningfrog.atlas.model.SpeechSegment
+import com.grinningfrog.atlas.model.SpeechSegmentStatus
 import com.grinningfrog.atlas.model.ToolCallStatus
 import com.grinningfrog.atlas.model.ToolCallProposal
 import com.grinningfrog.atlas.model.TurnStatus
@@ -34,6 +42,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -43,6 +52,7 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
 
 class AtlasMobileRuntime(
     private val database: AtlasDatabase,
@@ -162,15 +172,34 @@ class AtlasMobileRuntime(
 
     suspend fun listenAndAsk() {
         val session = requireActiveSession()
-        publish(phase = RuntimePhase.LISTENING)
+        val priorTurn = activeTurnJob
+        if (speech.isSpeaking || priorTurn?.isActive == true) {
+            database.appendEvent(session.id, "audio.barge_in_requested", JSONObject().put("activeTurnId", activeTurnId))
+            cancelActiveTurn("user started speaking")
+            priorTurn?.join()
+        }
+        publish(phase = RuntimePhase.LISTENING, listeningState = ListeningState.PREPARING, partialTranscript = null, streamingResponse = null)
         database.appendEvent(session.id, "audio.transcription.requested")
         try {
-            val text = speech.listenOnce()
-            database.appendEvent(session.id, "audio.transcription.completed", JSONObject().put("text", text))
-            ask(text, voice = true)
+            val result = speech.listenOnce(callbacks = ListeningCallbacks(
+                onReady = {
+                    database.appendEvent(session.id, "audio.listening_ready", JSONObject().put("cue", "haptic+chirp"))
+                    publishTransient(phase = RuntimePhase.LISTENING, listeningState = ListeningState.READY)
+                },
+                onSpeechStarted = { publishTransient(phase = RuntimePhase.LISTENING, listeningState = ListeningState.HEARING) },
+                onSpeechEnded = { publishTransient(phase = RuntimePhase.TRANSCRIBING, listeningState = ListeningState.PROCESSING) },
+                onPartial = { partial -> publishTransient(phase = RuntimePhase.LISTENING, listeningState = ListeningState.HEARING, partialTranscript = partial) },
+            ))
+            database.appendEvent(session.id, "audio.transcription.completed", JSONObject().put("text", result.text).put("confidence", result.confidence))
+            publish(phase = RuntimePhase.TRANSCRIBING, listeningState = ListeningState.PROCESSING, partialTranscript = result.text)
+            ask(result.text, voice = true)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Exception) {
             database.appendEvent(session.id, "audio.transcription.failed", JSONObject().put("error", error.safeMessage()))
             fail(error)
+        } finally {
+            publishTransient(listeningState = ListeningState.INACTIVE, partialTranscript = null)
         }
     }
 
@@ -201,6 +230,7 @@ class AtlasMobileRuntime(
 
     fun cancelActiveTurn(reason: String = "user cancelled") {
         generation.incrementAndGet()
+        speech.stopSpeaking()
         (activeTurnId ?: mutableState.value.activeTurn?.id)?.let { turnId -> runCatching {
             database.markRunningToolsUnknown(turnId, "Execution interrupted: $reason")
             database.updateTurn(turnId, TurnStatus.CANCELLED, error = reason)
@@ -300,18 +330,22 @@ class AtlasMobileRuntime(
                 (latestToolCall?.name == "capture_current_view" && latestToolCall.status == ToolCallStatus.COMPLETED))
             val toolsAvailable = router.hasToolCapableRoute(capability, requiresVision = attachImage)
             val context = contextAssembler.assemble(session, messages, memories, summary, observation, System.currentTimeMillis(), toolsAvailable)
+            val spoken = voice || session.permissions.speakResponses
+            val latestUserText = messages.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
+            val responseContract = ResponsePolicy.contract(latestUserText, spoken, risk)
             val baseRequest = InferenceRequest(
                 sessionId = session.id,
                 turnId = turnId,
                 step = step,
                 capability = capability,
-                systemPrompt = context.systemPrompt,
-                userText = messages.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty(),
+                systemPrompt = if (spoken) context.systemPrompt + "\n\n" + ResponsePolicy.instructions(responseContract) else context.systemPrompt,
+                userText = latestUserText,
                 messages = context.messages,
                 observation = observation.takeIf { attachImage },
                 image = observation?.takeIf { attachImage }?.let { mediaRepository.inferenceImage(it.media) },
                 contextNote = observation?.let(::observationContext),
                 risk = risk,
+                responseContract = responseContract,
             )
             val request = baseRequest.copy(tools = if (toolsAvailable) toolHarness.definitions else emptyList())
             database.appendEvent(session.id, "context.assembled", JSONObject().apply {
@@ -325,7 +359,7 @@ class AtlasMobileRuntime(
                 .put("capability", capability.name).put("risk", request.risk.name).put("latencyClass", request.latencyClass.name).put("toolCount", request.tools.size))
             val operationGeneration = generation.get()
             val response = try {
-                router.route(request)
+                streamModelStep(session, turnId, request, spoken)
             } catch (error: Exception) {
                 database.appendEvent(session.id, "provider.failed", JSONObject().put("turnId", turnId).put("step", step).put("requestId", request.requestId).put("error", error.safeMessage()))
                 throw error
@@ -338,25 +372,16 @@ class AtlasMobileRuntime(
                 put("turnId", turnId); put("step", step); put("requestId", request.requestId); put("endpointId", response.endpointId)
                 put("model", response.selectedModel); put("routingProfile", response.routingProfile); put("routingReason", response.routingReason)
                 put("routingRevision", response.routingRevision); put("latencyMs", response.latencyMs); put("degraded", response.degraded)
+                put("firstTokenLatencyMs", response.firstTokenLatencyMs)
                 put("finishReason", response.finishReason); put("providerContinuationId", response.providerContinuationId)
                 put("text", response.text); put("toolCallCount", response.toolCalls.size)
             })
             require(response.toolCalls.map { it.id }.distinct().size == response.toolCalls.size) {
                 "Provider returned duplicate tool-call ids in one response"
             }
-            database.insertMessage(AtlasMessage(
-                sessionId = session.id,
-                turnId = turnId,
-                role = MessageRole.ASSISTANT,
-                content = response.text,
-                createdAtMs = System.currentTimeMillis(),
-                toolCallsJson = response.toolCalls.takeIf { it.isNotEmpty() }?.let(::toolCallsJson),
-            ))
-
             if (response.toolCalls.isEmpty()) {
                 database.updateTurn(turnId, TurnStatus.COMPLETED, stepCount = step)
-                publish(response = response.text, error = null, phase = RuntimePhase.READY)
-                if (response.text.isNotBlank() && (voice || session.permissions.speakResponses)) speakLocked(session, response.text)
+                publish(response = response.text, streamingResponse = null, error = null, phase = if (speech.isSpeaking) RuntimePhase.SPEAKING else RuntimePhase.READY)
                 scheduleCompaction(session)
                 return
             }
@@ -380,11 +405,137 @@ class AtlasMobileRuntime(
             }
             if (calls.any { it.status == ToolCallStatus.WAITING_FOR_CONFIRMATION }) {
                 database.updateTurn(turnId, TurnStatus.WAITING_FOR_CONFIRMATION, stepCount = step)
-                publish(response = response.text.takeIf(String::isNotBlank), phase = RuntimePhase.READY)
+                publish(response = response.text.takeIf(String::isNotBlank), streamingResponse = null, phase = if (speech.isSpeaking) RuntimePhase.SPEAKING else RuntimePhase.READY)
                 return
             }
         }
         throw IllegalStateException("Agent loop exceeded its step or wall-time budget")
+    }
+
+    /**
+     * Converts any provider into the same streamed Core contract. The assistant message exists before
+     * audio begins so delivery callbacks and crash recovery always have a durable owner.
+     */
+    private suspend fun streamModelStep(
+        session: AtlasSession,
+        turnId: String,
+        request: InferenceRequest,
+        spoken: Boolean,
+    ): InferenceResponse {
+        val messageId = UUID.randomUUID().toString()
+        database.insertMessage(AtlasMessage(
+            id = messageId,
+            sessionId = session.id,
+            turnId = turnId,
+            role = MessageRole.ASSISTANT,
+            content = "",
+            createdAtMs = System.currentTimeMillis(),
+            deliveryStatus = if (spoken) DeliveryStatus.PENDING else DeliveryStatus.TEXT_ONLY,
+        ))
+        val generated = StringBuilder()
+        val segmenter = SentenceSegmenter()
+        var sentenceIndex = 0
+        var completed: InferenceResponse? = null
+        var lastCheckpointAt = 0L
+        try {
+            router.stream(request).collect { event ->
+                when (event) {
+                    is InferenceStreamEvent.TextDelta -> {
+                        generated.append(event.text)
+                        val now = System.currentTimeMillis()
+                        if (now - lastCheckpointAt >= STREAM_CHECKPOINT_INTERVAL_MS) {
+                            database.updateAssistantMessage(messageId, generated.toString())
+                            lastCheckpointAt = now
+                        }
+                        publishTransient(
+                            response = generated.toString(),
+                            streamingResponse = generated.toString(),
+                            phase = if (speech.isSpeaking) RuntimePhase.SPEAKING else RuntimePhase.THINKING,
+                        )
+                        if (spoken) segmenter.append(event.text).forEach { sentence ->
+                            enqueueSentence(session, turnId, messageId, sentenceIndex++, sentence)
+                        }
+                    }
+                    is InferenceStreamEvent.ToolCallDelta -> Unit
+                    is InferenceStreamEvent.Completed -> completed = event.response
+                }
+            }
+            if (spoken) segmenter.finish().forEach { sentence ->
+                enqueueSentence(session, turnId, messageId, sentenceIndex++, sentence)
+            }
+            val response = checkNotNull(completed) { "Provider stream ended without a completed response" }
+            database.updateAssistantMessage(
+                messageId,
+                response.text,
+                response.toolCalls.takeIf { it.isNotEmpty() }?.let(::toolCallsJson),
+            )
+            database.refreshMessageDelivery(messageId, when {
+                !spoken || response.text.isBlank() -> DeliveryStatus.TEXT_ONLY
+                sentenceIndex > 0 -> DeliveryStatus.PENDING
+                else -> DeliveryStatus.FAILED
+            })
+            publish(response = response.text, streamingResponse = null)
+            return response
+        } catch (cancelled: CancellationException) {
+            speech.stopSpeaking()
+            database.updateAssistantMessage(messageId, generated.toString().trim())
+            database.refreshMessageDelivery(messageId, DeliveryStatus.INTERRUPTED)
+            database.appendEvent(session.id, "provider.stream_interrupted", JSONObject().put("turnId", turnId).put("requestId", request.requestId)
+                .put("messageId", messageId).put("receivedCharacters", generated.length))
+            throw cancelled
+        } catch (error: Exception) {
+            speech.stopSpeaking()
+            database.updateAssistantMessage(messageId, generated.toString().trim())
+            database.refreshMessageDelivery(messageId, DeliveryStatus.FAILED)
+            throw error
+        }
+    }
+
+    private suspend fun enqueueSentence(
+        session: AtlasSession,
+        turnId: String,
+        messageId: String,
+        sentenceIndex: Int,
+        sentence: String,
+    ) {
+        if (sentence.isBlank()) return
+        val segment = SpeechSegment(
+            messageId = messageId,
+            sessionId = session.id,
+            turnId = turnId,
+            sentenceIndex = sentenceIndex,
+            text = sentence,
+            status = SpeechSegmentStatus.QUEUED,
+            queuedAtMs = System.currentTimeMillis(),
+        )
+        database.saveSpeechSegment(segment)
+        val started = AtomicBoolean(false)
+        try {
+            speech.enqueueSpeech(segment.id, sentence, flushQueue = false, callbacks = SpeechCallbacks(
+                onStarted = {
+                    started.set(true)
+                    database.updateSpeechSegment(segment.id, SpeechSegmentStatus.STARTED)
+                    publish(phase = RuntimePhase.SPEAKING)
+                },
+                onCompleted = {
+                    database.updateSpeechSegment(segment.id, SpeechSegmentStatus.COMPLETED)
+                    publish(phase = if (speech.isSpeaking) RuntimePhase.SPEAKING else if (activeTurnJob?.isActive == true) RuntimePhase.THINKING else RuntimePhase.READY)
+                },
+                onInterrupted = {
+                    database.updateSpeechSegment(segment.id, if (started.get()) SpeechSegmentStatus.INTERRUPTED else SpeechSegmentStatus.SKIPPED)
+                    publish(phase = if (activeTurnJob?.isActive == true) RuntimePhase.THINKING else RuntimePhase.READY)
+                },
+                onFailed = { error ->
+                    database.updateSpeechSegment(segment.id, SpeechSegmentStatus.FAILED, error = error.safeMessage())
+                    database.appendEvent(session.id, "audio.speech_failed", JSONObject().put("messageId", messageId).put("segmentId", segment.id)
+                        .put("error", error.safeMessage()).put("textFallbackPreserved", true))
+                    publish(phase = if (activeTurnJob?.isActive == true) RuntimePhase.THINKING else RuntimePhase.READY)
+                },
+            ))
+        } catch (error: Exception) {
+            database.updateSpeechSegment(segment.id, SpeechSegmentStatus.FAILED, error = error.safeMessage())
+            throw error
+        }
     }
 
     private fun prepareToolCall(
@@ -536,8 +687,12 @@ class AtlasMobileRuntime(
     }
 
     fun stopSpeaking() {
-        speech.stopSpeaking()
-        mutableState.value.session?.let { database.appendEvent(it.id, "audio.speech_interrupted") }
+        val turnStatus = activeTurnId?.let(database::loadTurn)?.status
+        val turnStillGenerating = activeTurnJob?.isActive == true && turnStatus !in setOf(
+            TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.CANCELLED, TurnStatus.INTERRUPTED,
+        )
+        if (turnStillGenerating) cancelActiveTurn("user stopped speech") else speech.stopSpeaking()
+        mutableState.value.session?.let { database.appendEvent(it.id, "audio.speech_interrupted", JSONObject().put("generationCancelled", turnStillGenerating)) }
         publish(phase = RuntimePhase.READY)
     }
 
@@ -709,6 +864,23 @@ class AtlasMobileRuntime(
         publish(error = error.safeMessage(), phase = RuntimePhase.ERROR)
     }
 
+    /** Fast UI-only state update. Token and recognition deltas must not re-query every durable projection. */
+    private fun publishTransient(
+        phase: RuntimePhase = mutableState.value.phase,
+        listeningState: ListeningState = mutableState.value.listeningState,
+        partialTranscript: String? = mutableState.value.partialTranscript,
+        streamingResponse: String? = mutableState.value.streamingResponse,
+        response: String? = mutableState.value.latestResponse,
+    ) {
+        mutableState.value = mutableState.value.copy(
+            phase = phase,
+            listeningState = listeningState,
+            partialTranscript = partialTranscript,
+            streamingResponse = streamingResponse,
+            latestResponse = response,
+        )
+    }
+
     private fun publish(
         session: AtlasSession? = mutableState.value.session,
         observation: VisualObservation? = mutableState.value.latestObservation,
@@ -717,6 +889,9 @@ class AtlasMobileRuntime(
         phase: RuntimePhase = mutableState.value.phase,
         nextHeartbeatAt: Long? = mutableState.value.nextHeartbeatAtMs,
         deviceHealth: com.grinningfrog.atlas.model.DeviceHealth = health.snapshot(),
+        listeningState: ListeningState = mutableState.value.listeningState,
+        partialTranscript: String? = mutableState.value.partialTranscript,
+        streamingResponse: String? = mutableState.value.streamingResponse,
     ) {
         val age = observation?.let { (System.currentTimeMillis() - it.observedAtMs).coerceAtLeast(0) }
         val events = session?.let { database.loadRecentEvents(it.id, 80) }.orEmpty()
@@ -740,6 +915,9 @@ class AtlasMobileRuntime(
             pendingToolCalls = pendingTools,
             memories = memories,
             sessionSummary = summary,
+            listeningState = listeningState,
+            partialTranscript = partialTranscript,
+            streamingResponse = streamingResponse,
         )
     }
 }
@@ -755,3 +933,5 @@ object AgentLoopPolicy {
     const val MAX_COMPACTION_MESSAGES = 96
     const val RECENT_TURNS_AFTER_COMPACTION = 4
 }
+
+private const val STREAM_CHECKPOINT_INTERVAL_MS = 250L

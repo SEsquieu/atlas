@@ -30,9 +30,9 @@ class SecureSettings(context: Context) {
         SecretStore.remove(endpoint?.apiKeyAlias ?: id, prefs)
     }
 
-    fun updateProviderCapabilities(id: String, supportsVision: Boolean, supportsTools: Boolean) {
+    fun updateProviderCapabilities(id: String, supportsVision: Boolean, supportsTools: Boolean, supportsStreaming: Boolean) {
         val providers = loadProviders().map {
-            if (it.id == id) it.copy(supportsVision = supportsVision, supportsTools = supportsTools) else it
+            if (it.id == id) it.copy(supportsVision = supportsVision, supportsTools = supportsTools, supportsStreaming = supportsStreaming) else it
         }
         prefs.edit().putString("providers", JSONArray(providers.map(::endpointJson)).toString()).apply()
     }
@@ -45,7 +45,7 @@ class SecureSettings(context: Context) {
                 add(ProviderEndpoint(
                     id = json.getString("id"), name = json.getString("name"), baseUrl = json.getString("baseUrl"), model = json.getString("model"),
                     apiKeyAlias = json.optString("apiKeyAlias").ifBlank { null }, supportsVision = json.optBoolean("supportsVision"),
-                    supportsTools = json.optBoolean("supportsTools"), timeoutMs = json.optLong("timeoutMs", 60_000),
+                    supportsTools = json.optBoolean("supportsTools"), supportsStreaming = json.optBoolean("supportsStreaming"), timeoutMs = json.optLong("timeoutMs", 60_000),
                 ))
             }
         }
@@ -68,7 +68,8 @@ class SecureSettings(context: Context) {
 
     private fun endpointJson(endpoint: ProviderEndpoint) = JSONObject().apply {
         put("id", endpoint.id); put("name", endpoint.name); put("baseUrl", endpoint.baseUrl); put("model", endpoint.model)
-        put("apiKeyAlias", endpoint.apiKeyAlias); put("supportsVision", endpoint.supportsVision); put("supportsTools", endpoint.supportsTools); put("timeoutMs", endpoint.timeoutMs)
+        put("apiKeyAlias", endpoint.apiKeyAlias); put("supportsVision", endpoint.supportsVision); put("supportsTools", endpoint.supportsTools)
+        put("supportsStreaming", endpoint.supportsStreaming); put("timeoutMs", endpoint.timeoutMs)
     }
 }
 

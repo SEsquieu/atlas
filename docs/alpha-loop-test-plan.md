@@ -19,6 +19,12 @@ Do not treat a fluent answer as a pass when the event trace shows stale evidence
 | --- | --- | --- |
 | Text continuity | Establish two named objects, correct Atlas once, then refer to each indirectly over six turns | The correction and references survive; the transcript is visibly durable |
 | Voice continuity | Complete the same task through speech, interrupt one spoken response, then continue | Interruption is local and the next turn retains prior dialogue |
+| Speak-ready cue | Tap Talk while looking away from the screen | The haptic and subtle chirp occur only when recognition is ready; the card simultaneously says **Speak now** |
+| Partial transcript | Speak a multi-clause request at a natural pace | Partial text updates without creating durable user messages; one final transcript starts one turn |
+| Sentence streaming | Use an SSE endpoint with a response of at least three sentences | TTS starts after the first complete sentence, before generation completes; the event log records each segment |
+| Barge-in delivery truth | Interrupt during sentence two, immediately ask “what did you already tell me?” | Sentence one is recorded delivered; sentence two and queued text are not assumed heard by the next model |
+| Non-stream compatibility | Disable Stream for the same endpoint and repeat | The answer remains correct and spoken, but starts after the full response; tool behavior is unchanged |
+| Speech failure fallback | Disable or break the selected TTS engine after inference begins | The textual answer remains visible and delivery is marked failed rather than silently completed |
 | Fresh vision | Ask what is visible, change rooms, then ask a present-tense question | Atlas captures according to freshness policy and cites no superseded scene as current |
 | Detail vision | Show small text after a heartbeat thumbnail exists and ask Atlas to read it | Atlas obtains a detail-budget capture instead of reusing the thumbnail |
 | Model-requested refresh | Ask a question whose answer requires a closer/current view | The model proposes `capture_current_view`; Core records, executes, and returns its result before the final answer |
@@ -46,5 +52,6 @@ A closed alpha candidate should have:
 4. P50/P95 latency and inference-cost measurements split by text, reused vision, refreshed vision, and multi-step tool turns.
 5. Successful upgrade of an existing POC install without losing its sessions, observations, or provider secrets.
 6. A documented result for at least three phone models and two Android major versions.
+7. No duplicate paid fallback after a stream has emitted text or any portion of a tool call.
 
 Before an external beta, add automated SQLite migration/recovery tests, instrumentation coverage on a device farm, retention/delete/export controls, signed builds, privacy disclosures, and an operational test of the managed credit ledger.

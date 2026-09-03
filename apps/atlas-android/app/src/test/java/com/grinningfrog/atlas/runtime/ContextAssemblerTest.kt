@@ -2,6 +2,7 @@ package com.grinningfrog.atlas.runtime
 
 import com.grinningfrog.atlas.model.AtlasMessage
 import com.grinningfrog.atlas.model.AtlasSession
+import com.grinningfrog.atlas.model.DeliveryStatus
 import com.grinningfrog.atlas.model.MemoryItem
 import com.grinningfrog.atlas.model.MemoryKind
 import com.grinningfrog.atlas.model.MemoryStatus
@@ -74,6 +75,23 @@ class ContextAssemblerTest {
         assertTrue(context.systemPrompt.contains("confidence=0.8"))
         assertTrue(context.systemPrompt.contains("evidence=observation-1"))
         assertTrue(context.systemPrompt.contains("expiresInMs=750"))
+    }
+
+    @Test fun interruptedSpeechOnlyReturnsConfirmedHeardTextToTheNextModel() {
+        val interrupted = message(2, "turn-1", MessageRole.ASSISTANT, "First sentence. Second sentence. Third sentence.").copy(
+            deliveryStatus = DeliveryStatus.INTERRUPTED,
+            deliveredContent = "First sentence.",
+            interruptedSentence = "Second sentence.",
+        )
+        val context = ContextAssembler().assemble(
+            session(),
+            listOf(message(1, "turn-1", MessageRole.USER, "Tell me the steps."), interrupted, message(3, "turn-2", MessageRole.USER, "Continue.")),
+            emptyList(), null, null, 10,
+        )
+
+        assertTrue(context.messages[1].content.startsWith("First sentence."))
+        assertTrue(context.messages[1].content.contains("user interrupted playback"))
+        assertFalse(context.messages[1].content.contains("Third sentence"))
     }
 
     private fun session() = AtlasSession("session", "test", "stay coherent", SessionStatus.ACTIVE, 0, 0)
