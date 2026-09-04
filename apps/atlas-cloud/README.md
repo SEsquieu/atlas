@@ -7,7 +7,7 @@ Direct bring-your-own inference remains fully usable without an Atlas account.
 ## What this service provides
 
 - Supabase email/password authentication with short-lived user access tokens;
-- server-held OpenAI credentials and capability-to-model routing;
+- server-held OpenAI credentials and deterministic, risk-aware model routing;
 - personal and shared organization tenancy with membership-validated request scope;
 - an atomic, integer-microunit organization credit ledger;
 - reserve-before-call and settle-after-usage metering;
@@ -15,7 +15,9 @@ Direct bring-your-own inference remains fully usable without an Atlas account.
 - Stripe Billing Portal access and signature-verified, idempotent webhooks; and
 - request IDs, model, token counts, latency, status, and charge records for reconciliation.
 
-Atlas credits are an application accounting unit, not dollars or provider tokens. Product prices, included credits, route models, and per-model credit rates are deployment configuration so changing providers does not require a client release.
+Atlas credits are an application accounting unit, not dollars or provider tokens. Product prices, included credits, the model catalog, and per-model credit rates are deployment configuration so changing providers does not require a client release.
+
+The router filters on modality and supported reasoning effort, then scores eligible models using task-specific quality, speed, and economy measurements. Risk and latency class alter those weights. It also selects reasoning effort, output ceiling, and image detail. The response exposes the selected model, profile, and non-sensitive decision reason as headers so the device can preserve them in its event log. See [`../../docs/model-routing.md`](../../docs/model-routing.md).
 
 ## Local setup
 
@@ -37,6 +39,8 @@ cd ../atlas-android
 ```
 
 The publishable Supabase key is intentionally client-visible. Never put the service-role key or an inference-provider key in the APK.
+
+`ATLAS_MODEL_CATALOG_JSON` initially enables only GPT-5.6 Luna. Catalog scores must come from repeatable Atlas evals, not model branding. Enabling a more expensive model is a deployment decision and does not require an Android release.
 
 ## Billing invariant
 
