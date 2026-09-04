@@ -16,15 +16,23 @@ export const MODEL_ROUTER_POLICY_VERSION = "1";
 export class NoEligibleModelError extends Error {}
 
 const qualitySchema = z.object({
-  fast: z.number().min(0).max(1), vision: z.number().min(0).max(1),
-  reasoning: z.number().min(0).max(1), fallback: z.number().min(0).max(1),
+  fast: z.number().min(0).max(1),
+  vision: z.number().min(0).max(1),
+  reasoning: z.number().min(0).max(1),
+  fallback: z.number().min(0).max(1),
 });
 
 export const modelCatalogSchema = z.array(z.object({
-  id: z.string().min(1), enabled: z.boolean().default(true), supportsVision: z.boolean(),
-  supportsTools: z.boolean().default(true), reasoningEfforts: z.array(reasoningEffortSchema).min(1),
-  quality: qualitySchema, speed: z.number().min(0).max(1), economy: z.number().min(0).max(1),
-  inputCreditsPerMillion: z.number().nonnegative(), outputCreditsPerMillion: z.number().nonnegative(),
+  id: z.string().min(1),
+  enabled: z.boolean().default(true),
+  supportsVision: z.boolean(),
+  supportsTools: z.boolean().default(true),
+  reasoningEfforts: z.array(reasoningEffortSchema).min(1),
+  quality: qualitySchema,
+  speed: z.number().min(0).max(1),
+  economy: z.number().min(0).max(1),
+  inputCreditsPerMillion: z.number().nonnegative(),
+  outputCreditsPerMillion: z.number().nonnegative(),
 })).min(1).superRefine((models, context) => {
   const seen = new Set<string>();
   for (const model of models) {
@@ -36,13 +44,22 @@ export const modelCatalogSchema = z.array(z.object({
 export type ModelCatalogEntry = z.infer<typeof modelCatalogSchema>[number];
 
 export interface RoutingIntent {
-  capability: Capability; risk: InferenceRisk; latencyClass: LatencyClass; mediaPurpose: MediaPurpose;
-  hasImage: boolean; requiresTools?: boolean;
+  capability: Capability;
+  risk: InferenceRisk;
+  latencyClass: LatencyClass;
+  mediaPurpose: MediaPurpose;
+  hasImage: boolean;
+  requiresTools?: boolean;
 }
-
 export interface ModelSelection {
-  model: ModelCatalogEntry; reasoningEffort: ReasoningEffort; maxOutputTokens: number;
-  imageDetail: "low" | "high"; score: number; eligibleCount: number; profile: string; reason: string;
+  model: ModelCatalogEntry;
+  reasoningEffort: ReasoningEffort;
+  maxOutputTokens: number;
+  imageDetail: "low" | "high";
+  score: number;
+  eligibleCount: number;
+  profile: string;
+  reason: string;
 }
 
 interface Weights { quality: number; speed: number; economy: number }
@@ -77,7 +94,9 @@ function qualityFloor(risk: InferenceRisk) {
   return 0;
 }
 
-export function parseModelCatalog(raw: string) { return modelCatalogSchema.parse(JSON.parse(raw)); }
+export function parseModelCatalog(raw: string) {
+  return modelCatalogSchema.parse(JSON.parse(raw));
+}
 
 export function selectModel(intent: RoutingIntent, catalog: ModelCatalogEntry[]): ModelSelection {
   const effort = reasoningEffort(intent);
@@ -87,18 +106,35 @@ export function selectModel(intent: RoutingIntent, catalog: ModelCatalogEntry[])
     .filter((model) => !intent.requiresTools || model.supportsTools)
     .filter((model) => model.reasoningEfforts.includes(effort))
     .filter((model) => model.quality[intent.capability] >= minimumQuality);
-  if (eligible.length === 0) throw new NoEligibleModelError(
-    `No enabled model satisfies image=${intent.hasImage}, tools=${Boolean(intent.requiresTools)}, reasoning=${effort}, and quality>=${minimumQuality}`,
-  );
+  if (eligible.length === 0) {
+    throw new NoEligibleModelError(`No enabled model satisfies image=${intent.hasImage}, tools=${Boolean(intent.requiresTools)}, reasoning=${effort}, and quality>=${minimumQuality}`);
+  }
+
   const routeWeights = weights(intent);
-  const ranked = eligible.map((model) => ({ model, score: model.quality[intent.capability] * routeWeights.quality
-    + model.speed * routeWeights.speed + model.economy * routeWeights.economy,
+  const ranked = eligible.map((model) => ({
+    model,
+    score: model.quality[intent.capability] * routeWeights.quality
+      + model.speed * routeWeights.speed
+      + model.economy * routeWeights.economy,
   })).sort((left, right) => right.score - left.score || left.model.id.localeCompare(right.model.id));
   const winner = ranked[0];
   const profile = `${intent.capability}:${intent.risk}:${intent.latencyClass}`;
-  const reason = [`profile=${profile}`, `score=${winner.score.toFixed(4)}`, `eligible=${eligible.length}`,
-    `qualityFloor=${minimumQuality}`, `weights=q${routeWeights.quality}/s${routeWeights.speed}/e${routeWeights.economy}`, `effort=${effort}`].join(";");
-  return { model: winner.model, reasoningEffort: effort, maxOutputTokens: maxOutputTokens(intent),
-    imageDetail: intent.mediaPurpose === "detail_vision" ? "high" : "low", score: winner.score,
-    eligibleCount: eligible.length, profile, reason };
+  const reason = [
+    `profile=${profile}`,
+    `score=${winner.score.toFixed(4)}`,
+    `eligible=${eligible.length}`,
+    `qualityFloor=${minimumQuality}`,
+    `weights=q${routeWeights.quality}/s${routeWeights.speed}/e${routeWeights.economy}`,
+    `effort=${effort}`,
+  ].join(";");
+  return {
+    model: winner.model,
+    reasoningEffort: effort,
+    maxOutputTokens: maxOutputTokens(intent),
+    imageDetail: intent.mediaPurpose === "detail_vision" ? "high" : "low",
+    score: winner.score,
+    eligibleCount: eligible.length,
+    profile,
+    reason,
+  };
 }
