@@ -1,58 +1,101 @@
 # Atlas
 
-Atlas is a device-owned runtime for physical AI agents. It keeps a model situated in a changing physical environment without allowing the inference provider to own the session.
+Atlas is an open, device-owned runtime for physical AI agents. It gives replaceable models a durable place to live without allowing an inference provider to own the physical session.
 
-Atlas Core owns durable session state, device permissions, observations, context age and confidence, heartbeat policy, speech, tool execution, lifecycle, and the event log. Inference endpoints are replaceable downstream intelligence.
+Atlas Core owns session state, device bindings, observations, freshness and confidence, heartbeat behavior, memory admission, speech, tool execution and policy, budgets, events, replay, and lifecycle. Inference remains downstream intelligence that can run on-device, across a LAN, or through a user-configured cloud provider.
 
-## Current implementation
+> **Status:** pre-v0.1 alpha software. Atlas is appropriate for development and invited physical-device testing, not unattended, emergency, safety-critical, or production operation.
 
-There are now two implementation tracks in this repository:
+## Why Atlas exists
 
-- `apps/atlas-android` is the v0.1 direction: a native Android reference app that runs the physical session loop on the phone and connects directly to user-configured inference.
-- `packages/*` is the original TypeScript prototype. It contains useful session, freshness, heartbeat, replay, adapter, CLI, and test-harness work. Its OpenClaw integration is a legacy adapter, not Atlas's product boundary.
+Most agent frameworks begin with a model conversation and attach tools. Atlas begins with a continuing physical session:
 
-The Android POC currently includes:
+- What device and environment is this agent bound to?
+- What did it actually observe, when, and with what confidence?
+- Is that context still fresh and suitable for the current question?
+- What did the user hear before interrupting?
+- Which memory is valid for this session, task, person, or workspace?
+- Which physical or external actions are permitted?
+- What happened across failure, restart, and provider replacement?
 
-- a foreground, device-owned session service;
-- durable SQLite sessions, turns, messages, tool calls, admitted memory, observations, and monotonically ordered events;
-- provider-independent multi-turn context reconstruction with whole-turn truncation and rolling conversation checkpoints;
-- an iterative model/tool/model harness with policy, confirmation, idempotency, cancellation, and restart-safe failure states;
-- CameraX capture plus motion-aware freshness decisions;
-- a Core-owned media repository that rotates, downsizes, recompresses, hashes, and enforces per-purpose byte budgets before inference;
-- voice input and interruptible spoken responses;
-- opt-in Live Context with resource-aware heartbeat, deterministic scene-change gating, and durable proactive-inference limits;
-- capability routes (`fast`, `vision`, `reasoning`, `fallback`);
+The model can reason about these questions. It does not get to define their answers.
+
+## What is real today
+
+The native Android reference app currently provides:
+
+- a foreground, device-owned persistent session service;
+- durable SQLite sessions, turns, messages, observations, memory, tool calls, speech delivery, and ordered events;
+- CameraX capture with rotation, resize, recompression, hashing, and per-purpose byte budgets;
+- motion-aware visual freshness and detail-suitability checks;
+- push-to-talk, streaming sentence-aware TTS, and barge-in tracking;
+- manual and Live Context modes with scene-change and proactive-inference limits;
+- bounded multi-step model/tool turns with confirmation and restart recovery;
+- capability routes for `fast`, `vision`, `reasoning`, and `fallback`;
 - direct OpenAI-compatible local, LAN, and cloud endpoints;
-- Android Keystore-encrypted provider credentials; and
-- in-app session, inference, health, context, and event-stream views.
+- optional Atlas Managed account/inference plumbing; and
+- in-app session, inference, health, context, and event views.
 
-`apps/atlas-cloud` is the optional managed-inference seam: Supabase authentication, a server-held provider key, deterministic risk/latency-aware model selection, atomic credit metering, Stripe subscriptions, and purchasable credit blocks. It is not required for BYOI and does not own physical-session state. It must be deployed and configured before the managed card in the Android app is enabled.
+The TypeScript packages contain the provider-independent Core model, deterministic freshness/heartbeat logic, event materialization, scoped memory, runtime-policy resolution, task-run lifecycle, replay, CLI, and scenario harnesses. OpenClaw components remain only as documented legacy proof adapters.
 
-Atlas intentionally does **not** depend on Modulo, a remote session control plane, or a hosted device-state service.
+## Open platform and commercial services
 
-## Run the Android POC
+Atlas uses an open-platform model:
 
-Open [`apps/atlas-android`](./apps/atlas-android) as a project in Android Studio, let Gradle sync, and run it on a physical Android device. Camera and microphone access are required for a full physical session.
+- **Atlas Open Platform:** Apache-2.0 Core, Android reference app, SDK contracts, tests, and BYOI.
+- **Atlas Managed Inference:** optional paid operated inference, routing, metering, and support.
+- **Atlas Enterprise:** future commercial organization, fleet, procedure, policy, integration, audit, and operational control plane built on the same Core.
 
-Configure an OpenAI-compatible endpoint in the app. For LAN inference, use the computer's LAN address from a phone; `10.0.2.2` is only the Android emulator's alias for its host.
+Open Atlas does not require an Atlas account. Managed inference does not own the physical session. Enterprise must extend versioned open contracts rather than fork a private runtime.
 
-See [`apps/atlas-android/README.md`](./apps/atlas-android/README.md) for setup and compatibility details, [`docs/android-runtime-architecture.md`](./docs/android-runtime-architecture.md) for the mobile architecture, [`docs/agent-runtime.md`](./docs/agent-runtime.md) for the durable turn, memory, and tool contract, and [`docs/alpha-loop-test-plan.md`](./docs/alpha-loop-test-plan.md) for physical-device release gates.
+Read [`docs/product-structure.md`](./docs/product-structure.md) for the exact boundary and [`docs/pricing-and-metering.md`](./docs/pricing-and-metering.md) for the alpha budget and later pricing framework.
 
-See [`apps/atlas-cloud/README.md`](./apps/atlas-cloud/README.md) for the optional managed-inference gateway and billing setup.
-See [`docs/model-routing.md`](./docs/model-routing.md) for the two-layer provider/model routing boundary and calibration rules.
+## Run the Android app
 
-## TypeScript prototype
+Open [`apps/atlas-android`](./apps/atlas-android) in Android Studio, let Gradle sync, and run it on a physical Android device. Camera and microphone access are required for the complete loop.
 
-Node.js 20+ is required.
+Configure an OpenAI-compatible endpoint in the app. For LAN inference, use the computer's LAN address from the phone; `10.0.2.2` is only the Android emulator alias for its host.
+
+See [`apps/atlas-android/README.md`](./apps/atlas-android/README.md) for setup, provider compatibility, media handling, speech behavior, and current limitations.
+
+## Build and test Core
+
+Node.js 22 or later is required.
 
 ```bash
 npm ci
 npm run build
 npm run typecheck
+npm test
+npm run check:public
 ```
 
-The original prototype and harness remain useful for contract exploration and replay work. See [`BUILD_DOC.md`](./BUILD_DOC.md), [`docs/adapter-contracts.md`](./docs/adapter-contracts.md), and [`docs/context-memory-and-sidecars.md`](./docs/context-memory-and-sidecars.md). Treat references to OpenClaw as historical implementation detail, not the target architecture.
+Managed inference is optional. See [`apps/atlas-cloud/README.md`](./apps/atlas-cloud/README.md) for its separate local setup.
 
-## v0.1 principle
+## Repository map
 
-One Android phone, one durable Atlas session, one excellent observe–reason–respond loop, user-owned inference, and enough evidence to explain every decision. Breadth comes after that loop is trustworthy.
+| Path | Purpose |
+| --- | --- |
+| `apps/atlas-android` | Native Android reference app and primary v0.1 experience |
+| `apps/atlas-cloud` | Optional reference managed-inference/auth/billing gateway |
+| `packages/atlas-core` | Provider-independent runtime types, policy, events, replay, and tests |
+| `packages/atlas-config` | Configuration contracts |
+| `packages/atlas-cli` | Prototype session inspection and development commands |
+| `packages/atlas-test-harness` | Scenario, replay, and adapter test utilities |
+| `packages/atlas-device-android` | Legacy TypeScript Android bridge adapter |
+| `packages/atlas-provider-openclaw` | Legacy OpenClaw proof adapter, not a product dependency |
+| `docs` | Architecture, product boundaries, testing, policies, and release gates |
+
+## v0.1 boundary
+
+One Android phone, one durable personal workspace, one excellent observe–reason–act–respond loop, user-owned inference, and enough evidence to explain every consequential decision.
+
+The closed alpha is gated by [`docs/closed-alpha.md`](./docs/closed-alpha.md). Public-repository preparation is tracked in [`OPEN_SOURCE_CHECKLIST.md`](./OPEN_SOURCE_CHECKLIST.md). Repository visibility should not change until history-level secret, dependency-license, asset-rights, and project-name reviews are complete.
+
+## Contributing and security
+
+Contributions are welcome under the process in [`CONTRIBUTING.md`](./CONTRIBUTING.md) and require Developer Certificate of Origin sign-off. Report vulnerabilities privately according to [`SECURITY.md`](./SECURITY.md).
+
+## License
+
+Atlas repository code and documentation are licensed under the [Apache License 2.0](./LICENSE) unless a file states otherwise. Dependencies retain their own licenses. The software license does not grant rights to official project identity or imply access to Atlas-operated services.

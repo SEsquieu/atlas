@@ -11,6 +11,8 @@ This app runs Atlas Core on an Android phone. It is a reference experience for t
 
 Open this directory directly in Android Studio and run the `app` configuration. The repository does not commit machine-specific `local.properties`; Android Studio creates it from your SDK location.
 
+The reference app is Apache-2.0 and works with user-configured inference without an Atlas account. Atlas Managed is an optional operated route, not an unlock for Core runtime features.
+
 The default APK leaves Atlas Cloud disabled. A gateway deployment can enable account sign-up, subscription checkout, credit-block purchase, balance display, and managed inference by supplying the three Gradle properties documented below. BYOI never requires those values.
 
 Android database version 7 creates a personal workspace automatically and scopes every new session, observation, event, and memory record to it. The same persistence boundary supports optional site, station, actor, task-run, policy, and scoped-memory identities without placing enterprise administration in the consumer UI.
@@ -131,3 +133,5 @@ See [`../../docs/model-routing.md`](../../docs/model-routing.md) for the managed
 - There is no signed release build or Play distribution. Atlas Cloud plumbing exists but is not a production service until deployed, configured, abuse-protected, and operationally monitored.
 
 Those are release tasks, not reasons to couple Core to an inference vendor.
+
+See [`../../docs/closed-alpha.md`](../../docs/closed-alpha.md) for the signed-build, privacy, device-matrix, budget, and operational gates that distinguish a development APK from the closed alpha.

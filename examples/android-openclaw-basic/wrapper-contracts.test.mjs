@@ -262,34 +262,37 @@ async function createFakeOpenClawInvoke(name, response) {
   const fakeNpmDir = path.join(testRoot, `fake-openclaw-${name}`);
   const fakeModuleDir = path.join(fakeNpmDir, 'node_modules', 'openclaw');
   await mkdir(fakeModuleDir, { recursive: true });
+  const modulePath = path.join(fakeModuleDir, 'openclaw.mjs');
   await writeFile(
-    path.join(fakeModuleDir, 'openclaw.mjs'),
+    modulePath,
     `#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ ...${JSON.stringify(response)}, argv: process.argv.slice(2) }) + '\\n');\n`,
     'utf8'
   );
-  if (process.platform !== 'win32') {
-    const shim = path.join(fakeNpmDir, 'openclaw');
-    await writeFile(shim, `#!/bin/sh\nexec "${process.execPath}" "${path.join(fakeModuleDir, 'openclaw.mjs')}" "$@"\n`, 'utf8');
-    await chmod(shim, 0o755);
-  }
-  return process.platform === 'win32' ? path.join(fakeNpmDir, 'openclaw.cmd') : path.join(fakeNpmDir, 'openclaw');
+  return await makeFakeOpenClawCommand(fakeNpmDir, modulePath);
 }
 
 async function createFakeOpenClawCamera(name) {
   const fakeNpmDir = path.join(testRoot, `fake-openclaw-${name}`);
   const fakeModuleDir = path.join(fakeNpmDir, 'node_modules', 'openclaw');
   await mkdir(fakeModuleDir, { recursive: true });
+  const modulePath = path.join(fakeModuleDir, 'openclaw.mjs');
   await writeFile(
-    path.join(fakeModuleDir, 'openclaw.mjs'),
+    modulePath,
     `#!/usr/bin/env node\nimport fs from 'node:fs';\nconst argv = process.argv.slice(2);\nif (argv[0] === 'nodes' && argv[1] === 'camera' && argv[2] === 'snap') {\n  const imagePath = process.env.FAKE_OPENCLAW_IMAGE_PATH;\n  fs.writeFileSync(imagePath, 'fake image bytes');\n  process.stdout.write('MEDIA:' + imagePath + '\\n');\n  process.exit(0);\n}\nif (argv[0] === 'infer') {\n  process.stderr.write('cold infer should not be used when worker registry is healthy\\n');\n  process.exit(99);\n}\nprocess.stdout.write(JSON.stringify({ ok: true, argv }) + '\\n');\n`,
     'utf8'
   );
-  if (process.platform !== 'win32') {
-    const shim = path.join(fakeNpmDir, 'openclaw');
-    await writeFile(shim, `#!/bin/sh\nexec "${process.execPath}" "${path.join(fakeModuleDir, 'openclaw.mjs')}" "$@"\n`, 'utf8');
-    await chmod(shim, 0o755);
+  return await makeFakeOpenClawCommand(fakeNpmDir, modulePath);
+}
+
+async function makeFakeOpenClawCommand(fakeNpmDir, modulePath) {
+  if (process.platform === 'win32') {
+    const commandPath = path.join(fakeNpmDir, 'openclaw.cmd');
+    await writeFile(commandPath, `@"${process.execPath}" "${modulePath}" %*\r\n`, 'utf8');
+    return commandPath;
   }
-  return process.platform === 'win32' ? path.join(fakeNpmDir, 'openclaw.cmd') : path.join(fakeNpmDir, 'openclaw');
+
+  await chmod(modulePath, 0o755);
+  return modulePath;
 }
 
 async function startFakeImageWorker() {
