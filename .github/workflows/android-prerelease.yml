@@ -1,0 +1,47 @@
+name: Android prerelease
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/android-runtime-poc
+    paths:
+      - .github/workflows/android-prerelease.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Publish Android speech alpha prerelease'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/atlas-android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Verify and build
+        run: ./gradlew testDebugUnitTest assembleDebug
+      - name: Package prerelease
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk atlas-android-0.1.0-alpha.1-debug.apk
+          zip -9 atlas-android-0.1.0-alpha.1-debug.zip atlas-android-0.1.0-alpha.1-debug.apk
+          sha256sum atlas-android-0.1.0-alpha.1-debug.apk atlas-android-0.1.0-alpha.1-debug.zip > SHA256SUMS.txt
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create android-v0.1.0-alpha.1 \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Atlas Android 0.1.0 alpha 1" \
+            --notes "Unsigned debug build for physical-device testing. Includes provider-neutral streaming, sentence-aware TTS, speak-ready cues, and delivery-aware barge-in. This is not the public v0.1 release." \
+            atlas-android-0.1.0-alpha.1-debug.apk \
+            atlas-android-0.1.0-alpha.1-debug.zip \
+            SHA256SUMS.txt
