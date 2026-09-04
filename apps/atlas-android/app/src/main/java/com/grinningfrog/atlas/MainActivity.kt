@@ -58,12 +58,15 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -80,10 +83,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.grinningfrog.atlas.data.SecureSettings
 import com.grinningfrog.atlas.data.SessionArchive
@@ -218,10 +223,13 @@ private fun AtlasApp(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                NavigationBarItem(page == AppPage.SESSION, { page = AppPage.SESSION }, { Icon(Icons.Default.GraphicEq, null) }, label = { Text("Session") })
-                NavigationBarItem(page == AppPage.PROVIDERS, { page = AppPage.PROVIDERS }, { Icon(Icons.Default.Hub, null) }, label = { Text("Inference") })
-                NavigationBarItem(page == AppPage.EVENTS, { page = AppPage.EVENTS }, { Icon(Icons.Default.Settings, null) }, label = { Text("Data") })
+            Column {
+                HorizontalDivider(color = MaterialTheme.colorScheme.primary.copy(alpha = .35f))
+                NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
+                    NavigationBarItem(page == AppPage.SESSION, { page = AppPage.SESSION }, { Icon(Icons.Default.GraphicEq, null) }, label = { Text("SESSION") }, colors = atlasNavigationColors())
+                    NavigationBarItem(page == AppPage.PROVIDERS, { page = AppPage.PROVIDERS }, { Icon(Icons.Default.Hub, null) }, label = { Text("INFERENCE") }, colors = atlasNavigationColors())
+                    NavigationBarItem(page == AppPage.EVENTS, { page = AppPage.EVENTS }, { Icon(Icons.Default.Settings, null) }, label = { Text("DATA") }, colors = atlasNavigationColors())
+                }
             }
         },
     ) { padding ->
@@ -236,15 +244,40 @@ private fun AtlasApp(
 }
 
 @Composable
+private fun AtlasBrandHeader(kicker: String, status: String) {
+    Column {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("ATLAS", fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 3.sp)
+            Text("//", color = MaterialTheme.colorScheme.primary, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 8.dp))
+            Text(kicker, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace, fontSize = 9.sp, lineHeight = 11.sp, letterSpacing = 1.sp, modifier = Modifier.weight(1f))
+            Text(status.uppercase(), color = MaterialTheme.colorScheme.primary, fontFamily = FontFamily.Monospace, fontSize = 9.sp, letterSpacing = 1.sp)
+        }
+        Spacer(Modifier.height(13.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.primary.copy(alpha = .34f))
+    }
+}
+
+@Composable
+private fun atlasNavigationColors() = NavigationBarItemDefaults.colors(
+    selectedIconColor = MaterialTheme.colorScheme.primary,
+    selectedTextColor = MaterialTheme.colorScheme.primary,
+    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+)
+
+@Composable
 private fun Onboarding(onComplete: () -> Unit) {
     var step by remember { mutableIntStateOf(0) }
-    val titles = listOf("A physical agent that lives here", "You control what leaves", "Start with your own inference")
+    val titles = listOf("Stay with me.", "You control what leaves", "Start with your own inference")
     val bodies = listOf(
         "Atlas Core owns the durable session, current physical context, memory, tools, and audit trail on this phone. Models are replaceable intelligence—not the owner of your session.",
         "Camera frames are resized before storage or inference. Live Context is visibly opt-in. Android speech recognition may use a service chosen by your device. Atlas can be wrong; do not use this alpha as emergency or professional safety authority.",
-        "No account is required. Connect an OpenAI-compatible HTTPS or trusted-LAN endpoint, test it, then start a session. You can pause, export, or permanently delete session data at any time.",
+        "No account is required. Connect an OpenAI-compatible HTTPS or trusted-LAN endpoint, test it, then start a session. Managed Atlas cloud inference is on the way. You can pause, export, or permanently delete session data at any time.",
     )
-    Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.Center) {
+    Column(Modifier.fillMaxSize().padding(24.dp)) {
+        AtlasBrandHeader("PHYSICAL INTELLIGENCE", "0${step + 1} / 03")
+        Spacer(Modifier.weight(1f))
         Icon(if (step == 1) Icons.Default.Security else Icons.Default.GraphicEq, null, Modifier.size(44.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(20.dp))
         Text("${step + 1} of 3", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
@@ -256,12 +289,15 @@ private fun Onboarding(onComplete: () -> Unit) {
             Text(if (step < 2) "Continue" else "Continue to permissions")
         }
         if (step > 0) TextButton(onClick = { step-- }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Back") }
+        Spacer(Modifier.weight(.55f))
     }
 }
 
 @Composable
 private fun PermissionGate(modifier: Modifier, onRequest: () -> Unit, onOpenSettings: () -> Unit) {
-    Column(modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.Center) {
+    Column(modifier.fillMaxSize().padding(24.dp)) {
+        AtlasBrandHeader("FIELD SYSTEM 01", "PERMISSIONS")
+        Spacer(Modifier.weight(1f))
         Text("Put Atlas in the room", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp))
         Text("Atlas needs camera and microphone access while a physical session is active. Android shows a persistent notification, and Atlas records every observation and inference attempt in its local event log.")
@@ -270,6 +306,7 @@ private fun PermissionGate(modifier: Modifier, onRequest: () -> Unit, onOpenSett
         TextButton(onClick = onOpenSettings) { Text("Open Android app settings") }
         Spacer(Modifier.height(12.dp))
         Text("No Atlas account is required. Provider credentials stay encrypted on this phone.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.weight(.6f))
     }
 }
 
@@ -301,11 +338,10 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
 
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Atlas", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-                PhasePill(snapshot.phase)
-            }
-            Text("The physical session belongs to this device. Inference is a replaceable route.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            AtlasBrandHeader("PHYSICAL INTELLIGENCE", snapshot.phase.name)
+            Spacer(Modifier.height(20.dp))
+            Text("Stay with me.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
+            Text("One continuous thread, owned by this phone. The model is only where Atlas thinks.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         if (!hasProvider) item {
@@ -584,7 +620,9 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
 
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
-            Text("Inference", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+            AtlasBrandHeader("INFERENCE ROUTES", "CONFIGURE")
+            Spacer(Modifier.height(20.dp))
+            Text("Bring whatever brain you want.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
             Text("Route by capability, never by a model baked into Atlas Core.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         item {
@@ -595,7 +633,10 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                 }
             }
         }
-        if (managedAccount.state.value.configured) item { ManagedAccountCard(managedAccount, settings, onChanged) }
+        item {
+            if (managedAccount.state.value.configured) ManagedAccountCard(managedAccount, settings, onChanged)
+            else ManagedInferenceSoonCard()
+        }
         if (providers.isNotEmpty()) item { Text("Configured endpoints", style = MaterialTheme.typography.titleMedium) }
         items(providers, key = { it.id }) { endpoint ->
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
@@ -696,6 +737,17 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
 }
 
 @Composable
+private fun ManagedInferenceSoonCard() {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .55f))) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("ATLAS CLOUD // ON THE WAY", color = MaterialTheme.colorScheme.primary, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 1.sp)
+            Text("Managed cloud inference", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Use Atlas without managing provider keys, with capability routing and a clear usage allowance. It is not enabled in this closed-alpha build yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
 private fun ManagedAccountCard(account: ManagedAccountClient, settings: SecureSettings, onChanged: () -> Unit) {
     val state by account.state.collectAsState()
     val scope = rememberCoroutineScope()
@@ -783,6 +835,8 @@ private fun EventsPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, s
     )
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
+            AtlasBrandHeader("LOCAL RECORD", "DEVICE OWNED")
+            Spacer(Modifier.height(20.dp))
             Text("Data & activity", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
             Text("Your session stays on this phone except for content sent to your chosen inference and speech services.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(6.dp))
@@ -864,13 +918,6 @@ private fun NoticeCard(title: String, detail: String) {
 }
 
 @Composable
-private fun PhasePill(phase: RuntimePhase) {
-    Box(Modifier.background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(50)).padding(horizontal = 10.dp, vertical = 5.dp)) {
-        Text(phase.name.lowercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-    }
-}
-
-@Composable
 private fun TextButtonCompact(text: String, onClick: () -> Unit) {
     androidx.compose.material3.TextButton(onClick, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)) { Text(text) }
 }
@@ -882,16 +929,41 @@ private fun duration(milliseconds: Long): String = when {
 }
 
 private val AtlasColors = darkColorScheme(
-    primary = Color(0xFF5FE39B),
-    onPrimary = Color(0xFF003921),
-    primaryContainer = Color(0xFF145233),
-    onPrimaryContainer = Color(0xFFA9F4C6),
-    background = Color(0xFF07100C),
-    surface = Color(0xFF101B15),
-    surfaceVariant = Color(0xFF26382E),
+    primary = Color(0xFF5CFF78),
+    onPrimary = Color(0xFF001707),
+    primaryContainer = Color(0xFF0D2514),
+    onPrimaryContainer = Color(0xFFC3FFD0),
+    secondary = Color(0xFFB8FF31),
+    onSecondary = Color(0xFF101700),
+    secondaryContainer = Color(0xFF18210A),
+    onSecondaryContainer = Color(0xFFE5FFAE),
+    background = Color(0xFF010302),
+    onBackground = Color(0xFFEEF5EF),
+    surface = Color(0xFF060A07),
+    onSurface = Color(0xFFEEF5EF),
+    surfaceVariant = Color(0xFF121A14),
+    onSurfaceVariant = Color(0xFFA1ACA4),
+)
+
+private val AtlasShapes = Shapes(
+    extraSmall = RoundedCornerShape(0.dp),
+    small = RoundedCornerShape(0.dp),
+    medium = RoundedCornerShape(0.dp),
+    large = RoundedCornerShape(0.dp),
+    extraLarge = RoundedCornerShape(0.dp),
+)
+
+private val BaseTypography = Typography()
+private val AtlasTypography = Typography(
+    headlineLarge = BaseTypography.headlineLarge.copy(fontWeight = FontWeight.Black, letterSpacing = (-1).sp),
+    titleLarge = BaseTypography.titleLarge.copy(fontWeight = FontWeight.Bold, letterSpacing = (-.2).sp),
+    titleMedium = BaseTypography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+    labelLarge = BaseTypography.labelLarge.copy(fontFamily = FontFamily.Monospace, letterSpacing = .7.sp),
+    labelMedium = BaseTypography.labelMedium.copy(fontFamily = FontFamily.Monospace, letterSpacing = .6.sp),
+    labelSmall = BaseTypography.labelSmall.copy(fontFamily = FontFamily.Monospace, letterSpacing = .5.sp),
 )
 
 @Composable
 private fun AtlasTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = AtlasColors, content = content)
+    MaterialTheme(colorScheme = AtlasColors, typography = AtlasTypography, shapes = AtlasShapes, content = content)
 }

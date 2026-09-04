@@ -136,7 +136,7 @@ See [`../../docs/model-routing.md`](../../docs/model-routing.md) for the managed
 - Session permissions use conservative persisted defaults but are not yet editable in the UI.
 - Only the latest session is exposed in the current UI; exported state is complete for that session.
 - The signed-alpha workflow requires a protected `closed-alpha` GitHub environment and maintainer-supplied signing secrets. Play distribution is not configured.
-- Atlas Cloud plumbing exists but is not a production service until deployed, configured, abuse-protected, and operationally monitored; it is hidden when not configured and does not block a BYOI alpha.
+- Atlas Cloud plumbing exists but is not a production service until deployed, configured, abuse-protected, and operationally monitored. Unconfigured builds label it “on the way” and keep all account and purchase controls unavailable; it does not block a BYOI alpha.
 
 Those are release tasks, not reasons to couple Core to an inference vendor.
 
