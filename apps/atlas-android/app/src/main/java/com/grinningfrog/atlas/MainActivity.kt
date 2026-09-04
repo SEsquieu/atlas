@@ -602,6 +602,7 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
 @Composable
 private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpoint>, managedAccount: ManagedAccountClient, modifier: Modifier, onChanged: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val managedState by managedAccount.state.collectAsState()
     val tester = remember { ProviderConnectionTester() }
     var name by remember { mutableStateOf("") }
     var baseUrl by remember { mutableStateOf("") }
@@ -634,7 +635,7 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
             }
         }
         item {
-            if (managedAccount.state.value.configured) ManagedAccountCard(managedAccount, settings, onChanged)
+            if (managedState.configured) ManagedAccountCard(managedAccount, settings, onChanged)
             else ManagedInferenceSoonCard()
         }
         if (providers.isNotEmpty()) item { Text("Configured endpoints", style = MaterialTheme.typography.titleMedium) }
