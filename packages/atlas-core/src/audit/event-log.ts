@@ -2,6 +2,16 @@ export type AuditEvent = {
   id: string;
   type: string;
   at: string;
+  workspaceId?: string;
+  organizationId?: string;
+  principalId?: string;
+  siteId?: string;
+  stationId?: string;
+  sessionId?: string;
+  taskRunId?: string;
+  procedureRevisionId?: string;
+  correlationId?: string;
+  causationId?: string;
   data?: unknown;
 };
 

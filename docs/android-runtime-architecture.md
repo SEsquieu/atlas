@@ -28,11 +28,11 @@ All solid arrows now have repository implementations. The managed gateway is opt
 | Observation media and timestamps | Normalizes, budgets, hashes, stores, and selects | Receives bytes for one selected sample; never a device path |
 | Context freshness | Computes before inference | Must respect supplied age |
 | Heartbeat schedule | Owns | Reviews selected changes only |
-| Tool execution | Validates, authorizes, executes, records, and returns results | Proposes typed calls only |
+| Tool execution | Authorizes, executes, records | May eventually propose calls |
 | Speech and interruption | Owns | Produces candidate response text |
 | Provider failover | Owns capability route | Is one replaceable endpoint |
 | Audit and replay | Owns ordered event stream | Correlates through request ID |
-| Billing and entitlements | Optional account adapter; never session authority | Gateway meters user credits; provider secret stays server-side |
+| Billing and entitlements | Optional account adapter; never session authority | Gateway meters organization credits with user attribution; provider secret stays server-side |
 
 ## Runtime lifecycle
 
@@ -47,17 +47,10 @@ The local event table uses an auto-incrementing sequence. Wall-clock timestamps 
 1. User input is classified by whether it requires present visual context.
 2. Atlas evaluates observation age, motion, stability, risk, and expected refresh latency.
 3. Atlas captures when a current claim requires it; high-risk questions fail closed if refresh fails.
-4. Atlas reconstructs bounded multi-turn context from messages, admitted memory, a rolling checkpoint, and current physical state.
-5. Atlas selects a capability (`fast`, `vision`, or `reasoning`) and invokes a compatible endpoint.
-6. A provider may return a final answer or propose tools. Core validates, gates, executes, persists, and returns tool results until the turn completes or reaches a hard budget.
-7. Atlas records request, route attempts, latency, result or failure, and lifecycle disposition.
-8. Provider deltas cross a normalized stream boundary. Core checkpoints text, splits safe spoken sentences, and records delivery independently of generation.
-9. Atlas preserves a textual answer even if speech synthesis fails. Barge-in cancels TTS and generation, and only fully completed sentences count as heard.
-10. Live Context, when explicitly enabled, adapts observation cadence to motion, battery, and thermal pressure. Deterministic scene difference gates model review, a durable rolling window limits proactive inference, and unsolicited speech defaults off.
-
-New sessions use manual context mode. Manual mode performs no background capture or inference but retains explicit asks, voice requests, and Observe. Live mode is persisted with the session and visible in both the UI and foreground notification. Pausing or ending cancels its heartbeat immediately.
-
-Successful heartbeat interpretation is attached to the exact source observation with its interpretation timestamp. Later requests may reuse both the bounded image and this semantic context while freshness policy still considers them valid. Media suitability is independent of time freshness: detail requests cannot reuse heartbeat-sized images.
+4. Atlas selects a capability (`vision` or `reasoning`) and invokes configured endpoints in order.
+5. Atlas records request, route attempts, latency, result or failure, and lifecycle disposition.
+6. Atlas preserves a textual answer even if speech synthesis fails; speech can be interrupted locally.
+7. Heartbeat independently adapts observation cadence to motion, battery, and thermal pressure. Deterministic scene difference gates model review and unsolicited speech defaults off.
 
 ## Media boundary
 
@@ -67,7 +60,7 @@ This makes image cost and upload latency bounded inputs to policy rather than ac
 
 ## Optional commercial seam
 
-Direct BYOI is the default and does not require an Atlas account. The optional `apps/atlas-cloud` adapter uses a short-lived Supabase user token, never the operator's model key. It provides capability routing, reserve/settle credit metering, a subscription allowance, and one-time credit blocks. Stripe grants and inference charges are idempotent ledger entries.
+Direct BYOI is the default and does not require an Atlas account. The optional `apps/atlas-cloud` adapter uses a short-lived Supabase user token, never the operator's model key. Authentication resolves into a personal or shared organization before billing or inference. It provides capability routing, reserve/settle credit metering, a subscription allowance, and one-time credit blocks. Stripe grants and inference charges are idempotent organization ledger entries.
 
 The gateway owns identity, entitlement, metering, and provider-key custody only. It receives no durable Atlas session and cannot schedule a heartbeat, operate a device, or execute a tool. Public operation still requires rate limiting, abuse controls, reconciliation, alerts, legal/payment policy, and a deliberate pricing configuration.
 
@@ -82,7 +75,7 @@ Must-have before tagging v0.1:
 - explicit per-capability route editor and connection test;
 - streaming response cancellation and strict request-size limits;
 - session permission editor plus retention, delete, and export controls;
-- physical-device validation of the durable tool/confirmation/restart loop;
+- structured tool proposal/authorization/execution boundary with one safe reference tool;
 - database migrations, crash recovery tests, and deterministic replay fixture;
 - network security configuration, privacy copy, and secret-handling review;
 - onboarding, troubleshooting, signed artifacts, and one end-to-end sample endpoint guide;
@@ -93,7 +86,7 @@ Experiments to keep out of v0.1:
 - Modulo integration or co-development;
 - autonomous background sessions without prominent user control;
 - multi-device session handoff;
-- embedding/vector retrieval and cross-device memory sync;
+- speculative memory sidecars beyond the implemented scoped-memory boundary;
 - provider marketplaces or model benchmarking;
 - additional managed inference providers, tiers, or a generalized model marketplace;
 - premature shared cross-platform UI architecture.

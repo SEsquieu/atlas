@@ -22,11 +22,23 @@ export function applySessionEvent(state: AtlasSessionState, event: AuditEvent): 
 }
 
 export function materializeSession(initialState: AtlasSessionState, events: AuditEvent[]): AtlasSessionState {
-  return events.reduce((state, event) => applySessionEvent(state, event), initialState);
+  return events.reduce((state, event) => applySessionEvent(state, event), normalizeSessionState(initialState));
 }
 
 export function materializeSessionCheckpoint(checkpoint: AtlasSessionState, events: AuditEvent[]): AtlasSessionState {
-  return materializeSession(checkpoint, selectPendingEvents(checkpoint, events));
+  return materializeSession(normalizeSessionState(checkpoint), selectPendingEvents(checkpoint, events));
+}
+
+/** Reads v0.0/v0.1 checkpoints without forcing a destructive storage migration. */
+export function normalizeSessionState(state: AtlasSessionState): AtlasSessionState {
+  return {
+    ...state,
+    workspace: state.workspace ?? { workspaceId: 'workspace:personal:local', kind: 'personal', name: 'Personal' },
+    memory: {
+      ...state.memory,
+      scoped: state.memory.scoped ?? []
+    }
+  };
 }
 
 export function selectPendingEvents(checkpoint: AtlasSessionState, events: AuditEvent[]): AuditEvent[] {

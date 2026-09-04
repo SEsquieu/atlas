@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createSessionState } from '../session/index.js';
-import { materializeSession, materializeSessionCheckpoint, selectPendingEvents } from './materialize.js';
+import { materializeSession, materializeSessionCheckpoint, normalizeSessionState, selectPendingEvents } from './materialize.js';
 import type { AuditEvent } from '../audit/event-log.js';
 
 test('materializeSession records an explicit event cursor including same-timestamp events', () => {
@@ -84,4 +84,15 @@ test('materializeSessionCheckpoint resumes after the explicit event cursor', () 
   const materialized = materializeSessionCheckpoint(checkpoint, events);
   assert.equal(materialized.status, 'active');
   assert.equal(materialized.eventCursor?.lastEventId, 'event-3');
+});
+
+test('legacy checkpoints acquire a personal workspace and scoped-memory bucket', () => {
+  const current = createSessionState({ sessionId: 'legacy', provider: { id: 'fake', adapter: 'fake' } });
+  const legacy = structuredClone(current) as unknown as Record<string, unknown>;
+  delete legacy.workspace;
+  const memory = legacy.memory as Record<string, unknown>;
+  delete memory.scoped;
+  const normalized = normalizeSessionState(legacy as never);
+  assert.equal(normalized.workspace.workspaceId, 'workspace:personal:local');
+  assert.deepEqual(normalized.memory.scoped, []);
 });

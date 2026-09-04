@@ -7,20 +7,23 @@ export const CORE_PHYSICAL_TOOLS: AtlasToolSchema[] = [
     parameters: {
       reason: 'string',
       quality: 'low | medium | high'
-    }
+    },
+    risk: 'read_only', confirmation: 'policy', idempotent: false, allowedScopes: ['personal', 'organization']
   },
   {
     name: 'get_current_location',
     description: 'Fetch current location from the bound device.',
     parameters: {
       reason: 'string'
-    }
+    },
+    risk: 'read_only', confirmation: 'policy', idempotent: false, allowedScopes: ['personal', 'organization']
   },
   {
     name: 'speak_to_user',
     description: 'Speak a short response through the bound device.',
     parameters: {
       text: 'string'
-    }
+    },
+    risk: 'reversible', confirmation: 'never', idempotent: false, allowedScopes: ['personal', 'organization']
   }
 ];
