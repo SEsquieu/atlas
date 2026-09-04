@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSessionState } from '../session/index.js';
 import { FileSessionStore } from './file-session-store.js';
+import { materializeSessionCheckpoint } from './materialize.js';
 
 test('file event log enriches events from authoritative session scope', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-scope-'));
@@ -23,6 +24,20 @@ test('file event log enriches events from authoritative session scope', async ()
       { workspaceId: event.workspaceId, organizationId: event.organizationId, principalId: event.principalId, siteId: event.siteId, stationId: event.stationId, sessionId: event.sessionId, taskRunId: event.taskRunId, procedureRevisionId: event.procedureRevisionId },
       { workspaceId: 'org-1', organizationId: 'org-1', principalId: 'user-1', siteId: 'site-1', stationId: 'station-1', sessionId: 'session-1', taskRunId: 'run-1', procedureRevisionId: 'revision-3' }
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('first implicit event is newer than a cursorless checkpoint', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-store-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const state = createSessionState({ sessionId: 'clock-collision', provider: { id: 'fake', adapter: 'fake' }, now: '2099-01-01T00:00:00.000Z' });
+    await store.create(state);
+    const event = await store.appendEvent(state.sessionId, { type: 'session.started' });
+    assert.ok(Date.parse(event.at) > Date.parse(state.updatedAt));
+    assert.equal(materializeSessionCheckpoint(state, [event]).status, 'active');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

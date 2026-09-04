@@ -2,7 +2,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
@@ -22,10 +21,10 @@
         android:name=".AtlasApplication"
         android:allowBackup="false"
         android:icon="@drawable/ic_atlas"
-        android:label="Atlas"
+        android:label="${atlasAppLabel}"
         android:supportsRtl="true"
         android:theme="@style/Theme.Atlas"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="${atlasCleartext}">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -41,5 +40,15 @@
             android:exported="false"
             android:foregroundServiceType="camera|microphone"
             android:stopWithTask="false" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.exports"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/export_paths" />
+        </provider>
     </application>
 </manifest>

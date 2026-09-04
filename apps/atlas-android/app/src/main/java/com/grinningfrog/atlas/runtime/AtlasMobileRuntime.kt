@@ -149,6 +149,21 @@ class AtlasMobileRuntime(
         }
     }
 
+    suspend fun deleteCurrentSession() {
+        cancelActiveTurn("session deleted")
+        compactionJob?.cancel(); compactionJob = null
+        operations.withLock {
+            val session = requireSession()
+            heartbeatJob?.cancel(); heartbeatJob = null
+            onLiveContextChanged(false)
+            speech.stopSpeaking()
+            stopDevices()
+            val mediaKeys = database.deleteSession(session.id)
+            mediaRepository.deleteStorageKeys(mediaKeys)
+            publish(session = null, observation = null, response = null, error = null, phase = RuntimePhase.STOPPED, nextHeartbeatAt = null)
+        }
+    }
+
     suspend fun captureNow(reason: String = "user-request"): VisualObservation = operations.withLock {
         val session = requireActiveSession()
         captureLocked(session, reason)

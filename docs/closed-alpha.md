@@ -16,6 +16,8 @@ It is not a promise of autonomous operation, emergency guidance, a production bi
 - Maintain rollback access to the prior known-good APK.
 - Do not make the GitHub repository public merely to distribute the alpha.
 
+The first cohort may be **BYOI-only**. In that profile, managed-account, billing, sponsored-inference budget, and provider-cost alert gates are not applicable because Atlas never incurs inference cost. They become blocking the moment any tester can use an operator-funded route.
+
 ## Required onboarding
 
 Before the first session, users must see:
@@ -27,7 +29,7 @@ Before the first session, users must see:
 - that Live Context performs background capture/review only while visibly enabled;
 - that Atlas can be wrong and is not emergency or professional safety authority;
 - how to pause, end, interrupt, delete, and report a session; and
-- the sponsored inference limit and what happens at exhaustion.
+- the sponsored inference limit and what happens at exhaustion, when the build enables managed inference.
 
 Consent for product telemetry and consent for uploading session content must be separate. Alpha access must not require unrestricted transcript/image collection.
 
@@ -62,8 +64,8 @@ Consent for product telemetry and consent for uploading session content must be 
 
 ### Operations
 
-- Per-user daily/monthly and global provider-cost limits are active.
-- Alerts exist for budget, provider error rate, latency, authentication failure, and stuck reservations.
+- For managed-inference cohorts, per-user daily/monthly and global provider-cost limits are active.
+- For managed-inference cohorts, alerts exist for budget, provider error rate, latency, authentication failure, and stuck reservations.
 - A support/reporting channel and severity policy are published to testers.
 - Every build has release notes and known issues.
 - Rollback and account-disable procedures have been rehearsed.
@@ -113,3 +115,9 @@ The alpha is successful when:
 - Public paid launch
 
 The closed alpha exists to make the consumer loop excellent and to collect the evidence needed for pricing and product direction.
+
+## Current implementation checkpoint
+
+Implemented in the alpha-2 hardening pass: first-run boundary disclosure, no-account BYOI path, endpoint transport validation, explicit connection test, secure/trusted-LAN build separation, Keystore credentials, session ZIP export, permanent session deletion, bounded completed-session image retention, signed-build automation, checksums, and certificate recording.
+
+Still evidence-gated before inviting testers: execute the physical-device matrix, pass the twenty golden loops, configure and protect the signing environment, verify an install/upgrade/delete/export cycle on real hardware, publish tester-facing terms/privacy copy and support contact, and rehearse rollback. Managed operations remain deferred for a BYOI-only cohort.

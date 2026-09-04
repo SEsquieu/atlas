@@ -41,8 +41,12 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -59,6 +63,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -81,6 +86,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.grinningfrog.atlas.data.SecureSettings
+import com.grinningfrog.atlas.data.SessionArchive
 import com.grinningfrog.atlas.cloud.ManagedAccountClient
 import com.grinningfrog.atlas.media.MediaRepository
 import com.grinningfrog.atlas.model.AtlasEvent
@@ -97,6 +103,8 @@ import com.grinningfrog.atlas.model.SessionStatus
 import com.grinningfrog.atlas.model.ToolCallStatus
 import com.grinningfrog.atlas.runtime.AtlasMobileRuntime
 import com.grinningfrog.atlas.runtime.AtlasSessionService
+import com.grinningfrog.atlas.provider.EndpointSecurity
+import com.grinningfrog.atlas.provider.ProviderConnectionTester
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.DateFormat
@@ -106,6 +114,7 @@ import java.util.UUID
 class MainActivity : ComponentActivity() {
     private var service by mutableStateOf<AtlasSessionService?>(null)
     private var permissionsGranted by mutableStateOf(false)
+    private var onboardingComplete by mutableStateOf(false)
     private var bound = false
 
     private val connection = object : ServiceConnection {
@@ -121,29 +130,41 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val app = application as AtlasApplication
         permissionsGranted = requiredPermissionsGranted()
+        onboardingComplete = app.settings.onboardingComplete
         setContent {
             AtlasTheme {
                 val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
                     permissionsGranted = requiredPermissionsGranted()
-                    if (permissionsGranted) startAndBindRuntime()
+                    if (permissionsGranted && onboardingComplete) startAndBindRuntime()
                 }
                 AtlasApp(
                     runtime = service?.runtime,
-                    settings = (application as AtlasApplication).settings,
-                    mediaRepository = (application as AtlasApplication).mediaRepository,
-                    managedAccount = (application as AtlasApplication).managedAccount,
+                    settings = app.settings,
+                    mediaRepository = app.mediaRepository,
+                    managedAccount = app.managedAccount,
+                    sessionArchive = app.sessionArchive,
+                    onboardingComplete = onboardingComplete,
                     permissionsGranted = permissionsGranted,
+                    onCompleteOnboarding = {
+                        app.settings.onboardingComplete = true
+                        onboardingComplete = true
+                        if (permissionsGranted) startAndBindRuntime()
+                    },
                     onRequestPermissions = { permissionLauncher.launch(requestedPermissions()) },
+                    onOpenSystemSettings = {
+                        startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName")))
+                    },
                 )
             }
         }
-        if (permissionsGranted) startAndBindRuntime()
+        if (permissionsGranted && onboardingComplete) startAndBindRuntime()
     }
 
     override fun onStart() {
         super.onStart()
-        if (permissionsGranted && !bound) startAndBindRuntime()
+        if (permissionsGranted && onboardingComplete && !bound) startAndBindRuntime()
     }
 
     override fun onStop() {
@@ -177,13 +198,22 @@ private fun AtlasApp(
     settings: SecureSettings,
     mediaRepository: MediaRepository,
     managedAccount: ManagedAccountClient,
+    sessionArchive: SessionArchive,
+    onboardingComplete: Boolean,
     permissionsGranted: Boolean,
+    onCompleteOnboarding: () -> Unit,
     onRequestPermissions: () -> Unit,
+    onOpenSystemSettings: () -> Unit,
 ) {
     var page by remember { mutableStateOf(AppPage.SESSION) }
     var providerRevision by remember { mutableIntStateOf(0) }
     val providers = remember(providerRevision) { settings.loadProviders() }
     val snapshot by runtime?.state?.collectAsState() ?: remember { mutableStateOf(RuntimeSnapshot()) }
+
+    if (!onboardingComplete) {
+        Onboarding(onCompleteOnboarding)
+        return
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -191,28 +221,53 @@ private fun AtlasApp(
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 NavigationBarItem(page == AppPage.SESSION, { page = AppPage.SESSION }, { Icon(Icons.Default.GraphicEq, null) }, label = { Text("Session") })
                 NavigationBarItem(page == AppPage.PROVIDERS, { page = AppPage.PROVIDERS }, { Icon(Icons.Default.Hub, null) }, label = { Text("Inference") })
-                NavigationBarItem(page == AppPage.EVENTS, { page = AppPage.EVENTS }, { Icon(Icons.Default.History, null) }, label = { Text("Events") })
+                NavigationBarItem(page == AppPage.EVENTS, { page = AppPage.EVENTS }, { Icon(Icons.Default.Settings, null) }, label = { Text("Data") })
             }
         },
     ) { padding ->
         when {
-            !permissionsGranted -> PermissionGate(Modifier.padding(padding), onRequestPermissions)
+            !permissionsGranted -> PermissionGate(Modifier.padding(padding), onRequestPermissions, onOpenSystemSettings)
             runtime == null -> LoadingRuntime(Modifier.padding(padding))
-            page == AppPage.SESSION -> SessionPage(runtime, snapshot, providers.isNotEmpty(), mediaRepository, Modifier.padding(padding))
+            page == AppPage.SESSION -> SessionPage(runtime, snapshot, providers.isNotEmpty(), mediaRepository, Modifier.padding(padding), onConfigureInference = { page = AppPage.PROVIDERS })
             page == AppPage.PROVIDERS -> ProviderPage(settings, providers, managedAccount, Modifier.padding(padding)) { providerRevision++ }
-            page == AppPage.EVENTS -> EventsPage(snapshot, Modifier.padding(padding))
+            page == AppPage.EVENTS -> EventsPage(runtime, snapshot, settings, sessionArchive, Modifier.padding(padding))
         }
     }
 }
 
 @Composable
-private fun PermissionGate(modifier: Modifier, onRequest: () -> Unit) {
+private fun Onboarding(onComplete: () -> Unit) {
+    var step by remember { mutableIntStateOf(0) }
+    val titles = listOf("A physical agent that lives here", "You control what leaves", "Start with your own inference")
+    val bodies = listOf(
+        "Atlas Core owns the durable session, current physical context, memory, tools, and audit trail on this phone. Models are replaceable intelligence—not the owner of your session.",
+        "Camera frames are resized before storage or inference. Live Context is visibly opt-in. Android speech recognition may use a service chosen by your device. Atlas can be wrong; do not use this alpha as emergency or professional safety authority.",
+        "No account is required. Connect an OpenAI-compatible HTTPS or trusted-LAN endpoint, test it, then start a session. You can pause, export, or permanently delete session data at any time.",
+    )
+    Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.Center) {
+        Icon(if (step == 1) Icons.Default.Security else Icons.Default.GraphicEq, null, Modifier.size(44.dp), tint = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.height(20.dp))
+        Text("${step + 1} of 3", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        Text(titles[step], style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
+        Spacer(Modifier.height(12.dp))
+        Text(bodies[step], style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(28.dp))
+        Button(onClick = { if (step < 2) step++ else onComplete() }, modifier = Modifier.fillMaxWidth()) {
+            Text(if (step < 2) "Continue" else "Continue to permissions")
+        }
+        if (step > 0) TextButton(onClick = { step-- }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Back") }
+    }
+}
+
+@Composable
+private fun PermissionGate(modifier: Modifier, onRequest: () -> Unit, onOpenSettings: () -> Unit) {
     Column(modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.Center) {
         Text("Put Atlas in the room", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp))
         Text("Atlas needs camera and microphone access while a physical session is active. Android shows a persistent notification, and Atlas records every observation and inference attempt in its local event log.")
         Spacer(Modifier.height(24.dp))
         Button(onClick = onRequest) { Text("Grant session permissions") }
+        TextButton(onClick = onOpenSettings) { Text("Open Android app settings") }
         Spacer(Modifier.height(12.dp))
         Text("No Atlas account is required. Provider credentials stay encrypted on this phone.", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
@@ -230,7 +285,7 @@ private fun LoadingRuntime(modifier: Modifier) {
 }
 
 @Composable
-private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, hasProvider: Boolean, mediaRepository: MediaRepository, modifier: Modifier) {
+private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, hasProvider: Boolean, mediaRepository: MediaRepository, modifier: Modifier, onConfigureInference: () -> Unit) {
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf("Everyday Atlas") }
     var goal by remember { mutableStateOf("Help me understand and act safely in my current surroundings.") }
@@ -254,7 +309,13 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
         }
 
         if (!hasProvider) item {
-            NoticeCard("Inference not configured", "Add a direct local, LAN, or cloud endpoint under Inference. Atlas can still create the durable session, but it cannot reason yet.")
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Connect inference to begin", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Text("Use a local, LAN, or cloud OpenAI-compatible endpoint. No Atlas account is required.")
+                    Button(onClick = onConfigureInference) { Text("Set up inference") }
+                }
+            }
         }
 
         if (snapshot.session == null || snapshot.session.status == SessionStatus.DONE) {
@@ -264,7 +325,7 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
                         Text("New physical session", style = MaterialTheme.typography.titleLarge)
                         OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(goal, { goal = it }, label = { Text("Goal") }, minLines = 2, modifier = Modifier.fillMaxWidth())
-                        Button({ runAction { runtime.createAndStartSession(name, goal) } }, modifier = Modifier.fillMaxWidth()) {
+                        Button({ runAction { runtime.createAndStartSession(name, goal) } }, enabled = hasProvider, modifier = Modifier.fillMaxWidth()) {
                             Icon(Icons.Default.PlayArrow, null); Text(" Start session")
                         }
                     }
@@ -504,13 +565,22 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
 
 @Composable
 private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpoint>, managedAccount: ManagedAccountClient, modifier: Modifier, onChanged: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val tester = remember { ProviderConnectionTester() }
     var name by remember { mutableStateOf("") }
-    var baseUrl by remember { mutableStateOf("http://10.0.2.2:11434") }
+    var baseUrl by remember { mutableStateOf("") }
     var model by remember { mutableStateOf("") }
     var apiKey by remember { mutableStateOf("") }
     var vision by remember { mutableStateOf(true) }
     var tools by remember { mutableStateOf(true) }
     var streaming by remember { mutableStateOf(true) }
+    var draftCheck by remember { mutableStateOf<com.grinningfrog.atlas.provider.ProviderCheck?>(null) }
+    var endpointChecks by remember { mutableStateOf<Map<String, com.grinningfrog.atlas.provider.ProviderCheck>>(emptyMap()) }
+
+    fun draftEndpoint(id: String = "connection-test") = ProviderEndpoint(
+        id, name.trim().ifBlank { "Endpoint" }, EndpointSecurity.assess(baseUrl).normalizedBaseUrl,
+        model.trim(), id, supportsVision = vision, supportsTools = tools, supportsStreaming = streaming,
+    )
 
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
@@ -525,7 +595,7 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                 }
             }
         }
-        item { ManagedAccountCard(managedAccount, settings, onChanged) }
+        if (managedAccount.state.value.configured) item { ManagedAccountCard(managedAccount, settings, onChanged) }
         if (providers.isNotEmpty()) item { Text("Configured endpoints", style = MaterialTheme.typography.titleMedium) }
         items(providers, key = { it.id }) { endpoint ->
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
@@ -534,6 +604,19 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                         Text(endpoint.name, fontWeight = FontWeight.SemiBold)
                         Text("${endpoint.model} · ${listOfNotNull("text", "vision".takeIf { endpoint.supportsVision }, "tools".takeIf { endpoint.supportsTools }, "streaming".takeIf { endpoint.supportsStreaming }).joinToString(" + ")}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(endpoint.baseUrl, style = MaterialTheme.typography.bodySmall)
+                        Text(runCatching { EndpointSecurity.assess(endpoint.baseUrl).notice }.getOrElse { "Blocked: ${it.message}" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val check = endpointChecks[endpoint.id]
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButtonCompact("Test") {
+                                scope.launch {
+                                    val result = tester.check(endpoint, settings.apiKey(endpoint))
+                                    endpointChecks = endpointChecks + (endpoint.id to result)
+                                    if (result.ok) settings.markProviderVerified(endpoint.id)
+                                }
+                            }
+                            Text(check?.message ?: settings.providerVerifiedAt(endpoint.id)?.let { "Previously connected" } ?: "Not tested", style = MaterialTheme.typography.bodySmall,
+                                color = if (check?.ok == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(endpoint.supportsVision, { enabled ->
                                 settings.updateProviderCapabilities(endpoint.id, enabled, endpoint.supportsTools, endpoint.supportsStreaming)
@@ -570,10 +653,11 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Add endpoint", style = MaterialTheme.typography.titleLarge)
-                    OutlinedTextField(name, { name = it }, label = { Text("Name (for example, Home Ollama)") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("Base URL") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(model, { model = it }, label = { Text("Model") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(apiKey, { apiKey = it }, label = { Text("API key (optional)") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(name, { name = it; draftCheck = null }, label = { Text("Name (for example, Home Ollama)") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(baseUrl, { baseUrl = it; draftCheck = null }, label = { Text("Base URL") }, placeholder = { Text("https://provider.example/v1") }, modifier = Modifier.fillMaxWidth())
+                    runCatching { EndpointSecurity.assess(baseUrl).notice }.getOrNull()?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    OutlinedTextField(model, { model = it; draftCheck = null }, label = { Text("Model") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(apiKey, { apiKey = it; draftCheck = null }, label = { Text("API key (optional)") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(vision, { vision = it }); Text("Endpoint accepts image input")
                     }
@@ -583,18 +667,28 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(streaming, { streaming = it }); Text("Endpoint supports SSE streaming")
                     }
+                    OutlinedButton(
+                        enabled = baseUrl.isNotBlank() && model.isNotBlank(),
+                        onClick = { scope.launch {
+                            draftCheck = runCatching { tester.check(draftEndpoint(), apiKey.takeIf(String::isNotBlank)) }
+                                .getOrElse { com.grinningfrog.atlas.provider.ProviderCheck(false, it.message ?: "Invalid endpoint") }
+                        } },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Test connection") }
+                    draftCheck?.let { Text(it.message, color = if (it.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error) }
                     Button(
-                        enabled = name.isNotBlank() && baseUrl.isNotBlank() && model.isNotBlank(),
+                        enabled = name.isNotBlank() && model.isNotBlank() && draftCheck?.ok == true,
                         onClick = {
                             val id = UUID.randomUUID().toString()
-                            settings.saveProvider(ProviderEndpoint(id, name.trim(), baseUrl.trim(), model.trim(), id, supportsVision = vision, supportsTools = tools, supportsStreaming = streaming), apiKey)
+                            settings.saveProvider(draftEndpoint(id), apiKey)
+                            settings.markProviderVerified(id)
                             val all = settings.loadProviders()
                             val allIds = all.map { it.id }
                             settings.saveRoutes(RouteTable(allIds, all.filter { it.supportsVision }.map { it.id }, allIds, allIds))
-                            name = ""; model = ""; apiKey = ""; onChanged()
+                            name = ""; baseUrl = ""; model = ""; apiKey = ""; draftCheck = null; onChanged()
                         },
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Save and add to capability routes") }
+                    ) { Text("Save endpoint") }
                 }
             }
         }
@@ -670,12 +764,66 @@ private fun ManagedAccountCard(account: ManagedAccountClient, settings: SecureSe
 }
 
 @Composable
-private fun EventsPage(snapshot: RuntimeSnapshot, modifier: Modifier) {
+private fun EventsPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, settings: SecureSettings, archive: SessionArchive, modifier: Modifier) {
+    val scope = rememberCoroutineScope()
+    var retentionDays by remember { mutableIntStateOf(settings.mediaRetentionDays) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var actionMessage by remember { mutableStateOf<String?>(null) }
+    if (confirmDelete) AlertDialog(
+        onDismissRequest = { confirmDelete = false },
+        title = { Text("Delete this session permanently?") },
+        text = { Text("This removes its transcript, memory, observations, events, tool records, and Atlas-owned images from this phone. This cannot be undone.") },
+        confirmButton = { TextButton(onClick = {
+            confirmDelete = false
+            scope.launch { runCatching { runtime.deleteCurrentSession() }
+                .onSuccess { actionMessage = "Session deleted from this phone" }
+                .onFailure { actionMessage = it.message ?: "Deletion failed" } }
+        }) { Text("Delete") } },
+        dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+    )
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
-            Text("Event stream", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text("Monotonic local sequence · newest first", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Data & activity", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+            Text("Your session stays on this phone except for content sent to your chosen inference and speech services.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(6.dp))
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Text("Session controls", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Exports contain a readable transcript and the complete machine-readable Atlas state bundle. Provider credentials are never included.", style = MaterialTheme.typography.bodySmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(enabled = snapshot.session != null, onClick = {
+                            snapshot.session?.let { runCatching { archive.share(it.id) }.onFailure { error -> actionMessage = error.message } }
+                        }) { Icon(Icons.Default.IosShare, null); Text(" Export") }
+                        OutlinedButton(enabled = snapshot.session != null, onClick = { confirmDelete = true }) {
+                            Icon(Icons.Default.Delete, null); Text(" Delete")
+                        }
+                    }
+                    actionMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
+            }
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Image retention", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Processed images from completed sessions are removed after $retentionDays days. Transcripts and audit records remain until you delete the session.", style = MaterialTheme.typography.bodySmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(1, 7, 30).forEach { days ->
+                            if (retentionDays == days) Button(onClick = {}) { Text("$days d") }
+                            else OutlinedButton(onClick = {
+                                retentionDays = days; settings.mediaRetentionDays = days
+                                scope.launch { archive.enforceMediaRetention(days) }
+                            }) { Text("$days d") }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Text("Local event stream", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("Monotonic sequence · newest first", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (snapshot.recentEvents.isEmpty()) item { Text("Start a session to create an auditable physical-agent trace.") }
         items(snapshot.recentEvents.asReversed(), key = AtlasEvent::sequence) { event -> EventRow(event) }

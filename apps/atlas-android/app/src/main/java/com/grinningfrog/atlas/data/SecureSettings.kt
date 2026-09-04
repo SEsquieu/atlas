@@ -26,7 +26,8 @@ class SecureSettings(context: Context) {
 
     fun deleteProvider(id: String) {
         val endpoint = loadProviders().firstOrNull { it.id == id }
-        prefs.edit().putString("providers", JSONArray(loadProviders().filterNot { it.id == id }.map(::endpointJson)).toString()).apply()
+        prefs.edit().putString("providers", JSONArray(loadProviders().filterNot { it.id == id }.map(::endpointJson)).toString())
+            .remove("provider.verified.$id").apply()
         SecretStore.remove(endpoint?.apiKeyAlias ?: id, prefs)
     }
 
@@ -36,6 +37,19 @@ class SecureSettings(context: Context) {
         }
         prefs.edit().putString("providers", JSONArray(providers.map(::endpointJson)).toString()).apply()
     }
+
+    var onboardingComplete: Boolean
+        get() = prefs.getBoolean("onboarding.complete.v1", false)
+        set(value) { prefs.edit().putBoolean("onboarding.complete.v1", value).apply() }
+
+    var mediaRetentionDays: Int
+        get() = prefs.getInt("privacy.mediaRetentionDays", 7).coerceIn(1, 30)
+        set(value) { prefs.edit().putInt("privacy.mediaRetentionDays", value.coerceIn(1, 30)).apply() }
+
+    fun markProviderVerified(id: String, atMs: Long = System.currentTimeMillis()) =
+        prefs.edit().putLong("provider.verified.$id", atMs).apply()
+
+    fun providerVerifiedAt(id: String): Long? = prefs.getLong("provider.verified.$id", 0L).takeIf { it > 0L }
 
     fun loadProviders(): List<ProviderEndpoint> = runCatching {
         val array = JSONArray(prefs.getString("providers", "[]"))
@@ -62,7 +76,7 @@ class SecureSettings(context: Context) {
     }.toString()).apply()
 
     fun loadRoutes(): RouteTable = runCatching {
-        val json = JSONObject(prefs.getString("routes", "{}") ?: "{}")
+        val json = JSONObject(prefs.getString("routes", "{}"))
         RouteTable(json.strings("fast"), json.strings("vision"), json.strings("reasoning"), json.strings("fallback"))
     }.getOrDefault(RouteTable())
 

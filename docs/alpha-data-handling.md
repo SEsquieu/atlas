@@ -39,6 +39,15 @@ Android speech recognition and TTS may be implemented by software or services se
 - Remove BYOI credentials and sign out of Atlas Managed
 - Decline diagnostic content upload
 
+## Implemented alpha defaults
+
+- Completed-session image derivatives expire after 7 days by default; the user can select 1, 7, or 30 days.
+- Transcripts, memory, and audit records remain until explicit session deletion.
+- Session export is an explicit local share action and contains `transcript.txt` plus `session.json`; it never contains provider credentials.
+- Session deletion removes messages, speech delivery records, turns, clarification state, tool records, memory, summaries, observations, events, the session row, and Atlas-owned private media.
+- Raw camera files remain temporary and are deleted after derivative processing.
+- There is no automatic diagnostic content upload or cloud synchronization.
+
 ## Diagnostic collection
 
 Operational metrics should exclude content whenever possible. A content-bearing diagnostic package requires a separate explicit action that states:

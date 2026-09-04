@@ -19,8 +19,8 @@ Android database version 8 creates a personal workspace automatically and durabl
 
 ## First run
 
-1. Grant camera, microphone, and notification access. Atlas acquires camera, microphone, speech, and motion resources on session start/resume and releases them on pause/end.
-2. Open **Inference** and add an endpoint name, base URL, model, and optional API key.
+1. Read the three-screen first-run explanation, then grant camera, microphone, and notification access. Atlas acquires camera, microphone, speech, and motion resources on session start/resume and releases them on pause/end.
+2. Open **Inference**, add an endpoint name, base URL, model, and optional API key, then pass the bounded connection test before saving.
 3. Mark the endpoint as image-capable only if its chat-completions API accepts an `image_url` content part.
 4. Mark it tool-capable only if it accepts OpenAI-compatible function tools and returns assistant `tool_calls`. Enable **Stream** only for endpoints that return chat-completion SSE deltas.
 5. Open **Session**, enter a durable goal, and start. New sessions begin with **Live Context** off.
@@ -45,8 +45,9 @@ Atlas appends `/v1/chat/completions` unless the configured URL already ends in `
 - Captured frames, transcripts, model responses, and audit events are stored in private app storage.
 - Full-resolution camera output is temporary. Atlas normalizes it into a private, opaque media artifact before persistence or inference.
 - Android backups are disabled.
-- Cleartext HTTP is enabled for local-network POC endpoints. A public release should replace the global allowance with an explicit network-security policy and visible per-endpoint warning.
+- The `secure` variant disables cleartext globally. The separately identified `lan` variant permits cleartext at the OS layer for local inference, while Atlas rejects public HTTP and accepts it only for device/private-network addresses with a visible warning.
 - Removing the app removes its local data. There is no cloud sync in this POC.
+- The **Data** screen exports a transcript plus complete JSON state, permanently deletes the current session and owned media, and sets completed-session image retention to 1, 7, or 30 days (7 by default).
 
 ## Media boundary and image budgets
 
@@ -79,7 +80,7 @@ The notification and Session screen visibly distinguish Live Context from a manu
 After deploying `apps/atlas-cloud`, build a managed-enabled APK with:
 
 ```bash
-./gradlew assembleDebug \
+./gradlew assembleSecureDebug \
   -PATLAS_GATEWAY_URL=https://your-gateway.example \
   -PSUPABASE_URL=https://PROJECT.supabase.co \
   -PSUPABASE_PUBLISHABLE_KEY=sb_publishable_REPLACE_ME
@@ -87,7 +88,7 @@ After deploying `apps/atlas-cloud`, build a managed-enabled APK with:
 
 The app authenticates directly with Supabase, stores the session tokens with Android Keystore, and presents the short-lived access token to Atlas Cloud. OpenAI and Supabase service-role credentials remain on the server. Signing out removes only the managed endpoint from capability routes; direct endpoints are untouched.
 
-This is not yet production privacy UX. Before external beta, Atlas needs retention controls, session deletion/export, redaction options, a privacy disclosure, and security review.
+The repository contains engineering disclosure copy, not a final legal privacy policy. Diagnostic upload and cloud sync remain disabled; a future content-bearing report flow must request separate consent and support review/redaction.
 
 ## Speech loop
 
@@ -133,8 +134,9 @@ See [`../../docs/model-routing.md`](../../docs/model-routing.md) for the managed
 - Audio focus, Bluetooth-route validation, and noisy-environment tuning require physical-device alpha testing.
 - A single latest session is resumed after process restart.
 - Session permissions use conservative persisted defaults but are not yet editable in the UI.
-- Observation retention is unbounded.
-- There is no signed release build or Play distribution. Atlas Cloud plumbing exists but is not a production service until deployed, configured, abuse-protected, and operationally monitored.
+- Only the latest session is exposed in the current UI; exported state is complete for that session.
+- The signed-alpha workflow requires a protected `closed-alpha` GitHub environment and maintainer-supplied signing secrets. Play distribution is not configured.
+- Atlas Cloud plumbing exists but is not a production service until deployed, configured, abuse-protected, and operationally monitored; it is hidden when not configured and does not block a BYOI alpha.
 
 Those are release tasks, not reasons to couple Core to an inference vendor.
 

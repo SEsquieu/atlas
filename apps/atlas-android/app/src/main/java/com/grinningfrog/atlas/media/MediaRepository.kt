@@ -80,6 +80,14 @@ class MediaRepository(private val context: Context) {
         check(it.exists()) { "Media is no longer available: ${media.id}" }
     }
 
+    /** Deletes only Atlas-owned private media. Legacy absolute paths are deliberately not deleted. */
+    fun deleteStorageKeys(keys: Collection<String>): Int = keys.distinct().count { key ->
+        if (File(key).isAbsolute) false else runCatching {
+            val target = resolveStorageKey(key)
+            target.delete().also { target.parentFile?.takeIf(File::isDirectory)?.delete() }
+        }.getOrDefault(false)
+    }
+
     fun fingerprint(media: MediaRef): String? {
         val source = BitmapFactory.decodeFile(resolve(media).absolutePath) ?: return null
         val scaled = Bitmap.createScaledBitmap(source, 8, 8, true)

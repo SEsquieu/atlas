@@ -44,7 +44,9 @@ export class FileSessionStore implements SessionStore {
     const state = await this.loadState(sessionId);
     const normalized: AuditEvent = {
       id: event.id ?? crypto.randomUUID(),
-      at: event.at ?? new Date().toISOString(),
+      // A fresh checkpoint has no event cursor yet. Ensure its first implicit event is
+      // strictly newer than updatedAt so millisecond clock collisions cannot hide it.
+      at: event.at ?? nextEventTime(state?.updatedAt),
       type: event.type,
       workspaceId: event.workspaceId ?? state?.workspace?.workspaceId,
       organizationId: event.organizationId ?? state?.workspace?.organizationId,
@@ -110,6 +112,12 @@ export class FileSessionStore implements SessionStore {
   private eventsPath(sessionId: string): string {
     return join(this.sessionDir(sessionId), 'events.jsonl');
   }
+}
+
+function nextEventTime(checkpointAt?: string): string {
+  const now = Date.now();
+  const checkpointMs = checkpointAt ? Date.parse(checkpointAt) : Number.NaN;
+  return new Date(Number.isFinite(checkpointMs) ? Math.max(now, checkpointMs + 1) : now).toISOString();
 }
 
 function isNotFound(error: unknown): boolean {

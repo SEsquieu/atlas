@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import android.database.Cursor
 import com.grinningfrog.atlas.model.AtlasEvent
 import com.grinningfrog.atlas.model.AgentTurn
 import com.grinningfrog.atlas.model.AtlasMessage
@@ -474,6 +475,95 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             stationId = cursor.nullableString(11), taskRunId = cursor.nullableString(12), policyId = cursor.nullableString(13),
             policyRevision = if (cursor.isNull(14)) null else cursor.getInt(14),
         )
+    }
+
+    /** Complete, portable state bundle for an explicit user export. Secrets are never stored here. */
+    fun exportSession(sessionId: String): JSONObject = JSONObject().apply {
+        put("format", "atlas.session.v1")
+        put("exportedAtMs", System.currentTimeMillis())
+        put("session", queryRows("sessions", "session_id = ?", arrayOf(sessionId)))
+        put("turns", queryRows("turns", "session_id = ?", arrayOf(sessionId)))
+        put("messages", queryRows("messages", "session_id = ?", arrayOf(sessionId), "sequence"))
+        put("speechSegments", queryRows("speech_segments", "session_id = ?", arrayOf(sessionId), "queued_at"))
+        put("toolCalls", queryRows("tool_calls", "session_id = ?", arrayOf(sessionId), "created_at"))
+        put("clarifications", queryRows("clarifications", "session_id = ?", arrayOf(sessionId), "created_at"))
+        put("memory", queryRows("memory_items", "session_id = ?", arrayOf(sessionId), "created_at"))
+        put("summaries", queryRows("session_summaries", "session_id = ?", arrayOf(sessionId)))
+        put("observations", queryRows("observations", "session_id = ?", arrayOf(sessionId), "observed_at"))
+        put("events", queryRows("events", "session_id = ?", arrayOf(sessionId), "sequence"))
+    }
+
+    fun exportTranscript(sessionId: String): String {
+        val session = readableDatabase.rawQuery("SELECT name,goal,created_at FROM sessions WHERE session_id = ?", arrayOf(sessionId)).use { cursor ->
+            check(cursor.moveToFirst()) { "Unknown session" }
+            Triple(cursor.getString(0), cursor.getString(1), cursor.getLong(2))
+        }
+        return buildString {
+            appendLine(session.first)
+            appendLine("Goal: ${session.second}")
+            appendLine("Session ID: $sessionId")
+            appendLine()
+            loadMessages(sessionId, limit = 10_000).filter { it.kind == MessageKind.DIALOGUE }.forEach { message ->
+                append(if (message.role == MessageRole.USER) "You: " else "Atlas: ")
+                appendLine(message.content)
+            }
+        }
+    }
+
+    /** Deletes all session-owned durable state and returns private media keys for secure removal. */
+    @Synchronized
+    fun deleteSession(sessionId: String): List<String> {
+        val mediaKeys = mediaKeys("o.session_id = ?", arrayOf(sessionId))
+        writableDatabase.transaction {
+            delete("speech_segments", "session_id = ?", arrayOf(sessionId))
+            delete("tool_calls", "session_id = ?", arrayOf(sessionId))
+            delete("messages", "session_id = ?", arrayOf(sessionId))
+            delete("clarifications", "session_id = ?", arrayOf(sessionId))
+            delete("session_summaries", "session_id = ?", arrayOf(sessionId))
+            delete("memory_items", "session_id = ?", arrayOf(sessionId))
+            delete("observations", "session_id = ?", arrayOf(sessionId))
+            delete("events", "session_id = ?", arrayOf(sessionId))
+            delete("turns", "session_id = ?", arrayOf(sessionId))
+            check(delete("sessions", "session_id = ?", arrayOf(sessionId)) == 1) { "Unknown session" }
+        }
+        return mediaKeys
+    }
+
+    /** Removes image derivatives from completed sessions after the configured retention window. */
+    @Synchronized
+    fun pruneExpiredObservations(cutoffMs: Long): List<String> {
+        val where = "s.status = 'DONE' AND o.observed_at < ?"
+        val args = arrayOf(cutoffMs.toString())
+        val mediaKeys = mediaKeys(where, args)
+        writableDatabase.execSQL(
+            "DELETE FROM observations WHERE observation_id IN (SELECT o.observation_id FROM observations o JOIN sessions s ON s.session_id=o.session_id WHERE $where)",
+            args,
+        )
+        return mediaKeys
+    }
+
+    private fun mediaKeys(where: String, args: Array<String>): List<String> = readableDatabase.rawQuery(
+        "SELECT o.media_path FROM observations o JOIN sessions s ON s.session_id=o.session_id WHERE $where", args,
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+
+    private fun queryRows(table: String, selection: String, args: Array<String>, orderBy: String? = null): JSONArray {
+        val result = JSONArray()
+        readableDatabase.query(table, null, selection, args, null, null, orderBy).use { cursor ->
+            while (cursor.moveToNext()) result.put(cursor.toJson())
+        }
+        return result
+    }
+
+    private fun Cursor.toJson() = JSONObject().also { row ->
+        columnNames.forEachIndexed { index, name ->
+            row.put(name, when (getType(index)) {
+                Cursor.FIELD_TYPE_NULL -> JSONObject.NULL
+                Cursor.FIELD_TYPE_INTEGER -> getLong(index)
+                Cursor.FIELD_TYPE_FLOAT -> getDouble(index)
+                Cursor.FIELD_TYPE_BLOB -> "<binary omitted>"
+                else -> getString(index)
+            })
+        }
     }
 
     @Synchronized
