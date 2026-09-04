@@ -65,9 +65,19 @@ Atlas Enterprise extends the open runtime through versioned interfaces. It does 
 
 Enterprise policy can restrict an open runtime, but must do so through the same visible policy and event contracts available to community deployments.
 
-## Repository boundary
+## Repository topology
 
-For v0.1, one public repository keeps the contract legible:
+The source boundary is enforced by repository visibility and dependency direction, not by long-lived branches or hidden folders in the public repository.
+
+| Repository | Visibility | Responsibility |
+| --- | --- | --- |
+| `SEsquieu/atlas` | Private during alpha preparation; public after the release checklist | Complete open runtime, Android app, BYOI, public contracts, tests, and reference gateway |
+| `SEsquieu/atlas-managed` | Private | Operated inference admission, production routing configuration, commercial metering, abuse controls, service operations, and infrastructure |
+| `SEsquieu/atlas-enterprise` | Private | Organization, fleet, station, procedure, policy, connector, audit-administration, and enterprise-support control plane |
+
+Production infrastructure remains in `atlas-managed` until its access controls or deployment lifecycle justify a fourth repository. Closed-alpha access is enforced by authenticated service entitlements and server-side budgets, not by withholding the device runtime source.
+
+The public repository remains organized as:
 
 ```text
 apps/
@@ -83,7 +93,7 @@ packages/
 docs/                        architecture, policies, operations, and releases
 ```
 
-Atlas Enterprise should begin in a separate private repository when its first real control-plane feature is implemented. Moving speculative folders now would create two repositories without creating a product boundary.
+The two private repositories begin as tested boundary packages rather than speculative products. Their manifests declare compatible public protocol ranges, prohibit source-checkout imports, and reserve implementation decisions until the consumer runtime and public contracts stabilize.
 
 ## Compatibility rules
 
@@ -94,6 +104,8 @@ Atlas Enterprise should begin in a separate private repository when its first re
 5. A personal workspace is the smallest valid deployment of the same ownership model used by an organization.
 6. Cloud unavailability must not corrupt or strand a local session.
 7. BYOI remains available when managed allowance is exhausted.
+8. Private repositories consume tagged packages or generated clients from released public schemas; they may not use `file:`, branch, or workspace links into a neighboring Atlas checkout.
+9. Production infrastructure stays with Managed until a separate security or deployment boundary is demonstrated.
 
 ## Licensing and contribution model
 
