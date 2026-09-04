@@ -261,8 +261,6 @@ data class RouteTable(
 data class InferenceRequest(
     val requestId: String = UUID.randomUUID().toString(),
     val sessionId: String,
-    val workspaceId: String = DEFAULT_PERSONAL_WORKSPACE_ID,
-    val taskRunId: String? = null,
     val capability: RouteCapability,
     val systemPrompt: String,
     val userText: String,
@@ -276,6 +274,8 @@ data class InferenceRequest(
     val risk: InferenceRisk = InferenceRisk.NORMAL,
     val latencyClass: LatencyClass = LatencyClass.INTERACTIVE,
     val responseContract: ResponseContract? = null,
+    val workspaceId: String = DEFAULT_PERSONAL_WORKSPACE_ID,
+    val taskRunId: String? = null,
 )
 
 data class InferenceResponse(
