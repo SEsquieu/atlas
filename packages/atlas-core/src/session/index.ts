@@ -1,4 +1,14 @@
-import type { AtlasSessionState, DeviceBinding, ProviderBinding, SessionPermissions } from '../types.js';
+import type {
+  AtlasSessionState,
+  DeviceBinding,
+  PrincipalRef,
+  ProviderBinding,
+  RuntimePolicyRef,
+  SessionPermissions,
+  SessionPlacement,
+  TaskRunState,
+  WorkspaceRef
+} from '../types.js';
 
 export const UNKNOWN_FRESHNESS_MS = Number.MAX_SAFE_INTEGER;
 
@@ -9,7 +19,18 @@ export type CreateSessionInput = {
   provider: ProviderBinding;
   devices?: DeviceBinding[];
   permissions?: Partial<SessionPermissions>;
+  workspace?: WorkspaceRef;
+  actor?: PrincipalRef;
+  placement?: SessionPlacement;
+  taskRun?: TaskRunState;
+  policy?: RuntimePolicyRef;
   now?: string;
+};
+
+export const LOCAL_PERSONAL_WORKSPACE: WorkspaceRef = {
+  workspaceId: 'workspace:personal:local',
+  kind: 'personal',
+  name: 'Personal'
 };
 
 export function createSessionState(input: CreateSessionInput): AtlasSessionState {
@@ -17,6 +38,11 @@ export function createSessionState(input: CreateSessionInput): AtlasSessionState
 
   return {
     sessionId: input.sessionId,
+    workspace: input.workspace ?? LOCAL_PERSONAL_WORKSPACE,
+    actor: input.actor,
+    placement: input.placement,
+    taskRun: input.taskRun,
+    policy: input.policy,
     name: input.name,
     status: 'idle',
     createdAt: now,
@@ -34,6 +60,7 @@ export function createSessionState(input: CreateSessionInput): AtlasSessionState
     },
     recentObservations: [],
     memory: {
+      scoped: [],
       working: [],
       durable: [],
       environmentNotes: [],

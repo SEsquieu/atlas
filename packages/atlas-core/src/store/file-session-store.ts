@@ -41,10 +41,21 @@ export class FileSessionStore implements SessionStore {
     event: Omit<AuditEvent, 'id' | 'at'> & Partial<Pick<AuditEvent, 'id' | 'at'>>
   ): Promise<AuditEvent> {
     await this.ensureSessionDir(sessionId);
+    const state = await this.loadState(sessionId);
     const normalized: AuditEvent = {
       id: event.id ?? crypto.randomUUID(),
       at: event.at ?? new Date().toISOString(),
       type: event.type,
+      workspaceId: event.workspaceId ?? state?.workspace?.workspaceId,
+      organizationId: event.organizationId ?? state?.workspace?.organizationId,
+      principalId: event.principalId ?? state?.actor?.principalId,
+      siteId: event.siteId ?? state?.placement?.siteId,
+      stationId: event.stationId ?? state?.placement?.stationId,
+      sessionId: event.sessionId ?? sessionId,
+      taskRunId: event.taskRunId ?? state?.taskRun?.taskRunId,
+      procedureRevisionId: event.procedureRevisionId ?? state?.taskRun?.procedure?.revisionId,
+      correlationId: event.correlationId,
+      causationId: event.causationId,
       data: event.data
     };
     await appendFile(this.eventsPath(sessionId), `${JSON.stringify(normalized)}\n`, 'utf8');

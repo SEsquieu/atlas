@@ -13,6 +13,8 @@ Open this directory directly in Android Studio and run the `app` configuration. 
 
 The default APK leaves Atlas Cloud disabled. A gateway deployment can enable account sign-up, subscription checkout, credit-block purchase, balance display, and managed inference by supplying the three Gradle properties documented below. BYOI never requires those values.
 
+Android database version 7 creates a personal workspace automatically and scopes every new session, observation, event, and memory record to it. The same persistence boundary supports optional site, station, actor, task-run, policy, and scoped-memory identities without placing enterprise administration in the consumer UI.
+
 ## First run
 
 1. Grant camera, microphone, and notification access. Atlas acquires camera, microphone, speech, and motion resources on session start/resume and releases them on pause/end.
@@ -103,6 +105,7 @@ The app uses OpenAI-compatible chat completions and function tools:
 - Atlas records, authorizes, executes, and returns `role: tool` results in subsequent model steps;
 - `Authorization: Bearer …` is omitted when no key is configured;
 - `X-Atlas-Request-Id` supports cross-system tracing.
+- UUID-backed managed sessions forward organization scope plus session/task-run correlation for authorization, metering, and audit attribution.
 - `X-Atlas-Capability`, `X-Atlas-Risk`, `X-Atlas-Latency-Class`, and `X-Atlas-Media-Purpose` describe the job without naming a vendor model.
 - compatible gateways may return `X-Atlas-Model`, `X-Atlas-Profile`, `X-Atlas-Route-Reason`, and `X-Atlas-Route-Revision`; Core records them in the event log.
 - streaming endpoints return standard `data: {...}` SSE chat-completion chunks followed by `data: [DONE]`; text and split tool-call arguments are normalized before they reach Core.

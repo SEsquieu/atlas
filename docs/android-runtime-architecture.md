@@ -32,7 +32,7 @@ All solid arrows now have repository implementations. The managed gateway is opt
 | Speech and interruption | Owns | Produces candidate response text |
 | Provider failover | Owns capability route | Is one replaceable endpoint |
 | Audit and replay | Owns ordered event stream | Correlates through request ID |
-| Billing and entitlements | Optional account adapter; never session authority | Gateway meters user credits; provider secret stays server-side |
+| Billing and entitlements | Optional account adapter; never session authority | Gateway meters organization credits with user attribution; provider secret stays server-side |
 
 ## Runtime lifecycle
 
@@ -67,7 +67,7 @@ This makes image cost and upload latency bounded inputs to policy rather than ac
 
 ## Optional commercial seam
 
-Direct BYOI is the default and does not require an Atlas account. The optional `apps/atlas-cloud` adapter uses a short-lived Supabase user token, never the operator's model key. It provides capability routing, reserve/settle credit metering, a subscription allowance, and one-time credit blocks. Stripe grants and inference charges are idempotent ledger entries.
+Direct BYOI is the default and does not require an Atlas account. The optional `apps/atlas-cloud` adapter uses a short-lived Supabase user token, never the operator's model key. Authentication resolves into a personal or shared organization before billing or inference. It provides capability routing, reserve/settle credit metering, a subscription allowance, and one-time credit blocks. Stripe grants and inference charges are idempotent organization ledger entries.
 
 The gateway owns identity, entitlement, metering, and provider-key custody only. It receives no durable Atlas session and cannot schedule a heartbeat, operate a device, or execute a tool. Public operation still requires rate limiting, abuse controls, reconciliation, alerts, legal/payment policy, and a deliberate pricing configuration.
 

@@ -177,7 +177,12 @@ class OpenAiCompatibleBackend(
             .header("X-Atlas-Risk", request.risk.name.lowercase())
             .header("X-Atlas-Latency-Class", request.latencyClass.name.lowercase())
             .header("X-Atlas-Requires-Tools", (request.tools.isNotEmpty()).toString())
-            .apply { request.observation?.media?.purpose?.let { header("X-Atlas-Media-Purpose", it.name.lowercase()) } }
+            .apply {
+                request.observation?.media?.purpose?.let { header("X-Atlas-Media-Purpose", it.name.lowercase()) }
+                request.workspaceId.takeIf(::isUuid)?.let { header("X-Atlas-Organization-Id", it) }
+                request.sessionId.takeIf(::isUuid)?.let { header("X-Atlas-Session-Id", it) }
+                request.taskRunId?.takeIf(::isUuid)?.let { header("X-Atlas-Task-Run-Id", it) }
+            }
             .apply { if (!apiKey.isNullOrBlank()) header("Authorization", "Bearer $apiKey") }
             .post(payload.toString().toRequestBody("application/json".toMediaType()))
             .build()
@@ -294,4 +299,10 @@ class OpenAiCompatibleBackend(
     }
 
     private fun elapsedMs(startedNanos: Long) = (System.nanoTime() - startedNanos) / 1_000_000
+
+    private fun isUuid(value: String) = UUID_PATTERN.matches(value)
+
+    private companion object {
+        val UUID_PATTERN = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
+    }
 }

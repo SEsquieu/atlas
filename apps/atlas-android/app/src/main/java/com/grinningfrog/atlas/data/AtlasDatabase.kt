@@ -9,13 +9,17 @@ import com.grinningfrog.atlas.model.AgentTurn
 import com.grinningfrog.atlas.model.AtlasMessage
 import com.grinningfrog.atlas.model.AtlasSession
 import com.grinningfrog.atlas.model.AtlasToolCall
+import com.grinningfrog.atlas.model.AtlasTaskRun
+import com.grinningfrog.atlas.model.AtlasWorkspace
 import com.grinningfrog.atlas.model.ContextStability
 import com.grinningfrog.atlas.model.ContextMode
 import com.grinningfrog.atlas.model.DeliveryStatus
+import com.grinningfrog.atlas.model.DEFAULT_PERSONAL_WORKSPACE_ID
 import com.grinningfrog.atlas.model.MotionState
 import com.grinningfrog.atlas.model.MemoryItem
 import com.grinningfrog.atlas.model.MemoryKind
 import com.grinningfrog.atlas.model.MemoryStatus
+import com.grinningfrog.atlas.model.MemoryScope
 import com.grinningfrog.atlas.model.MessageKind
 import com.grinningfrog.atlas.model.MessageRole
 import com.grinningfrog.atlas.model.MediaPurpose
@@ -29,12 +33,40 @@ import com.grinningfrog.atlas.model.SpeechSegment
 import com.grinningfrog.atlas.model.SpeechSegmentStatus
 import com.grinningfrog.atlas.model.ToolCallStatus
 import com.grinningfrog.atlas.model.ToolRisk
+import com.grinningfrog.atlas.model.TaskRunStatus
 import com.grinningfrog.atlas.model.TurnStatus
 import com.grinningfrog.atlas.model.VisualObservation
 import org.json.JSONObject
 import java.util.UUID
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 6) {
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 7) {
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        db.setForeignKeyConstraintsEnabled(true)
+    }
+
+    private fun createOwnershipTables(db: SQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS workspaces (
+            workspace_id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL,
+            organization_id TEXT, created_at INTEGER NOT NULL
+        )""".trimIndent())
+        db.insertWithOnConflict("workspaces", null, ContentValues().apply {
+            put("workspace_id", DEFAULT_PERSONAL_WORKSPACE_ID); put("kind", "PERSONAL"); put("name", "Personal"); put("created_at", System.currentTimeMillis())
+        }, SQLiteDatabase.CONFLICT_IGNORE)
+        db.execSQL("""CREATE TABLE IF NOT EXISTS task_runs (
+            task_run_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, status TEXT NOT NULL, goal TEXT NOT NULL,
+            procedure_id TEXT, procedure_revision_id TEXT, external_ref TEXT, current_step_id TEXT,
+            started_at INTEGER, completed_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+        )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS task_runs_workspace_status ON task_runs(workspace_id,status,updated_at DESC)")
+        db.execSQL("""CREATE TABLE IF NOT EXISTS runtime_policies (
+            policy_id TEXT NOT NULL, revision INTEGER NOT NULL, workspace_id TEXT NOT NULL,
+            scope TEXT NOT NULL, scope_id TEXT NOT NULL, policy_json TEXT NOT NULL, created_at INTEGER NOT NULL,
+            PRIMARY KEY(policy_id,revision), FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+        )""".trimIndent())
+    }
+
     private fun createAgentRuntimeTables(db: SQLiteDatabase) {
         db.execSQL(
             """CREATE TABLE IF NOT EXISTS turns (
@@ -113,6 +145,9 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             """CREATE TABLE IF NOT EXISTS memory_items (
                 memory_id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
                 kind TEXT NOT NULL,
                 content TEXT NOT NULL,
                 status TEXT NOT NULL,
@@ -122,10 +157,12 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 expires_at INTEGER,
-                FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id),
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
             )""".trimIndent()
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS memory_session_status ON memory_items(session_id, status, kind)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS memory_scope_status ON memory_items(workspace_id,scope,scope_id,status,updated_at DESC)")
         db.execSQL(
             """CREATE TABLE IF NOT EXISTS session_summaries (
                 session_id TEXT PRIMARY KEY,
@@ -138,16 +175,26 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     override fun onCreate(db: SQLiteDatabase) {
+        createOwnershipTables(db)
         db.execSQL(
             """CREATE TABLE sessions (
                 session_id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                actor_id TEXT,
+                site_id TEXT,
+                station_id TEXT,
+                task_run_id TEXT,
+                policy_id TEXT,
+                policy_revision INTEGER,
                 name TEXT NOT NULL,
                 goal TEXT NOT NULL,
                 status TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 context_mode TEXT NOT NULL DEFAULT 'MANUAL',
-                permissions_json TEXT NOT NULL DEFAULT '{}'
+                permissions_json TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id),
+                FOREIGN KEY(task_run_id) REFERENCES task_runs(task_run_id)
             )""".trimIndent()
         )
         db.execSQL(
@@ -155,10 +202,14 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id TEXT NOT NULL UNIQUE,
                 session_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
+                task_run_id TEXT,
                 event_type TEXT NOT NULL,
                 at_ms INTEGER NOT NULL,
                 data_json TEXT NOT NULL,
-                FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id),
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id),
+                FOREIGN KEY(task_run_id) REFERENCES task_runs(task_run_id)
             )""".trimIndent()
         )
         db.execSQL("CREATE INDEX events_session_sequence ON events(session_id, sequence)")
@@ -166,6 +217,8 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             """CREATE TABLE observations (
                 observation_id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
+                task_run_id TEXT,
                 media_path TEXT NOT NULL,
                 media_id TEXT NOT NULL,
                 media_mime TEXT NOT NULL,
@@ -187,7 +240,9 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 fingerprint TEXT,
                 summary TEXT,
                 interpreted_at INTEGER,
-                FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id),
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id),
+                FOREIGN KEY(task_run_id) REFERENCES task_runs(task_run_id)
             )""".trimIndent()
         )
         db.execSQL("CREATE INDEX observations_session_time ON observations(session_id, observed_at DESC)")
@@ -241,17 +296,51 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             )
             db.execSQL("CREATE INDEX IF NOT EXISTS speech_message_index ON speech_segments(message_id, sentence_index)")
         }
+        if (oldVersion < 7) {
+            createOwnershipTables(db)
+            addColumnIfMissing(db, "sessions", "workspace_id", "TEXT NOT NULL DEFAULT '$DEFAULT_PERSONAL_WORKSPACE_ID'")
+            addColumnIfMissing(db, "sessions", "actor_id", "TEXT")
+            addColumnIfMissing(db, "sessions", "site_id", "TEXT")
+            addColumnIfMissing(db, "sessions", "station_id", "TEXT")
+            addColumnIfMissing(db, "sessions", "task_run_id", "TEXT")
+            addColumnIfMissing(db, "sessions", "policy_id", "TEXT")
+            addColumnIfMissing(db, "sessions", "policy_revision", "INTEGER")
+            addColumnIfMissing(db, "events", "workspace_id", "TEXT NOT NULL DEFAULT '$DEFAULT_PERSONAL_WORKSPACE_ID'")
+            addColumnIfMissing(db, "events", "task_run_id", "TEXT")
+            addColumnIfMissing(db, "observations", "workspace_id", "TEXT NOT NULL DEFAULT '$DEFAULT_PERSONAL_WORKSPACE_ID'")
+            addColumnIfMissing(db, "observations", "task_run_id", "TEXT")
+            addColumnIfMissing(db, "memory_items", "workspace_id", "TEXT NOT NULL DEFAULT '$DEFAULT_PERSONAL_WORKSPACE_ID'")
+            addColumnIfMissing(db, "memory_items", "scope", "TEXT NOT NULL DEFAULT 'SESSION'")
+            addColumnIfMissing(db, "memory_items", "scope_id", "TEXT")
+            db.execSQL("UPDATE memory_items SET workspace_id=coalesce((SELECT workspace_id FROM sessions WHERE sessions.session_id=memory_items.session_id),'$DEFAULT_PERSONAL_WORKSPACE_ID')")
+            db.execSQL("UPDATE memory_items SET scope=CASE WHEN kind='DURABLE' THEN 'WORKSPACE' ELSE 'SESSION' END")
+            db.execSQL("UPDATE memory_items SET scope_id=CASE WHEN scope='WORKSPACE' THEN workspace_id ELSE session_id END")
+            db.execSQL("CREATE INDEX IF NOT EXISTS memory_scope_status ON memory_items(workspace_id,scope,scope_id,status,updated_at DESC)")
+        }
     }
 
     @Synchronized
-    fun createSession(name: String, goal: String, nowMs: Long = System.currentTimeMillis()): AtlasSession {
+    fun createSession(
+        name: String,
+        goal: String,
+        workspaceId: String = DEFAULT_PERSONAL_WORKSPACE_ID,
+        actorId: String? = null,
+        siteId: String? = null,
+        stationId: String? = null,
+        taskRunId: String? = null,
+        nowMs: Long = System.currentTimeMillis(),
+    ): AtlasSession {
         val session = AtlasSession(
             id = UUID.randomUUID().toString(), name = name, goal = goal,
             status = SessionStatus.IDLE, createdAtMs = nowMs, updatedAtMs = nowMs,
+            workspaceId = workspaceId, actorId = actorId, siteId = siteId,
+            stationId = stationId, taskRunId = taskRunId,
         )
         writableDatabase.transaction {
             insertOrThrow("sessions", null, ContentValues().apply {
                 put("session_id", session.id); put("name", name); put("goal", goal)
+                put("workspace_id", workspaceId); put("actor_id", actorId); put("site_id", siteId)
+                put("station_id", stationId); put("task_run_id", taskRunId)
                 put("status", session.status.name); put("created_at", nowMs); put("updated_at", nowMs); put("context_mode", session.contextMode.name)
                 put("permissions_json", session.permissions.toJson().toString())
             })
@@ -277,13 +366,44 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     fun loadLatestSession(): AtlasSession? = readableDatabase.rawQuery(
-        "SELECT session_id,name,goal,status,created_at,updated_at,context_mode,permissions_json FROM sessions ORDER BY updated_at DESC LIMIT 1", null
+        """SELECT session_id,name,goal,status,created_at,updated_at,context_mode,permissions_json,
+            workspace_id,actor_id,site_id,station_id,task_run_id,policy_id,policy_revision
+            FROM sessions ORDER BY updated_at DESC LIMIT 1""".trimIndent(), null
     ).use { cursor ->
         if (!cursor.moveToFirst()) null else AtlasSession(
             id = cursor.getString(0), name = cursor.getString(1), goal = cursor.getString(2),
             status = SessionStatus.valueOf(cursor.getString(3)), createdAtMs = cursor.getLong(4), updatedAtMs = cursor.getLong(5),
             contextMode = ContextMode.valueOf(cursor.getString(6)), permissions = permissionsFromJson(cursor.getString(7)),
+            workspaceId = cursor.getString(8), actorId = cursor.nullableString(9), siteId = cursor.nullableString(10),
+            stationId = cursor.nullableString(11), taskRunId = cursor.nullableString(12), policyId = cursor.nullableString(13),
+            policyRevision = if (cursor.isNull(14)) null else cursor.getInt(14),
         )
+    }
+
+    @Synchronized
+    fun upsertWorkspace(workspace: AtlasWorkspace, nowMs: Long = System.currentTimeMillis()) {
+        writableDatabase.insertWithOnConflict("workspaces", null, ContentValues().apply {
+            put("workspace_id", workspace.id); put("kind", workspace.kind.name); put("name", workspace.name)
+            put("organization_id", workspace.organizationId); put("created_at", nowMs)
+        }, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    @Synchronized
+    fun createTaskRun(
+        workspaceId: String,
+        goal: String,
+        procedureId: String? = null,
+        procedureRevisionId: String? = null,
+        externalRef: String? = null,
+        nowMs: Long = System.currentTimeMillis(),
+    ): AtlasTaskRun {
+        val run = AtlasTaskRun(UUID.randomUUID().toString(), workspaceId, TaskRunStatus.PENDING, goal, procedureId, procedureRevisionId, externalRef)
+        writableDatabase.insertOrThrow("task_runs", null, ContentValues().apply {
+            put("task_run_id", run.id); put("workspace_id", workspaceId); put("status", run.status.name); put("goal", goal)
+            put("procedure_id", procedureId); put("procedure_revision_id", procedureRevisionId); put("external_ref", externalRef)
+            put("created_at", nowMs); put("updated_at", nowMs)
+        })
+        return run
     }
 
     @Synchronized
@@ -292,17 +412,21 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     private fun appendEventLocked(db: SQLiteDatabase, sessionId: String, type: String, atMs: Long, json: String): AtlasEvent {
         val eventId = UUID.randomUUID().toString()
+        val scope = sessionScope(db, sessionId)
         val sequence = db.insertOrThrow("events", null, ContentValues().apply {
-            put("event_id", eventId); put("session_id", sessionId); put("event_type", type); put("at_ms", atMs); put("data_json", json)
+            put("event_id", eventId); put("session_id", sessionId); put("workspace_id", scope.first); put("task_run_id", scope.second)
+            put("event_type", type); put("at_ms", atMs); put("data_json", json)
         })
-        return AtlasEvent(sequence, eventId, sessionId, type, atMs, json)
+        return AtlasEvent(sequence, eventId, sessionId, type, atMs, json, scope.first, scope.second)
     }
 
     @Synchronized
     fun saveObservation(observation: VisualObservation) {
         writableDatabase.transaction {
+            val scope = sessionScope(this, observation.sessionId)
             insertOrThrow("observations", null, ContentValues().apply {
                 put("observation_id", observation.id); put("session_id", observation.sessionId); put("media_path", observation.media.storageKey)
+                put("workspace_id", scope.first); put("task_run_id", scope.second)
                 put("media_id", observation.media.id); put("media_mime", observation.media.mimeType)
                 put("media_width", observation.media.width); put("media_height", observation.media.height); put("media_bytes", observation.media.byteSize)
                 put("media_sha256", observation.media.sha256); put("media_purpose", observation.media.purpose.name)
@@ -361,11 +485,11 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     fun loadRecentEvents(sessionId: String, limit: Int = 100): List<AtlasEvent> = readableDatabase.rawQuery(
-        "SELECT sequence,event_id,session_id,event_type,at_ms,data_json FROM events WHERE session_id = ? ORDER BY sequence DESC LIMIT ?",
+        "SELECT sequence,event_id,session_id,event_type,at_ms,data_json,workspace_id,task_run_id FROM events WHERE session_id = ? ORDER BY sequence DESC LIMIT ?",
         arrayOf(sessionId, limit.toString())
     ).use { cursor ->
         buildList {
-            while (cursor.moveToNext()) add(AtlasEvent(cursor.getLong(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5)))
+            while (cursor.moveToNext()) add(AtlasEvent(cursor.getLong(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5), cursor.getString(6), cursor.nullableString(7)))
         }.reversed()
     }
 
@@ -585,14 +709,18 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     @Synchronized
     fun saveMemory(item: MemoryItem) {
         writableDatabase.transaction {
+            val sessionScope = sessionScope(this, item.sessionId)
+            check(item.workspaceId == sessionScope.first) { "Memory workspace must match its session workspace" }
             insertWithOnConflict("memory_items", null, ContentValues().apply {
-                put("memory_id", item.id); put("session_id", item.sessionId); put("kind", item.kind.name); put("content", item.content)
+                put("memory_id", item.id); put("session_id", item.sessionId); put("workspace_id", item.workspaceId)
+                put("scope", item.scope.name); put("scope_id", item.scopeId); put("kind", item.kind.name); put("content", item.content)
                 put("status", item.status.name); put("confidence", item.confidence); put("source_turn_id", item.sourceTurnId)
                 put("evidence_observation_id", item.evidenceObservationId)
                 put("created_at", item.createdAtMs); put("updated_at", item.updatedAtMs); put("expires_at", item.expiresAtMs)
             }, SQLiteDatabase.CONFLICT_REPLACE)
             appendEventLocked(this, item.sessionId, "memory.${item.status.name.lowercase()}", item.updatedAtMs, JSONObject().apply {
                 put("memoryId", item.id); put("kind", item.kind.name.lowercase()); put("content", item.content)
+                put("scope", item.scope.name.lowercase()); put("scopeId", item.scopeId)
                 put("confidence", item.confidence); item.sourceTurnId?.let { put("sourceTurnId", it) }
                 item.evidenceObservationId?.let { put("evidenceObservationId", it) }
             }.toString())
@@ -614,13 +742,25 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     fun memoryIsAccessible(memoryId: String, sessionId: String): Boolean = readableDatabase.rawQuery(
-        "SELECT 1 FROM memory_items WHERE memory_id = ? AND (session_id = ? OR kind = 'DURABLE') LIMIT 1",
-        arrayOf(memoryId, sessionId),
+        """SELECT 1 FROM memory_items m JOIN sessions s ON s.session_id = ?
+            WHERE m.memory_id = ? AND m.workspace_id = s.workspace_id AND
+            ((m.scope = 'SESSION' AND m.scope_id = s.session_id) OR
+             (m.scope = 'TASK' AND s.task_run_id IS NOT NULL AND m.scope_id = s.task_run_id) OR
+             (m.scope = 'PRINCIPAL' AND s.actor_id IS NOT NULL AND m.scope_id = s.actor_id) OR
+             (m.scope = 'WORKSPACE' AND m.scope_id = s.workspace_id) OR
+             (m.scope = 'ENVIRONMENT' AND m.scope_id IN (s.station_id,s.site_id))) LIMIT 1""".trimIndent(),
+        arrayOf(sessionId, memoryId),
     ).use { it.moveToFirst() }
 
     fun accessibleMemoryKind(memoryId: String, sessionId: String): MemoryKind? = readableDatabase.rawQuery(
-        "SELECT kind FROM memory_items WHERE memory_id = ? AND (session_id = ? OR kind = 'DURABLE') LIMIT 1",
-        arrayOf(memoryId, sessionId),
+        """SELECT m.kind FROM memory_items m JOIN sessions s ON s.session_id = ?
+            WHERE m.memory_id = ? AND m.workspace_id = s.workspace_id AND
+            ((m.scope = 'SESSION' AND m.scope_id = s.session_id) OR
+             (m.scope = 'TASK' AND s.task_run_id IS NOT NULL AND m.scope_id = s.task_run_id) OR
+             (m.scope = 'PRINCIPAL' AND s.actor_id IS NOT NULL AND m.scope_id = s.actor_id) OR
+             (m.scope = 'WORKSPACE' AND m.scope_id = s.workspace_id) OR
+             (m.scope = 'ENVIRONMENT' AND m.scope_id IN (s.station_id,s.site_id))) LIMIT 1""".trimIndent(),
+        arrayOf(sessionId, memoryId),
     ).use { cursor -> if (cursor.moveToFirst()) MemoryKind.valueOf(cursor.getString(0)) else null }
 
     fun observationBelongsToSession(observationId: String, sessionId: String): Boolean = readableDatabase.rawQuery(
@@ -629,9 +769,16 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     ).use { it.moveToFirst() }
 
     fun loadActiveMemories(sessionId: String, nowMs: Long = System.currentTimeMillis()): List<MemoryItem> = readableDatabase.rawQuery(
-        """SELECT memory_id,session_id,kind,content,status,confidence,source_turn_id,evidence_observation_id,created_at,updated_at,expires_at
-            FROM memory_items WHERE (session_id = ? OR kind = 'DURABLE') AND status = 'ACTIVE' AND (expires_at IS NULL OR expires_at > ?)
-            ORDER BY kind,updated_at DESC""".trimIndent(),
+        """SELECT m.memory_id,m.session_id,m.kind,m.content,m.status,m.confidence,m.source_turn_id,m.evidence_observation_id,
+            m.created_at,m.updated_at,m.expires_at,m.workspace_id,m.scope,m.scope_id
+            FROM memory_items m JOIN sessions s ON s.session_id = ?
+            WHERE m.workspace_id = s.workspace_id AND m.status = 'ACTIVE' AND (m.expires_at IS NULL OR m.expires_at > ?) AND
+            ((m.scope = 'SESSION' AND m.scope_id = s.session_id) OR
+             (m.scope = 'TASK' AND s.task_run_id IS NOT NULL AND m.scope_id = s.task_run_id) OR
+             (m.scope = 'PRINCIPAL' AND s.actor_id IS NOT NULL AND m.scope_id = s.actor_id) OR
+             (m.scope = 'WORKSPACE' AND m.scope_id = s.workspace_id) OR
+             (m.scope = 'ENVIRONMENT' AND m.scope_id IN (s.station_id,s.site_id)))
+            ORDER BY m.kind,m.updated_at DESC""".trimIndent(),
         arrayOf(sessionId, nowMs.toString()),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toMemory()) } }
 
@@ -687,6 +834,23 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         "SELECT session_id FROM turns WHERE turn_id = ?", arrayOf(turnId)
     ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
 
+    private fun addColumnIfMissing(db: SQLiteDatabase, table: String, column: String, definition: String) {
+        val exists = db.rawQuery("PRAGMA table_info($table)", null).use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            var found = false
+            while (cursor.moveToNext()) if (cursor.getString(nameIndex) == column) { found = true; break }
+            found
+        }
+        if (!exists) db.execSQL("ALTER TABLE $table ADD COLUMN $column $definition")
+    }
+
+    private fun sessionScope(db: SQLiteDatabase, sessionId: String): Pair<String, String?> = db.rawQuery(
+        "SELECT workspace_id,task_run_id FROM sessions WHERE session_id = ?", arrayOf(sessionId)
+    ).use { cursor ->
+        check(cursor.moveToFirst()) { "Unknown session $sessionId" }
+        cursor.getString(0) to cursor.nullableString(1)
+    }
+
     private fun loadToolCallLocked(db: SQLiteDatabase, callId: String): AtlasToolCall? = db.rawQuery(
         """SELECT tool_call_id,session_id,turn_id,name,arguments_json,status,risk,requires_confirmation,idempotency_key,reason,result_json,error,created_at,updated_at
             FROM tool_calls WHERE tool_call_id = ?""".trimIndent(), arrayOf(callId)
@@ -713,7 +877,10 @@ private fun android.database.Cursor.toToolCall() = AtlasToolCall(
 private fun android.database.Cursor.toMemory() = MemoryItem(
     getString(0), getString(1), MemoryKind.valueOf(getString(2)), getString(3), MemoryStatus.valueOf(getString(4)), getDouble(5),
     if (isNull(6)) null else getString(6), if (isNull(7)) null else getString(7), getLong(8), getLong(9), if (isNull(10)) null else getLong(10),
+    getString(11), MemoryScope.valueOf(getString(12)), getString(13),
 )
+
+private fun android.database.Cursor.nullableString(index: Int): String? = if (isNull(index)) null else getString(index)
 
 private fun SessionPermissions.toJson() = JSONObject().apply {
     put("observe", observe); put("captureImage", captureImage.name); put("microphone", microphone.name)

@@ -335,6 +335,8 @@ class AtlasMobileRuntime(
             val responseContract = ResponsePolicy.contract(latestUserText, spoken, risk)
             val baseRequest = InferenceRequest(
                 sessionId = session.id,
+                workspaceId = session.workspaceId,
+                taskRunId = session.taskRunId,
                 turnId = turnId,
                 step = step,
                 capability = capability,
@@ -657,6 +659,8 @@ class AtlasMobileRuntime(
         }
         val request = InferenceRequest(
             sessionId = session.id,
+            workspaceId = session.workspaceId,
+            taskRunId = session.taskRunId,
             capability = RouteCapability.FAST,
             systemPrompt = "You produce loss-minimizing conversation checkpoints for Atlas Core.",
             userText = prompt,
@@ -767,7 +771,8 @@ class AtlasMobileRuntime(
 
     private suspend fun reviewHeartbeatLocked(session: AtlasSession, observation: VisualObservation, delta: Double?) {
         val request = InferenceRequest(
-            sessionId = session.id, capability = RouteCapability.FAST, systemPrompt = systemPrompt(session),
+            sessionId = session.id, workspaceId = session.workspaceId, taskRunId = session.taskRunId,
+            capability = RouteCapability.FAST, systemPrompt = systemPrompt(session),
             userText = "In at most 60 words, summarize what is visibly present and the meaningful change. End with ACTION: NONE, or ACTION: followed by one immediately useful or safety-relevant message.",
             observation = observation, contextNote = "Deterministic scene delta=$delta",
             image = mediaRepository.inferenceImage(observation.media),

@@ -4,6 +4,96 @@ export type ContextStability = 'stable' | 'transitioning' | 'unknown';
 export type MotionState = 'stationary' | 'handheld-stable' | 'turning' | 'walking' | 'vehicle' | 'unknown';
 export type LatencyHealthStatus = 'healthy' | 'slow' | 'degraded' | 'unavailable';
 
+export type WorkspaceKind = 'personal' | 'organization';
+export type PrincipalKind = 'user' | 'service' | 'device';
+export type TaskRunStatus = 'pending' | 'active' | 'blocked' | 'completed' | 'cancelled';
+export type MemoryScopeKind = 'session' | 'task' | 'principal' | 'workspace' | 'environment';
+
+/** Durable ownership. A consumer installation uses one personal workspace; shared deployments use an organization workspace. */
+export type WorkspaceRef = {
+  workspaceId: string;
+  kind: WorkspaceKind;
+  organizationId?: string;
+  name?: string;
+};
+
+export type PrincipalRef = {
+  principalId: string;
+  kind: PrincipalKind;
+  role?: string;
+};
+
+export type SessionPlacement = {
+  siteId?: string;
+  stationId?: string;
+};
+
+export type ProcedureRef = {
+  procedureId: string;
+  revisionId: string;
+  version: string;
+};
+
+export type TaskRunState = {
+  taskRunId: string;
+  status: TaskRunStatus;
+  goal?: string;
+  procedure?: ProcedureRef;
+  externalRef?: string;
+  currentStepId?: string;
+  startedAt?: string;
+  completedAt?: string;
+};
+
+export type ScopedMemoryEntry = {
+  id: string;
+  scope: MemoryScopeKind;
+  scopeId: string;
+  kind: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  sourceEventId?: string;
+  confidence?: number;
+  expiresAt?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type RuntimePolicyRef = {
+  policyId: string;
+  revision: number;
+  resolvedAt: string;
+};
+
+export type RuntimePolicy = {
+  policyId: string;
+  revision: number;
+  inference?: {
+    allowedProviders?: string[];
+    cloudAllowed?: boolean;
+    imagesMayLeaveDevice?: boolean;
+    maxCostMicrosPerRun?: number;
+    capabilityRoutes?: Partial<Record<'fast' | 'vision' | 'reasoning' | 'fallback', string[]>>;
+  };
+  retention?: {
+    mediaTtlMs?: number;
+    eventTtlMs?: number;
+    retainRawMedia?: boolean;
+  };
+  interaction?: {
+    proactiveSpeechAllowed?: boolean;
+    confirmationForExternalActions?: boolean;
+  };
+  tools?: {
+    allow?: string[];
+    deny?: string[];
+  };
+};
+
+export type ResolvedRuntimePolicy = RuntimePolicy & {
+  sourcePolicies: Array<{ policyId: string; revision: number }>;
+};
+
 export type VisualRefreshHealth = {
   status: LatencyHealthStatus;
   latencyMs?: number;
@@ -145,6 +235,11 @@ export type SessionPermissions = {
 
 export type AtlasSessionState = {
   sessionId: string;
+  workspace: WorkspaceRef;
+  actor?: PrincipalRef;
+  placement?: SessionPlacement;
+  taskRun?: TaskRunState;
+  policy?: RuntimePolicyRef;
   name?: string;
   status: SessionStatus;
   createdAt: string;
@@ -160,6 +255,8 @@ export type AtlasSessionState = {
   perception: PerceptionState;
   recentObservations: Observation[];
   memory: {
+    /** Scope-aware memory is authoritative for new integrations. Legacy buckets remain during v0.1 migration. */
+    scoped: ScopedMemoryEntry[];
     working: string[];
     durable: string[];
     environmentNotes: string[];
@@ -174,6 +271,10 @@ export type AtlasToolSchema = {
   name: string;
   description: string;
   parameters?: Record<string, unknown>;
+  risk?: 'read_only' | 'reversible' | 'consequential';
+  confirmation?: 'never' | 'policy' | 'always';
+  idempotent?: boolean;
+  allowedScopes?: Array<'personal' | 'organization'>;
 };
 
 export type AtlasToolCall = {

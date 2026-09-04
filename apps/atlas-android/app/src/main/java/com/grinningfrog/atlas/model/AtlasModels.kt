@@ -26,6 +26,27 @@ enum class MemoryStatus { ACTIVE, SUPERSEDED, FORGOTTEN }
 enum class DeliveryStatus { NOT_APPLICABLE, PENDING, DELIVERED, INTERRUPTED, TEXT_ONLY, FAILED }
 enum class SpeechSegmentStatus { QUEUED, STARTED, COMPLETED, INTERRUPTED, SKIPPED, FAILED }
 enum class ResponseMode { IMMEDIATE, DEFAULT, PHYSICAL_GUIDANCE, SAFETY, EXPLANATION }
+enum class WorkspaceKind { PERSONAL, ORGANIZATION }
+enum class PrincipalKind { USER, SERVICE, DEVICE }
+enum class TaskRunStatus { PENDING, ACTIVE, BLOCKED, COMPLETED, CANCELLED }
+enum class MemoryScope { SESSION, TASK, PRINCIPAL, WORKSPACE, ENVIRONMENT }
+
+const val DEFAULT_PERSONAL_WORKSPACE_ID = "workspace:personal:local"
+
+data class AtlasWorkspace(val id: String, val kind: WorkspaceKind, val name: String, val organizationId: String? = null)
+
+data class AtlasTaskRun(
+    val id: String,
+    val workspaceId: String,
+    val status: TaskRunStatus,
+    val goal: String,
+    val procedureId: String? = null,
+    val procedureRevisionId: String? = null,
+    val externalRef: String? = null,
+    val currentStepId: String? = null,
+    val startedAtMs: Long? = null,
+    val completedAtMs: Long? = null,
+)
 
 data class SessionPermissions(
     val observe: Boolean = true,
@@ -45,6 +66,13 @@ data class AtlasSession(
     val updatedAtMs: Long,
     val permissions: SessionPermissions = SessionPermissions(),
     val contextMode: ContextMode = ContextMode.MANUAL,
+    val workspaceId: String = DEFAULT_PERSONAL_WORKSPACE_ID,
+    val actorId: String? = null,
+    val siteId: String? = null,
+    val stationId: String? = null,
+    val taskRunId: String? = null,
+    val policyId: String? = null,
+    val policyRevision: Int? = null,
 )
 
 data class ObservationTiming(
@@ -170,6 +198,9 @@ data class MemoryItem(
     val createdAtMs: Long,
     val updatedAtMs: Long,
     val expiresAtMs: Long? = null,
+    val workspaceId: String = DEFAULT_PERSONAL_WORKSPACE_ID,
+    val scope: MemoryScope = MemoryScope.SESSION,
+    val scopeId: String = sessionId,
 )
 
 data class SessionSummary(
@@ -243,6 +274,8 @@ data class InferenceRequest(
     val risk: InferenceRisk = InferenceRisk.NORMAL,
     val latencyClass: LatencyClass = LatencyClass.INTERACTIVE,
     val responseContract: ResponseContract? = null,
+    val workspaceId: String = DEFAULT_PERSONAL_WORKSPACE_ID,
+    val taskRunId: String? = null,
 )
 
 data class InferenceResponse(
@@ -274,6 +307,8 @@ data class AtlasEvent(
     val type: String,
     val atMs: Long,
     val dataJson: String,
+    val workspaceId: String = DEFAULT_PERSONAL_WORKSPACE_ID,
+    val taskRunId: String? = null,
 )
 
 data class DeviceHealth(

@@ -19,6 +19,7 @@ data class ManagedAccountState(
     val configured: Boolean = false,
     val signedIn: Boolean = false,
     val email: String? = null,
+    val organizationId: String? = null,
     val balanceMicros: Long? = null,
     val subscriptionStatus: String = "none",
     val busy: Boolean = false,
@@ -33,6 +34,7 @@ class ManagedAccountClient(context: Context, private val settings: SecureSetting
             configured = configured,
             signedIn = settings.secret(ACCESS_ALIAS) != null,
             email = prefs.getString("email", null),
+            organizationId = prefs.getString(ORGANIZATION_ID, null),
         ),
     )
     val state: StateFlow<ManagedAccountState> = mutableState
@@ -62,7 +64,16 @@ class ManagedAccountClient(context: Context, private val settings: SecureSetting
     suspend fun refreshBalance() = withBusy {
         val response = authorized("${gateway()}/api/account/balance")
         val json = JSONObject(response)
+        json.optString("organization_id").takeIf(String::isNotBlank)?.let { prefs.edit().putString(ORGANIZATION_ID, it).apply() }
         mutableState.value = snapshot().copy(balanceMicros = json.optLong("balance_micros"), subscriptionStatus = json.optString("subscription_status", "none"), message = null)
+    }
+
+    /** Selects an organization workspace; null returns subsequent calls to the user's personal workspace. */
+    fun selectOrganization(organizationId: String?) {
+        prefs.edit().apply {
+            if (organizationId == null) remove(ORGANIZATION_ID) else putString(ORGANIZATION_ID, organizationId)
+        }.apply()
+        mutableState.value = snapshot(message = null)
     }
 
     suspend fun checkout(product: String): String = withContext(Dispatchers.IO) {
@@ -111,7 +122,9 @@ class ManagedAccountClient(context: Context, private val settings: SecureSetting
 
     private suspend fun authorized(url: String, body: String? = null): String {
         val token = accessToken() ?: error("Sign in to Atlas Cloud first")
-        val builder = Request.Builder().url(url).header("Authorization", "Bearer $token")
+        val builder = Request.Builder().url(url).header("Authorization", "Bearer $token").apply {
+            prefs.getString(ORGANIZATION_ID, null)?.let { header("X-Atlas-Organization-Id", it) }
+        }
         val request = if (body == null) builder.get().build() else builder.post(body.toRequestBody(JSON)).build()
         return execute(request).toString()
     }
@@ -139,6 +152,7 @@ class ManagedAccountClient(context: Context, private val settings: SecureSetting
             configured = configured,
             signedIn = settings.secret(ACCESS_ALIAS) != null,
             email = prefs.getString("email", null),
+            organizationId = prefs.getString(ORGANIZATION_ID, null),
             balanceMicros = previous?.balanceMicros,
             subscriptionStatus = previous?.subscriptionStatus ?: "none",
             message = message,
@@ -150,6 +164,7 @@ class ManagedAccountClient(context: Context, private val settings: SecureSetting
         const val ENDPOINT_ID = "atlas-managed"
         const val ACCESS_ALIAS = "atlas.account.access"
         private const val REFRESH_ALIAS = "atlas.account.refresh"
+        private const val ORGANIZATION_ID = "organization_id"
         private val JSON = "application/json".toMediaType()
     }
 }
