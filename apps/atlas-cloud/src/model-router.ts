@@ -51,6 +51,7 @@ export interface RoutingIntent {
   hasImage: boolean;
   requiresTools?: boolean;
 }
+
 export interface ModelSelection {
   model: ModelCatalogEntry;
   reasoningEffort: ReasoningEffort;

@@ -34,6 +34,7 @@ test("latency-critical work favors the measured faster model", () => {
   assert.equal(result.reasoningEffort, "none");
   assert.equal(result.maxOutputTokens, 160);
 });
+
 test("reasoning and safety-critical work favors measured quality", () => {
   const result = selectModel({ ...baseIntent, capability: "reasoning", risk: "safety_critical" }, [
     model("quick", { speed: 1, quality: { fast: 0.9, vision: 0.7, reasoning: 0.6, fallback: 0.8 } }),
