@@ -76,7 +76,7 @@ class SecureSettings(context: Context) {
     }.toString()).apply()
 
     fun loadRoutes(): RouteTable = runCatching {
-        val json = JSONObject(prefs.getString("routes", "{}"))
+        val json = JSONObject(prefs.getString("routes", "{}") ?: "{}")
         RouteTable(json.strings("fast"), json.strings("vision"), json.strings("reasoning"), json.strings("fallback"))
     }.getOrDefault(RouteTable())
 

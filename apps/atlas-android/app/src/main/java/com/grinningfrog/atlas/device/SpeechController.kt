@@ -1,5 +1,6 @@
 package com.grinningfrog.atlas.device
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
@@ -160,6 +161,7 @@ class SpeechController(private val context: Context) {
         tts?.shutdown(); tts = null
     }
 
+    @SuppressLint("MissingPermission")
     private fun readyCue() {
         runCatching {
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
