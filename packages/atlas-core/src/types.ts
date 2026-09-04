@@ -8,6 +8,41 @@ export type WorkspaceKind = 'personal' | 'organization';
 export type PrincipalKind = 'user' | 'service' | 'device';
 export type TaskRunStatus = 'pending' | 'active' | 'blocked' | 'completed' | 'cancelled';
 export type MemoryScopeKind = 'session' | 'task' | 'principal' | 'workspace' | 'environment';
+export type ClarificationAmbiguity = 'referent' | 'intent' | 'missing_fact' | 'safety' | 'authority' | 'task_scope' | 'other';
+export type ClarificationDispositionStatus = 'resolved' | 'deferred' | 'abandoned';
+
+export type ClarificationOption = {
+  id: string;
+  label: string;
+};
+
+/** A provider-proposed question. Atlas Core turns this into durable interaction state. */
+export type ClarificationRequest = {
+  question: string;
+  reason: string;
+  ambiguity: ClarificationAmbiguity;
+  options?: ClarificationOption[];
+  /** Blocking questions prevent physical tool proposals until resolved or abandoned. */
+  blocking?: boolean;
+  expiresAt?: string;
+  contextObservationIds?: string[];
+  freshnessRequirement?: string;
+};
+
+export type PendingClarification = ClarificationRequest & {
+  clarificationId: string;
+  sourceTurnId: string;
+  createdAt: string;
+  deferredCount: number;
+  lastDeferredAt?: string;
+};
+
+export type ClarificationDisposition = {
+  clarificationId: string;
+  status: ClarificationDispositionStatus;
+  normalizedAnswer?: string;
+  reason?: string;
+};
 
 /** Durable ownership. A consumer installation uses one personal workspace; shared deployments use an organization workspace. */
 export type WorkspaceRef = {
@@ -262,6 +297,9 @@ export type AtlasSessionState = {
     environmentNotes: string[];
     taskProgress: string[];
   };
+  interaction: {
+    pendingClarification?: PendingClarification;
+  };
   permissions: SessionPermissions;
 };
 
@@ -303,6 +341,9 @@ export type NormalizedSessionTurn = {
     audio?: ContextStatus;
   };
   observations: Observation[];
+  interaction: {
+    pendingClarification?: PendingClarification;
+  };
   availableTools: AtlasToolSchema[];
   instructions: string[];
 };
@@ -311,6 +352,8 @@ export type NormalizedAgentResult = {
   turnId: string;
   responseText?: string;
   toolCalls?: AtlasToolCall[];
+  clarification?: ClarificationRequest;
+  clarificationDisposition?: ClarificationDisposition;
   memoryUpdates?: StateUpdate[];
   sessionUpdates?: StateUpdate[];
   nextLoopHint?: {

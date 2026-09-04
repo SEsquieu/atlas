@@ -12,12 +12,15 @@ import com.grinningfrog.atlas.model.AtlasSession
 import com.grinningfrog.atlas.model.AtlasMessage
 import com.grinningfrog.atlas.model.AtlasToolCall
 import com.grinningfrog.atlas.model.ContextMode
+import com.grinningfrog.atlas.model.ClarificationAmbiguity
+import com.grinningfrog.atlas.model.ClarificationStatus
 import com.grinningfrog.atlas.model.DeliveryStatus
 import com.grinningfrog.atlas.model.InferenceRequest
 import com.grinningfrog.atlas.model.InferenceResponse
 import com.grinningfrog.atlas.model.InferenceStreamEvent
 import com.grinningfrog.atlas.model.InferenceMessage
 import com.grinningfrog.atlas.model.MediaPurpose
+import com.grinningfrog.atlas.model.PendingClarification
 import com.grinningfrog.atlas.model.ListeningState
 import com.grinningfrog.atlas.model.RouteCapability
 import com.grinningfrog.atlas.model.RuntimePhase
@@ -86,6 +89,7 @@ class AtlasMobileRuntime(
     suspend fun initialize() {
         val session = database.loadLatestSession()
         session?.let { database.recoverInterruptedRuntime(it.id) }
+        session?.let { database.expirePendingClarification(it.id) }
         val observation = session?.let { database.loadLatestObservation(it.id) }
         val latestResponse = session?.let { database.loadMessages(it.id, limit = 80).lastOrNull { message -> message.role == MessageRole.ASSISTANT && message.content.isNotBlank() }?.content }
         if (session?.status == SessionStatus.ACTIVE) startDevices()
@@ -284,9 +288,12 @@ class AtlasMobileRuntime(
 
     private suspend fun startUserTurnLocked(text: String, voice: Boolean) {
         val session = requireActiveSession()
+        database.expirePendingClarification(session.id)
+        val pending = database.loadPendingClarification(session.id)
         val turn = database.createTurn(session.id, if (voice) "voice" else "text")
         activeTurnId = turn.id
         database.insertMessage(AtlasMessage(sessionId = session.id, turnId = turn.id, role = MessageRole.USER, content = text, createdAtMs = System.currentTimeMillis()))
+        pending?.let { database.appendEvent(session.id, "clarification.reply_candidate", JSONObject().put("turnId", turn.id).put("clarificationId", it.id)) }
 
         var observation = usableLatestObservation(session.id)
         val freshness = FreshnessPolicy.assess(text, observation, System.currentTimeMillis())
@@ -322,6 +329,7 @@ class AtlasMobileRuntime(
             val summary = database.loadSummary(session.id)
             val messages = database.loadMessages(session.id, afterSequence = summary?.throughMessageSequence ?: 0, limit = AgentLoopPolicy.MAX_STORED_MESSAGES_FOR_CONTEXT)
             val memories = database.loadActiveMemories(session.id)
+            val pendingClarification = database.loadPendingClarification(session.id)
             observation = usableLatestObservation(session.id) ?: observation
             val capability = capabilityForTurn(messages, observation)
             val risk = riskForTurn(messages)
@@ -329,7 +337,7 @@ class AtlasMobileRuntime(
             val attachImage = observation != null && (capability == RouteCapability.VISION ||
                 (latestToolCall?.name == "capture_current_view" && latestToolCall.status == ToolCallStatus.COMPLETED))
             val toolsAvailable = router.hasToolCapableRoute(capability, requiresVision = attachImage)
-            val context = contextAssembler.assemble(session, messages, memories, summary, observation, System.currentTimeMillis(), toolsAvailable)
+            val context = contextAssembler.assemble(session, messages, memories, summary, observation, System.currentTimeMillis(), toolsAvailable, pendingClarification)
             val spoken = voice || session.permissions.speakResponses
             val latestUserText = messages.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
             val responseContract = ResponsePolicy.contract(latestUserText, spoken, risk)
@@ -381,6 +389,33 @@ class AtlasMobileRuntime(
             require(response.toolCalls.map { it.id }.distinct().size == response.toolCalls.size) {
                 "Provider returned duplicate tool-call ids in one response"
             }
+            val clarificationCalls = response.toolCalls.filter { it.name == ToolHarness.CLARIFICATION_TOOL }
+            require(clarificationCalls.size <= 1) { "Provider returned multiple clarification controls in one step" }
+            if (clarificationCalls.isNotEmpty()) {
+                require(response.toolCalls.size == 1) { "Clarification control cannot be mixed with physical tool proposals" }
+                when (handleClarificationControl(session, turnId, clarificationCalls.single(), observation, spoken)) {
+                    ClarificationControlOutcome.WAITING -> {
+                        database.updateTurn(turnId, TurnStatus.WAITING_FOR_USER_CLARIFICATION, stepCount = step)
+                        publish(response = database.loadPendingClarification(session.id)?.question ?: response.text, streamingResponse = null, phase = RuntimePhase.READY)
+                        return
+                    }
+                    ClarificationControlOutcome.DEFERRED -> {
+                        database.updateTurn(turnId, TurnStatus.COMPLETED, stepCount = step)
+                        publish(response = response.text.takeIf(String::isNotBlank), streamingResponse = null, phase = if (speech.isSpeaking) RuntimePhase.SPEAKING else RuntimePhase.READY)
+                        return
+                    }
+                    ClarificationControlOutcome.CONTINUE -> continue
+                }
+            }
+            if (pendingClarification?.blocking == true && response.toolCalls.isNotEmpty()) {
+                database.appendEvent(session.id, "provider.result_constrained", JSONObject().put("turnId", turnId)
+                    .put("reason", "physical tools blocked by unresolved clarification").put("clarificationId", pendingClarification.id)
+                    .put("blockedToolCount", response.toolCalls.size))
+                ensureClarificationDelivered(session, turnId, pendingClarification, spoken)
+                database.updateTurn(turnId, TurnStatus.WAITING_FOR_USER_CLARIFICATION, stepCount = step)
+                publish(response = pendingClarification.question, streamingResponse = null, phase = RuntimePhase.READY)
+                return
+            }
             if (response.toolCalls.isEmpty()) {
                 database.updateTurn(turnId, TurnStatus.COMPLETED, stepCount = step)
                 publish(response = response.text, streamingResponse = null, error = null, phase = if (speech.isSpeaking) RuntimePhase.SPEAKING else RuntimePhase.READY)
@@ -412,6 +447,73 @@ class AtlasMobileRuntime(
             }
         }
         throw IllegalStateException("Agent loop exceeded its step or wall-time budget")
+    }
+
+    private suspend fun handleClarificationControl(
+        session: AtlasSession,
+        turnId: String,
+        proposal: ToolCallProposal,
+        observation: VisualObservation?,
+        spoken: Boolean,
+    ): ClarificationControlOutcome {
+        val arguments = JSONObject(proposal.argumentsJson)
+        val action = arguments.getString("action").lowercase()
+        val pending = database.loadPendingClarification(session.id)
+        return when (action) {
+            "request" -> {
+                val question = arguments.optString("question").trim().take(300)
+                val reason = arguments.optString("reason").trim().take(500)
+                require(question.isNotBlank() && reason.isNotBlank()) { "Clarification request requires a question and reason" }
+                val ambiguity = runCatching { ClarificationAmbiguity.valueOf(arguments.optString("ambiguity", "other").uppercase()) }
+                    .getOrDefault(ClarificationAmbiguity.OTHER)
+                val optionsJson = arguments.optJSONArray("options")
+                val options = buildList { if (optionsJson != null) for (index in 0 until minOf(optionsJson.length(), 5)) {
+                    optionsJson.optString(index).trim().takeIf(String::isNotBlank)?.let(::add)
+                } }
+                val now = System.currentTimeMillis()
+                val clarification = PendingClarification(
+                    id = UUID.randomUUID().toString(), sessionId = session.id, sourceTurnId = turnId, question = question, reason = reason,
+                    ambiguity = ambiguity, options = options, blocking = arguments.optBoolean("blocking", true),
+                    contextObservationIds = observation?.let { listOf(it.id) }.orEmpty(), createdAtMs = now, updatedAtMs = now,
+                )
+                database.saveClarification(clarification)
+                recordClarificationControlResult(session.id, turnId, proposal, "requested", clarification.id)
+                ensureClarificationDelivered(session, turnId, clarification, spoken)
+                ClarificationControlOutcome.WAITING
+            }
+            "resolve", "defer", "abandon" -> {
+                requireNotNull(pending) { "Provider tried to $action a clarification when none is pending" }
+                val id = arguments.optString("clarification_id")
+                require(id == pending.id) { "Clarification control does not match the pending question" }
+                val status = when (action) {
+                    "resolve" -> ClarificationStatus.RESOLVED
+                    "defer" -> ClarificationStatus.DEFERRED
+                    else -> ClarificationStatus.ABANDONED
+                }
+                database.updateClarification(id, status, turnId, arguments.optString("normalized_answer").trim().takeIf(String::isNotBlank))
+                recordClarificationControlResult(session.id, turnId, proposal, action, id)
+                if (status != ClarificationStatus.DEFERRED) runCatching { database.updateTurn(pending.sourceTurnId, TurnStatus.COMPLETED) }
+                if (status == ClarificationStatus.DEFERRED) ClarificationControlOutcome.DEFERRED else ClarificationControlOutcome.CONTINUE
+            }
+            else -> error("Unsupported clarification action: $action")
+        }
+    }
+
+    private fun recordClarificationControlResult(sessionId: String, turnId: String, proposal: ToolCallProposal, action: String, clarificationId: String) {
+        database.insertMessage(AtlasMessage(sessionId = sessionId, turnId = turnId, role = MessageRole.TOOL,
+            content = JSONObject().put("ok", true).put("action", action).put("clarification_id", clarificationId).toString(),
+            createdAtMs = System.currentTimeMillis(), kind = MessageKind.TOOL_RESULT, toolCallId = proposal.id))
+    }
+
+    private suspend fun ensureClarificationDelivered(session: AtlasSession, turnId: String, clarification: PendingClarification, spoken: Boolean) {
+        val latestAssistant = database.loadMessages(session.id, limit = 8).lastOrNull { it.turnId == turnId && it.role == MessageRole.ASSISTANT }
+        latestAssistant?.let { database.updateAssistantMessage(it.id, clarification.question) }
+            ?: database.insertMessage(AtlasMessage(sessionId = session.id, turnId = turnId, role = MessageRole.ASSISTANT,
+                content = clarification.question, createdAtMs = System.currentTimeMillis(), deliveryStatus = if (spoken) DeliveryStatus.PENDING else DeliveryStatus.TEXT_ONLY))
+        if (spoken && latestAssistant?.content?.trim() != clarification.question) {
+            speech.stopSpeaking()
+            speakLocked(session, clarification.question)
+        }
     }
 
     /**
@@ -905,6 +1007,7 @@ class AtlasMobileRuntime(
         val pendingTools = session?.let { database.loadPendingToolCalls(it.id) }.orEmpty()
         val memories = session?.let { database.loadActiveMemories(it.id) }.orEmpty()
         val summary = session?.let { database.loadSummary(it.id) }
+        val pendingClarification = session?.let { database.loadPendingClarification(it.id) }
         mutableState.value = RuntimeSnapshot(
             session = session,
             phase = phase,
@@ -920,6 +1023,7 @@ class AtlasMobileRuntime(
             pendingToolCalls = pendingTools,
             memories = memories,
             sessionSummary = summary,
+            pendingClarification = pendingClarification,
             listeningState = listeningState,
             partialTranscript = partialTranscript,
             streamingResponse = streamingResponse,
@@ -938,5 +1042,7 @@ object AgentLoopPolicy {
     const val MAX_COMPACTION_MESSAGES = 96
     const val RECENT_TURNS_AFTER_COMPACTION = 4
 }
+
+private enum class ClarificationControlOutcome { WAITING, DEFERRED, CONTINUE }
 
 private const val STREAM_CHECKPOINT_INTERVAL_MS = 250L

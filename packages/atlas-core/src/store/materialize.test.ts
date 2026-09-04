@@ -92,7 +92,31 @@ test('legacy checkpoints acquire a personal workspace and scoped-memory bucket',
   delete legacy.workspace;
   const memory = legacy.memory as Record<string, unknown>;
   delete memory.scoped;
+  delete legacy.interaction;
   const normalized = normalizeSessionState(legacy as never);
   assert.equal(normalized.workspace.workspaceId, 'workspace:personal:local');
   assert.deepEqual(normalized.memory.scoped, []);
+  assert.deepEqual(normalized.interaction, {});
+});
+
+test('materializeSession replays the clarification lifecycle deterministically', () => {
+  const session = createSessionState({ sessionId: 'clarification-replay', provider: { id: 'fake', adapter: 'fake' } });
+  const clarification = {
+    clarificationId: 'clarification-1',
+    sourceTurnId: 'turn-1',
+    createdAt: '2026-09-04T10:00:00.000Z',
+    deferredCount: 0,
+    question: 'The left one or the right one?',
+    reason: 'The referent changes the instruction.',
+    ambiguity: 'referent' as const,
+    blocking: true
+  };
+  const requested: AuditEvent = { id: 'event-1', type: 'clarification.requested', at: clarification.createdAt, data: { clarification } };
+  const deferred: AuditEvent = { id: 'event-2', type: 'clarification.deferred', at: '2026-09-04T10:00:05.000Z', data: { clarificationId: clarification.clarificationId } };
+  const resolved: AuditEvent = { id: 'event-3', type: 'clarification.resolved', at: '2026-09-04T10:00:10.000Z', data: { clarificationId: clarification.clarificationId } };
+
+  const waiting = materializeSession(session, [requested, deferred]);
+  assert.equal(waiting.interaction.pendingClarification?.deferredCount, 1);
+  assert.equal(waiting.interaction.pendingClarification?.lastDeferredAt, deferred.at);
+  assert.equal(materializeSession(session, [requested, deferred, resolved]).interaction.pendingClarification, undefined);
 });

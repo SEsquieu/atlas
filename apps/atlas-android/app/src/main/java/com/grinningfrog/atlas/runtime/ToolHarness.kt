@@ -39,7 +39,6 @@ interface AtlasToolAdapter {
     )
     suspend fun execute(call: AtlasToolCall): ToolExecutionResult
 }
-
 /**
  * Core-owned tool boundary. Providers can only propose calls; this harness validates policy,
  * performs the device operation, and returns an auditable result.
@@ -74,7 +73,14 @@ class ToolHarness(
             maxCallsPerTurn = 6,
         ),
     )
-    val definitions: List<ToolDefinition> = builtInDefinitions + additionalTools.map { it.definition }
+    private val clarificationDefinition = ToolDefinition(
+        name = CLARIFICATION_TOOL,
+        description = "Create or update Atlas Core's durable pending clarification. Request one focused question, or resolve, defer, or abandon the pending question.",
+        parametersJson = """{"type":"object","properties":{"action":{"type":"string","enum":["request","resolve","defer","abandon"]},"clarification_id":{"type":"string"},"question":{"type":"string","maxLength":300},"reason":{"type":"string","maxLength":500},"ambiguity":{"type":"string","enum":["referent","intent","missing_fact","safety","authority","task_scope","other"]},"options":{"type":"array","items":{"type":"string"},"maxItems":5},"blocking":{"type":"boolean"},"normalized_answer":{"type":"string","maxLength":500}},"required":["action"],"additionalProperties":false}""",
+        risk = ToolRisk.SESSION_WRITE,
+        maxCallsPerTurn = 2,
+    )
+    val definitions: List<ToolDefinition> = builtInDefinitions + clarificationDefinition + additionalTools.map { it.definition }
 
     fun definition(name: String) = definitions.firstOrNull { it.name == name }
 
@@ -88,6 +94,7 @@ class ToolHarness(
             ?: return ToolPolicyDecision(false, false, definition.risk, "Tool arguments are not valid JSON")
         additionalTools.firstOrNull { it.definition.name == proposal.name }?.let { return it.evaluate(session, proposal) }
         return when (proposal.name) {
+            CLARIFICATION_TOOL -> ToolPolicyDecision(true, false, ToolRisk.SESSION_WRITE, "Core-owned conversational control")
             "capture_current_view" -> ToolPolicyDecision(
                 allowed = session.permissions.observe && session.permissions.captureImage != com.grinningfrog.atlas.model.PermissionPolicy.NEVER,
                 requiresConfirmation = false,
@@ -113,6 +120,7 @@ class ToolHarness(
     suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
         val arguments = JSONObject(call.argumentsJson)
         return when (call.name) {
+            CLARIFICATION_TOOL -> error("Clarification controls must be reconciled by Atlas Core")
             "capture_current_view" -> {
                 val detail = arguments.optBoolean("detail", false)
                 val observation = capture(arguments.optString("reason", "model-requested refresh"), if (detail) MediaPurpose.DETAIL_VISION else MediaPurpose.STANDARD_VISION)
@@ -178,5 +186,9 @@ class ToolHarness(
             }
             else -> error("Unsupported memory action")
         }
+    }
+
+    companion object {
+        const val CLARIFICATION_TOOL = "atlas_clarification"
     }
 }

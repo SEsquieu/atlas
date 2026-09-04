@@ -15,7 +15,7 @@ The reference app is Apache-2.0 and works with user-configured inference without
 
 The default APK leaves Atlas Cloud disabled. A gateway deployment can enable account sign-up, subscription checkout, credit-block purchase, balance display, and managed inference by supplying the three Gradle properties documented below. BYOI never requires those values.
 
-Android database version 7 creates a personal workspace automatically and scopes every new session, observation, event, and memory record to it. The same persistence boundary supports optional site, station, actor, task-run, policy, and scoped-memory identities without placing enterprise administration in the consumer UI.
+Android database version 8 creates a personal workspace automatically and durably stores clarification state alongside sessions, turns, observations, events, and memory. The same persistence boundary supports optional site, station, actor, task-run, policy, and scoped-memory identities without placing enterprise administration in the consumer UI.
 
 ## First run
 
@@ -93,6 +93,8 @@ This is not yet production privacy UX. Before external beta, Atlas needs retenti
 
 Speech is the default response surface for active sessions. Push-to-talk uses the Android-installed recognition service; its readiness callback—not the button tap—drives the haptic, chirp, and **Speak now** indicator. Partial transcripts remain UI state until recognition completes.
 
+When meaning would materially change a physical instruction or action, a tool-capable provider can ask one focused question through Core's `atlas_clarification` control. The app keeps it visible across tangents and accepts natural fragments through the normal text or Talk surface. A blocking question suppresses physical tool proposals until it is resolved or abandoned. This is distinct from user confirmation, which authorizes an already-understood action.
+
 Atlas streams provider text into Android TTS one complete sentence at a time. Markdown is rendered into speakable text, while the exact provider response remains in the transcript. Tap **Interrupt and talk** while Atlas is speaking to stop playback, cancel remaining generation, and immediately begin another turn. Atlas records completed sentences separately so the next model is never told that an interrupted remainder was heard.
 
 Ordinary spoken answers are intentionally brief. Explicit requests for an explanation receive a larger response contract; physical guidance and safety-sensitive answers lead with the action. TTS failure never removes the text response.
@@ -104,6 +106,7 @@ The app uses OpenAI-compatible chat completions and function tools:
 - text requests contain the bounded Atlas-owned conversation, not a provider-owned thread;
 - vision requests include a base64 data URL in an `image_url` content part;
 - tool-capable endpoints receive JSON-schema function definitions and must return standard assistant `tool_calls`;
+- `atlas_clarification` is intercepted as Core-owned conversational state and is never executed as a physical tool;
 - Atlas records, authorizes, executes, and returns `role: tool` results in subsequent model steps;
 - `Authorization: Bearer …` is omitted when no key is configured;
 - `X-Atlas-Request-Id` supports cross-system tracing.
@@ -112,6 +115,7 @@ The app uses OpenAI-compatible chat completions and function tools:
 - compatible gateways may return `X-Atlas-Model`, `X-Atlas-Profile`, `X-Atlas-Route-Reason`, and `X-Atlas-Route-Revision`; Core records them in the event log.
 - streaming endpoints return standard `data: {...}` SSE chat-completion chunks followed by `data: [DONE]`; text and split tool-call arguments are normalized before they reach Core.
 - non-streaming endpoints use the same internal stream contract and remain fully supported, but cannot start speech before the complete response arrives.
+- text-only endpoints receive the conversational policy but cannot create deterministic durable clarification state in this alpha.
 
 Routes are expressed as capabilities, not model names. The initial UI adds each configured endpoint to `fast`, `reasoning`, and `fallback`, and adds image-capable endpoints to `vision`. Tool-bearing steps only use endpoints that explicitly advertise support. Core retries another route only when the prior attempt is known not to have been accepted; ambiguous outcomes stop to avoid duplicate cost.
 

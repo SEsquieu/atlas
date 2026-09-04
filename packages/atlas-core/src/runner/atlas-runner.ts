@@ -1,6 +1,7 @@
 import type {
   AgentProviderAdapter,
   AtlasSessionState,
+  ClarificationRequest,
   ContextStatus,
   DeviceAdapter,
   NormalizedSessionTurn,
@@ -34,6 +35,8 @@ export type RunUserTurnInput = {
   text: string;
   turnId?: string;
   mode?: 'text' | 'voice';
+  /** Injectable wall clock used by deterministic lifecycle tests. */
+  now?: string;
 };
 
 export type RunTranscriptTurnInput = {
@@ -238,12 +241,29 @@ export class AtlasRunner {
     if (!record) throw new Error(`Session not found: ${input.sessionId}`);
 
     let session = materializeSessionCheckpoint(record.state, record.events);
+    const turnId = input.turnId ?? crypto.randomUUID();
+    const now = input.now ?? new Date().toISOString();
+    const expired = session.interaction.pendingClarification;
+    if (expired?.expiresAt && Date.parse(expired.expiresAt) <= Date.parse(now)) {
+      const expiredEvent = await this.store.appendEvent(session.sessionId, {
+        type: 'clarification.expired',
+        data: { clarificationId: expired.clarificationId, sourceTurnId: expired.sourceTurnId, expiresAt: expired.expiresAt }
+      });
+      session = materializeSessionCheckpoint(session, [expiredEvent]);
+    }
+    const pendingAtTurnStart = session.interaction.pendingClarification;
     const visualStatus = contextStatusFromSession(session);
     const plan = planUserTurn(input.text, visualStatus);
 
     const utteranceEvent = await this.store.appendEvent(session.sessionId, {
       type: 'user.utterance',
-      data: { text: input.text, mode: input.mode ?? 'text', plan }
+      data: {
+        text: input.text,
+        mode: input.mode ?? 'text',
+        turnId,
+        respondingToClarificationId: pendingAtTurnStart?.clarificationId,
+        plan
+      }
     });
     session = materializeSessionCheckpoint(session, [utteranceEvent]);
 
@@ -274,7 +294,7 @@ export class AtlasRunner {
     }
 
     const turn = buildUserSessionTurn({
-      turnId: input.turnId ?? crypto.randomUUID(),
+      turnId,
       session,
       text: input.text,
       visual: contextStatusFromSession(session),
@@ -295,11 +315,14 @@ export class AtlasRunner {
       data: { provider: this.provider.id, turnId: turn.turnId }
     });
 
-    const providerResult = await this.provider.step(turn);
+    const rawProviderResult = await this.provider.step(turn);
+    const reconciled = await this.reconcileClarification(session, turnId, rawProviderResult, now);
+    session = reconciled.session;
+    const providerResult = reconciled.providerResult;
 
     await this.store.appendEvent(session.sessionId, {
       type: 'provider.responded',
-      data: { provider: this.provider.id, turnId: turn.turnId, result: providerResult }
+      data: { provider: this.provider.id, turnId: turn.turnId, result: providerResult, constrained: reconciled.constrained }
     });
 
     if (providerResult.responseText) {
@@ -319,6 +342,119 @@ export class AtlasRunner {
       reusedLastObservationAfterRefreshFailure,
       providerResult
     };
+  }
+
+  private async reconcileClarification(
+    initialSession: AtlasSessionState,
+    turnId: string,
+    raw: NormalizedAgentResult,
+    now: string
+  ): Promise<{ session: AtlasSessionState; providerResult: NormalizedAgentResult; constrained: boolean }> {
+    let session = initialSession;
+    let result: NormalizedAgentResult = { ...raw, turnId };
+    let constrained = raw.turnId !== turnId;
+    const pending = session.interaction.pendingClarification;
+    const request = normalizeClarificationRequest(raw.clarification);
+
+    const append = async (type: string, data: Record<string, unknown>) => {
+      const event = await this.store.appendEvent(session.sessionId, { type, data });
+      session = materializeSessionCheckpoint(session, [event]);
+    };
+
+    if (raw.clarification && !request) {
+      constrained = true;
+      result = { ...result, clarification: undefined, toolCalls: pending?.blocking ? [] : result.toolCalls };
+      await append('provider.result_constrained', {
+        provider: this.provider.id,
+        turnId,
+        reason: 'malformed clarification request'
+      });
+    }
+
+    if (request) {
+      if (pending) {
+        await append('clarification.superseded', {
+          clarificationId: pending.clarificationId,
+          supersededByTurnId: turnId
+        });
+      }
+      const clarification = {
+        ...request,
+        clarificationId: crypto.randomUUID(),
+        sourceTurnId: turnId,
+        createdAt: now,
+        deferredCount: 0
+      };
+      await append('clarification.requested', { clarification });
+      if (raw.toolCalls?.length || raw.clarificationDisposition) {
+        constrained = true;
+        await append('provider.result_constrained', {
+          provider: this.provider.id,
+          turnId,
+          reason: 'a clarification request is terminal for the turn'
+        });
+      }
+      result = {
+        ...result,
+        responseText: clarification.question,
+        toolCalls: [],
+        clarification: request,
+        clarificationDisposition: undefined
+      };
+      return { session, providerResult: result, constrained };
+    }
+
+    const disposition = raw.clarificationDisposition;
+    if (disposition) {
+      if (!pending || disposition.clarificationId !== pending.clarificationId) {
+        constrained = true;
+        result = { ...result, clarificationDisposition: undefined, toolCalls: pending?.blocking ? [] : result.toolCalls };
+        await append('provider.result_constrained', {
+          provider: this.provider.id,
+          turnId,
+          reason: 'clarification disposition does not match the pending question'
+        });
+      } else {
+        await append(`clarification.${disposition.status}`, {
+          clarificationId: disposition.clarificationId,
+          sourceTurnId: pending.sourceTurnId,
+          resolvedByTurnId: turnId,
+          normalizedAnswer: disposition.normalizedAnswer,
+          reason: disposition.reason
+        });
+        if (disposition.status === 'deferred' && result.toolCalls?.length) {
+          constrained = true;
+          result = { ...result, toolCalls: [] };
+          await append('provider.result_constrained', {
+            provider: this.provider.id,
+            turnId,
+            reason: 'tool proposal blocked while clarification is deferred'
+          });
+        }
+      }
+    } else if (pending) {
+      await append('clarification.retained', {
+        clarificationId: pending.clarificationId,
+        observedTurnId: turnId,
+        reason: 'provider did not resolve, defer, or abandon the pending question'
+      });
+      if (pending.blocking && result.toolCalls?.length) {
+        constrained = true;
+        result = {
+          ...result,
+          toolCalls: [],
+          responseText: result.responseText?.trim() || pending.question
+        };
+        await append('provider.result_constrained', {
+          provider: this.provider.id,
+          turnId,
+          reason: 'tool proposal blocked by unresolved clarification',
+          clarificationId: pending.clarificationId
+        });
+      }
+    }
+
+    return { session, providerResult: result, constrained };
   }
 
   async interruptSpeech(input: InterruptSpeechInput): Promise<InterruptSpeechResult> {
@@ -538,6 +674,7 @@ function buildHeartbeatSessionTurn(input: {
     trigger: { type: 'heartbeat', reason: input.significance.reason },
     contextStatus: { visual: contextStatusFromSession(input.session) },
     observations: input.session.recentObservations,
+    interaction: { pendingClarification: input.session.interaction.pendingClarification },
     availableTools: [],
     instructions: [
       'Atlas heartbeat detected a physical scene change during ambient perception.',
@@ -547,6 +684,28 @@ function buildHeartbeatSessionTurn(input: {
         ? 'If the scene appears actionable or safety-relevant, provide a concise notification-worthy response.'
         : 'Return concise internal review text if useful, but this response is not automatically spoken to the user.'
     ]
+  };
+}
+
+function normalizeClarificationRequest(request: ClarificationRequest | undefined): ClarificationRequest | undefined {
+  if (!request) return undefined;
+  const question = request.question?.trim();
+  const reason = request.reason?.trim();
+  if (!question || !reason) return undefined;
+  const expiresAt = request.expiresAt && Number.isFinite(Date.parse(request.expiresAt)) ? request.expiresAt : undefined;
+  const options = request.options
+    ?.map((option) => ({ id: option.id?.trim(), label: option.label?.trim() }))
+    .filter((option) => option.id && option.label)
+    .slice(0, 5);
+  return {
+    question,
+    reason,
+    ambiguity: request.ambiguity,
+    options: options?.length ? options : undefined,
+    blocking: request.blocking ?? true,
+    expiresAt,
+    contextObservationIds: request.contextObservationIds?.filter(Boolean),
+    freshnessRequirement: request.freshnessRequirement?.trim() || undefined
   };
 }
 

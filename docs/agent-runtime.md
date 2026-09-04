@@ -54,6 +54,8 @@ stateDiagram-v2
 
 Terminal states are `COMPLETED`, `FAILED`, `CANCELLED`, and `INTERRUPTED`. Waiting for user confirmation is intentionally restart-safe.
 
+A focused question enters `WAITING_FOR_USER_CLARIFICATION`. Its meaning, blocking state, evidence context, expiry, and disposition remain Core-owned across later turns and provider swaps. Clarification establishes meaning; confirmation authorizes an already-understood action. See [conversational clarification](./conversational-clarification.md).
+
 ## Context construction
 
 The provider packet is derived in this order:
@@ -94,7 +96,7 @@ The current alpha stores memory locally. Working, task, and environment memory r
 - A policy decision
 - An executor returning a JSON result
 
-Built-in tools are `capture_current_view`, `get_device_state`, and `atlas_remember`.
+Built-in physical/runtime tools are `capture_current_view`, `get_device_state`, and `atlas_remember`. Android also exposes `atlas_clarification` as a Core control signal; it is never executed as a physical tool.
 
 Adding location, notifications, Bluetooth, smart-home, or account tools requires an adapter, not a change to the agent loop. External-effect adapters default to confirmation when the session policy requires it.
 
