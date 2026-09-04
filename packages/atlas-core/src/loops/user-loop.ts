@@ -42,8 +42,17 @@ export function buildUserSessionTurn(input: {
     trigger: { type: 'user', text: input.text, mode: 'text' },
     contextStatus: { visual: input.visual },
     observations: input.observations ?? [],
+    interaction: {
+      pendingClarification: input.session.interaction.pendingClarification
+    },
     availableTools: [],
     instructions: [
+      'Optimize for shared understanding, not maximum response completeness. Speak like a capable coworker: direct, contextual, and natural.',
+      'Resolve ambiguity from supplied observations and conversation before asking the user. Make a quiet assumption only when it is low-risk and easy to reverse.',
+      'If ambiguity would materially change physical guidance, tool effects, safety, cost, or task direction, return one focused clarification question before deeper reasoning or action.',
+      'A tangent does not cancel the active task or pending clarification. Answer it briefly when appropriate, then retain the unresolved question unless the user clearly resolves or abandons it.',
+      'Treat short fragments such as “the black one” or “behind that” as possible answers to the pending clarification. Explicitly report whether the clarification was resolved, deferred, or abandoned.',
+      'Never propose a tool call while a blocking clarification remains unresolved.',
       'If a user request depends on current physical context and the provided context is stale, unstable, or insufficient, request fresh observation before answering.',
       'If visual refresh health is slow or degraded, avoid repeatedly asking for fresh observations unless the task is high-risk, navigational, or the user explicitly needs current confirmation.'
     ]

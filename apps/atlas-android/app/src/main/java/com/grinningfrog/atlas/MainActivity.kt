@@ -169,7 +169,6 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
     }.toTypedArray()
 }
-
 private enum class AppPage { SESSION, PROVIDERS, EVENTS }
 
 @Composable
@@ -239,6 +238,7 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
     var actionError by remember { mutableStateOf<String?>(null) }
     val session = snapshot.session
     val active = session?.status == SessionStatus.ACTIVE
+    val awaitingClarification = snapshot.pendingClarification != null
 
     fun runAction(block: suspend () -> Unit) {
         scope.launch { runCatching { block() }.onFailure { actionError = it.message ?: it.javaClass.simpleName } }
@@ -310,7 +310,7 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
         }
 
         if (session != null && session.status != SessionStatus.DONE) item {
-            val canTalk = active && (snapshot.activeTurn == null || snapshot.phase == RuntimePhase.SPEAKING)
+            val canTalk = active && (snapshot.activeTurn == null || snapshot.phase == RuntimePhase.SPEAKING || awaitingClarification)
             val title = when {
                 snapshot.listeningState == ListeningState.PREPARING -> "Getting the microphone ready"
                 snapshot.listeningState == ListeningState.READY -> "Speak now"
@@ -379,6 +379,22 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
             }
         }
 
+        snapshot.pendingClarification?.let { clarification ->
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Text("Atlas needs one detail", fontWeight = FontWeight.Bold)
+                        Text(clarification.question, style = MaterialTheme.typography.titleMedium)
+                        if (clarification.options.isNotEmpty()) {
+                            Text(clarification.options.joinToString(" · "), color = MaterialTheme.colorScheme.onTertiaryContainer)
+                        }
+                        Text("Answer naturally—short replies like “the black one” are enough.", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer)
+                    }
+                }
+            }
+        }
+
         val dialogue = snapshot.messages.filter { it.kind == MessageKind.DIALOGUE && it.content.isNotBlank() }.takeLast(30)
         if (dialogue.isNotEmpty()) {
             item { Text("Conversation", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
@@ -415,7 +431,7 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
                             Text("Agent turn · ${turn.status.name.lowercase().replace('_', ' ')}", fontWeight = FontWeight.SemiBold)
                             Text("step ${turn.stepCount} · durable turn ${turn.id.take(8)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        if (turn.status != com.grinningfrog.atlas.model.TurnStatus.WAITING_FOR_CONFIRMATION) {
+                        if (turn.status !in setOf(com.grinningfrog.atlas.model.TurnStatus.WAITING_FOR_CONFIRMATION, com.grinningfrog.atlas.model.TurnStatus.WAITING_FOR_USER_CLARIFICATION)) {
                             OutlinedButton({ runtime.cancelActiveTurn() }) { Text("Cancel") }
                         }
                     }
@@ -470,9 +486,9 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
                 value = prompt,
                 onValueChange = { prompt = it },
                 label = { Text("Ask about here and now") },
-                enabled = active && snapshot.activeTurn == null,
+                enabled = active && (snapshot.activeTurn == null || awaitingClarification),
                 modifier = Modifier.fillMaxWidth(),
-                trailingIcon = { IconButton(enabled = active && snapshot.activeTurn == null && prompt.isNotBlank(), onClick = { val text = prompt; prompt = ""; runAction { runtime.ask(text) } }) { Icon(Icons.AutoMirrored.Filled.Send, "Send") } },
+                trailingIcon = { IconButton(enabled = active && (snapshot.activeTurn == null || awaitingClarification) && prompt.isNotBlank(), onClick = { val text = prompt; prompt = ""; runAction { runtime.ask(text) } }) { Icon(Icons.AutoMirrored.Filled.Send, "Send") } },
                 keyboardActions = KeyboardActions(onSend = { if (prompt.isNotBlank()) { val text = prompt; prompt = ""; runAction { runtime.ask(text) } } }),
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Send),
             )

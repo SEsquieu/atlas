@@ -8,6 +8,146 @@ import { createSessionState } from '../session/index.js';
 import { FileSessionStore } from '../store/file-session-store.js';
 import { createFakeCameraDevice, createFakeProvider, createFakeSpeakerDevice, createFakeVisualAnalyzer } from '../testing/fakes.js';
 
+test('clarification remains durable across a tangent and binds a fragment answer', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-runner-clarification-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const session = createSessionState({
+      sessionId: 'clarification-session',
+      provider: { id: 'fake-provider', adapter: '@atlas/core/testing' }
+    });
+    await store.create(session);
+    await store.appendEvent(session.sessionId, { type: 'session.started' });
+
+    let call = 0;
+    let clarificationId: string | undefined;
+    const runner = new AtlasRunner({
+      store,
+      devices: [],
+      provider: createFakeProvider({
+        onTurn: (turn) => {
+          call += 1;
+          if (call === 1) {
+            return {
+              turnId: turn.turnId,
+              clarification: {
+                question: 'Do you mean the black connector or the gray one?',
+                reason: 'The next repair step differs by connector.',
+                ambiguity: 'referent',
+                options: [{ id: 'black', label: 'Black connector' }, { id: 'gray', label: 'Gray connector' }]
+              }
+            };
+          }
+          clarificationId = turn.interaction.pendingClarification?.clarificationId;
+          if (call === 2) return { turnId: turn.turnId, responseText: 'The Tigers are up by two.' };
+          return {
+            turnId: turn.turnId,
+            responseText: 'Got it—the black connector. Press its tab before pulling.',
+            clarificationDisposition: {
+              clarificationId: clarificationId!,
+              status: 'resolved',
+              normalizedAnswer: 'black connector'
+            }
+          };
+        }
+      })
+    });
+
+    const asked = await runner.runUserTurn({ sessionId: session.sessionId, text: 'How do I remove this connector?', turnId: 'turn-1' });
+    assert.equal(asked.providerResult.responseText, 'Do you mean the black connector or the gray one?');
+    assert.equal(asked.session.interaction.pendingClarification?.blocking, true);
+    const durableId = asked.session.interaction.pendingClarification?.clarificationId;
+    assert.ok(durableId);
+
+    const tangent = await runner.runUserTurn({ sessionId: session.sessionId, text: 'What is the score?', turnId: 'turn-2' });
+    assert.equal(tangent.providerResult.responseText, 'The Tigers are up by two.');
+    assert.equal(tangent.session.interaction.pendingClarification?.clarificationId, durableId);
+
+    const resolved = await runner.runUserTurn({ sessionId: session.sessionId, text: 'The black one.', turnId: 'turn-3' });
+    assert.equal(clarificationId, durableId);
+    assert.equal(resolved.session.interaction.pendingClarification, undefined);
+
+    const events = await store.loadEvents(session.sessionId);
+    assert.ok(events.some((event) => event.type === 'clarification.requested'));
+    assert.ok(events.some((event) => event.type === 'clarification.retained'));
+    assert.ok(events.some((event) => event.type === 'clarification.resolved'));
+    const fragment = events.find((event) => event.type === 'user.utterance' && (event.data as { turnId?: string }).turnId === 'turn-3');
+    assert.equal((fragment?.data as { respondingToClarificationId?: string }).respondingToClarificationId, durableId);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('blocking clarification prevents provider tool proposals until explicitly resolved', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-runner-clarification-tools-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const session = createSessionState({ sessionId: 'blocking-session', provider: { id: 'fake-provider', adapter: 'fake' } });
+    await store.create(session);
+    let call = 0;
+    const runner = new AtlasRunner({
+      store,
+      devices: [],
+      provider: createFakeProvider({
+        onTurn: (turn) => ++call === 1
+          ? {
+              turnId: turn.turnId,
+              clarification: { question: 'Which fastener do you mean?', reason: 'Removing the wrong one could release the assembly.', ambiguity: 'safety' }
+            }
+          : {
+              turnId: turn.turnId,
+              responseText: '',
+              toolCalls: [{ id: 'unsafe-call', name: 'capture_current_view', arguments: {} }]
+            }
+      })
+    });
+
+    await runner.runUserTurn({ sessionId: session.sessionId, text: 'Take that off.' });
+    const blocked = await runner.runUserTurn({ sessionId: session.sessionId, text: 'Just do it.' });
+    assert.deepEqual(blocked.providerResult.toolCalls, []);
+    assert.equal(blocked.providerResult.responseText, 'Which fastener do you mean?');
+    assert.ok(blocked.session.interaction.pendingClarification);
+    const events = await store.loadEvents(session.sessionId);
+    assert.match(JSON.stringify(events.filter((event) => event.type === 'provider.result_constrained')), /unresolved clarification/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('expired clarification is cleared before the next provider turn', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'atlas-runner-clarification-expiry-'));
+  try {
+    const store = new FileSessionStore({ rootDir: root });
+    const session = createSessionState({ sessionId: 'expiry-session', provider: { id: 'fake-provider', adapter: 'fake' } });
+    await store.create(session);
+    let call = 0;
+    const runner = new AtlasRunner({
+      store,
+      devices: [],
+      provider: createFakeProvider({
+        onTurn: (turn) => {
+          call += 1;
+          if (call === 1) return {
+            turnId: turn.turnId,
+            clarification: {
+              question: 'Which shelf?', reason: 'The location is ambiguous.', ambiguity: 'referent', expiresAt: '2026-09-04T10:01:00.000Z'
+            }
+          };
+          assert.equal(turn.interaction.pendingClarification, undefined);
+          return { turnId: turn.turnId, responseText: 'Starting fresh.' };
+        }
+      })
+    });
+
+    await runner.runUserTurn({ sessionId: session.sessionId, text: 'Put it there.', now: '2026-09-04T10:00:00.000Z' });
+    const result = await runner.runUserTurn({ sessionId: session.sessionId, text: 'New task.', now: '2026-09-04T10:02:00.000Z' });
+    assert.equal(result.session.interaction.pendingClarification, undefined);
+    assert.ok((await store.loadEvents(session.sessionId)).some((event) => event.type === 'clarification.expired'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('runUserTurn falls back to the latest observation when ask-time refresh fails', async () => {
   const root = await mkdtemp(join(tmpdir(), 'atlas-runner-'));
   try {

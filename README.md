@@ -31,6 +31,7 @@ The native Android reference app currently provides:
 - push-to-talk, streaming sentence-aware TTS, and barge-in tracking;
 - manual and Live Context modes with scene-change and proactive-inference limits;
 - bounded multi-step model/tool turns with confirmation and restart recovery;
+- durable conversational clarification that survives tangents and blocks ambiguous physical actions;
 - capability routes for `fast`, `vision`, `reasoning`, and `fallback`;
 - direct OpenAI-compatible local, LAN, and cloud endpoints;
 - optional Atlas Managed account/inference plumbing; and

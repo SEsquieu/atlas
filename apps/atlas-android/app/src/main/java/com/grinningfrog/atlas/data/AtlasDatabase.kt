@@ -13,6 +13,8 @@ import com.grinningfrog.atlas.model.AtlasTaskRun
 import com.grinningfrog.atlas.model.AtlasWorkspace
 import com.grinningfrog.atlas.model.ContextStability
 import com.grinningfrog.atlas.model.ContextMode
+import com.grinningfrog.atlas.model.ClarificationAmbiguity
+import com.grinningfrog.atlas.model.ClarificationStatus
 import com.grinningfrog.atlas.model.DeliveryStatus
 import com.grinningfrog.atlas.model.DEFAULT_PERSONAL_WORKSPACE_ID
 import com.grinningfrog.atlas.model.MotionState
@@ -26,6 +28,7 @@ import com.grinningfrog.atlas.model.MediaPurpose
 import com.grinningfrog.atlas.model.MediaRef
 import com.grinningfrog.atlas.model.ObservationTiming
 import com.grinningfrog.atlas.model.PermissionPolicy
+import com.grinningfrog.atlas.model.PendingClarification
 import com.grinningfrog.atlas.model.SessionPermissions
 import com.grinningfrog.atlas.model.SessionStatus
 import com.grinningfrog.atlas.model.SessionSummary
@@ -37,9 +40,10 @@ import com.grinningfrog.atlas.model.TaskRunStatus
 import com.grinningfrog.atlas.model.TurnStatus
 import com.grinningfrog.atlas.model.VisualObservation
 import org.json.JSONObject
+import org.json.JSONArray
 import java.util.UUID
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 7) {
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 8) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         db.setForeignKeyConstraintsEnabled(true)
@@ -172,6 +176,30 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id)
             )""".trimIndent()
         )
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS clarifications (
+                clarification_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                source_turn_id TEXT NOT NULL,
+                question TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                ambiguity TEXT NOT NULL,
+                options_json TEXT NOT NULL DEFAULT '[]',
+                blocking INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL,
+                context_observation_ids_json TEXT NOT NULL DEFAULT '[]',
+                freshness_requirement TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                expires_at INTEGER,
+                deferred_count INTEGER NOT NULL DEFAULT 0,
+                normalized_answer TEXT,
+                resolved_by_turn_id TEXT,
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id),
+                FOREIGN KEY(source_turn_id) REFERENCES turns(turn_id)
+            )""".trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS clarifications_session_status ON clarifications(session_id,status,updated_at DESC)")
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -317,6 +345,74 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             db.execSQL("UPDATE memory_items SET scope_id=CASE WHEN scope='WORKSPACE' THEN workspace_id ELSE session_id END")
             db.execSQL("CREATE INDEX IF NOT EXISTS memory_scope_status ON memory_items(workspace_id,scope,scope_id,status,updated_at DESC)")
         }
+        if (oldVersion < 8) createAgentRuntimeTables(db)
+    }
+
+    @Synchronized
+    fun saveClarification(clarification: PendingClarification) {
+        writableDatabase.transaction {
+            val supersededIds = mutableListOf<String>()
+            rawQuery("SELECT clarification_id FROM clarifications WHERE session_id = ? AND status IN ('WAITING','DEFERRED')", arrayOf(clarification.sessionId)).use { cursor ->
+                while (cursor.moveToNext()) supersededIds += cursor.getString(0)
+            }
+            update("clarifications", ContentValues().apply {
+                put("status", ClarificationStatus.ABANDONED.name); put("updated_at", clarification.createdAtMs)
+            }, "session_id = ? AND status IN ('WAITING','DEFERRED')", arrayOf(clarification.sessionId))
+            supersededIds.forEach { clarificationId ->
+                appendEventLocked(this, clarification.sessionId, "clarification.superseded", clarification.createdAtMs,
+                    JSONObject().put("clarificationId", clarificationId).put("supersededByClarificationId", clarification.id).toString())
+            }
+            insertOrThrow("clarifications", null, ContentValues().apply {
+                put("clarification_id", clarification.id); put("session_id", clarification.sessionId); put("source_turn_id", clarification.sourceTurnId)
+                put("question", clarification.question); put("reason", clarification.reason); put("ambiguity", clarification.ambiguity.name)
+                put("options_json", JSONArray(clarification.options).toString()); put("blocking", if (clarification.blocking) 1 else 0)
+                put("status", clarification.status.name); put("context_observation_ids_json", JSONArray(clarification.contextObservationIds).toString())
+                put("freshness_requirement", clarification.freshnessRequirement); put("created_at", clarification.createdAtMs)
+                put("updated_at", clarification.updatedAtMs); put("expires_at", clarification.expiresAtMs); put("deferred_count", clarification.deferredCount)
+            })
+            appendEventLocked(this, clarification.sessionId, "clarification.requested", clarification.createdAtMs, JSONObject().apply {
+                put("clarificationId", clarification.id); put("sourceTurnId", clarification.sourceTurnId); put("question", clarification.question)
+                put("reason", clarification.reason); put("ambiguity", clarification.ambiguity.name.lowercase()); put("blocking", clarification.blocking)
+                put("options", JSONArray(clarification.options)); clarification.expiresAtMs?.let { put("expiresAtMs", it) }
+            }.toString())
+        }
+    }
+
+    @Synchronized
+    fun updateClarification(
+        clarificationId: String,
+        status: ClarificationStatus,
+        resolvedByTurnId: String? = null,
+        normalizedAnswer: String? = null,
+        nowMs: Long = System.currentTimeMillis(),
+    ) {
+        writableDatabase.transaction {
+            val identity = rawQuery("SELECT session_id,deferred_count FROM clarifications WHERE clarification_id = ?", arrayOf(clarificationId)).use { cursor ->
+                if (!cursor.moveToFirst()) null else cursor.getString(0) to cursor.getInt(1)
+            } ?: error("Unknown clarification $clarificationId")
+            update("clarifications", ContentValues().apply {
+                put("status", status.name); put("updated_at", nowMs); put("resolved_by_turn_id", resolvedByTurnId)
+                put("normalized_answer", normalizedAnswer); if (status == ClarificationStatus.DEFERRED) put("deferred_count", identity.second + 1)
+            }, "clarification_id = ?", arrayOf(clarificationId))
+            appendEventLocked(this, identity.first, "clarification.${status.name.lowercase()}", nowMs, JSONObject().apply {
+                put("clarificationId", clarificationId); resolvedByTurnId?.let { put("resolvedByTurnId", it) }
+                normalizedAnswer?.let { put("normalizedAnswer", it) }
+            }.toString())
+        }
+    }
+
+    fun loadPendingClarification(sessionId: String): PendingClarification? = readableDatabase.rawQuery(
+        """SELECT clarification_id,session_id,source_turn_id,question,reason,ambiguity,options_json,blocking,status,
+            context_observation_ids_json,freshness_requirement,created_at,updated_at,expires_at,deferred_count,normalized_answer,resolved_by_turn_id
+            FROM clarifications WHERE session_id = ? AND status IN ('WAITING','DEFERRED') ORDER BY updated_at DESC LIMIT 1""".trimIndent(), arrayOf(sessionId)
+    ).use { cursor -> if (!cursor.moveToFirst()) null else cursor.toClarification() }
+
+    @Synchronized
+    fun expirePendingClarification(sessionId: String, nowMs: Long = System.currentTimeMillis()): Boolean {
+        val pending = loadPendingClarification(sessionId) ?: return false
+        if (pending.expiresAtMs == null || pending.expiresAtMs > nowMs) return false
+        updateClarification(pending.id, ClarificationStatus.EXPIRED, nowMs = nowMs)
+        return true
     }
 
     @Synchronized
@@ -879,6 +975,20 @@ private fun android.database.Cursor.toMemory() = MemoryItem(
     if (isNull(6)) null else getString(6), if (isNull(7)) null else getString(7), getLong(8), getLong(9), if (isNull(10)) null else getLong(10),
     getString(11), MemoryScope.valueOf(getString(12)), getString(13),
 )
+
+private fun android.database.Cursor.toClarification() = PendingClarification(
+    id = getString(0), sessionId = getString(1), sourceTurnId = getString(2), question = getString(3), reason = getString(4),
+    ambiguity = ClarificationAmbiguity.valueOf(getString(5)), options = jsonStringList(getString(6)), blocking = getInt(7) != 0,
+    status = ClarificationStatus.valueOf(getString(8)), contextObservationIds = jsonStringList(getString(9)),
+    freshnessRequirement = nullableString(10), createdAtMs = getLong(11), updatedAtMs = getLong(12),
+    expiresAtMs = if (isNull(13)) null else getLong(13), deferredCount = getInt(14), normalizedAnswer = nullableString(15),
+    resolvedByTurnId = nullableString(16),
+)
+
+private fun jsonStringList(raw: String): List<String> = runCatching {
+    val array = JSONArray(raw)
+    buildList { for (index in 0 until array.length()) add(array.getString(index)) }
+}.getOrDefault(emptyList())
 
 private fun android.database.Cursor.nullableString(index: Int): String? = if (isNull(index)) null else getString(index)
 

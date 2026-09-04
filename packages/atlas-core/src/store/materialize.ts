@@ -16,6 +16,14 @@ export function applySessionEvent(state: AtlasSessionState, event: AuditEvent): 
       return applyObservationCaptured(state, event);
     case 'state.updated':
       return applyStateUpdated(state, event);
+    case 'clarification.requested':
+      return applyClarificationRequested(state, event);
+    case 'clarification.resolved':
+    case 'clarification.abandoned':
+    case 'clarification.expired':
+      return applyClarificationCleared(state, event);
+    case 'clarification.deferred':
+      return applyClarificationDeferred(state, event);
     default:
       return markEventApplied(state, event);
   }
@@ -37,8 +45,39 @@ export function normalizeSessionState(state: AtlasSessionState): AtlasSessionSta
     memory: {
       ...state.memory,
       scoped: state.memory.scoped ?? []
-    }
+    },
+    interaction: state.interaction ?? {}
   };
+}
+
+function applyClarificationRequested(state: AtlasSessionState, event: AuditEvent): AtlasSessionState {
+  const clarification = getDataObject(event)?.clarification as AtlasSessionState['interaction']['pendingClarification'] | undefined;
+  if (!clarification) return markEventApplied(state, event);
+  return markEventApplied(touch({ ...state, interaction: { ...state.interaction, pendingClarification: clarification } }, event.at), event);
+}
+
+function applyClarificationCleared(state: AtlasSessionState, event: AuditEvent): AtlasSessionState {
+  const clarificationId = getDataObject(event)?.clarificationId;
+  const pending = state.interaction.pendingClarification;
+  if (!pending || (typeof clarificationId === 'string' && clarificationId !== pending.clarificationId)) {
+    return markEventApplied(state, event);
+  }
+  const interaction = { ...state.interaction };
+  delete interaction.pendingClarification;
+  return markEventApplied(touch({ ...state, interaction }, event.at), event);
+}
+
+function applyClarificationDeferred(state: AtlasSessionState, event: AuditEvent): AtlasSessionState {
+  const clarificationId = getDataObject(event)?.clarificationId;
+  const pending = state.interaction.pendingClarification;
+  if (!pending || clarificationId !== pending.clarificationId) return markEventApplied(state, event);
+  return markEventApplied(touch({
+    ...state,
+    interaction: {
+      ...state.interaction,
+      pendingClarification: { ...pending, deferredCount: pending.deferredCount + 1, lastDeferredAt: event.at }
+    }
+  }, event.at), event);
 }
 
 export function selectPendingEvents(checkpoint: AtlasSessionState, events: AuditEvent[]): AuditEvent[] {

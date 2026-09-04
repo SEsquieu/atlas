@@ -8,6 +8,7 @@ import com.grinningfrog.atlas.model.MemoryItem
 import com.grinningfrog.atlas.model.MemoryKind
 import com.grinningfrog.atlas.model.MessageKind
 import com.grinningfrog.atlas.model.MessageRole
+import com.grinningfrog.atlas.model.PendingClarification
 import com.grinningfrog.atlas.model.SessionSummary
 import com.grinningfrog.atlas.model.ToolCallProposal
 import com.grinningfrog.atlas.model.VisualObservation
@@ -37,6 +38,7 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
         observation: VisualObservation?,
         nowMs: Long,
         toolsAvailable: Boolean = true,
+        pendingClarification: PendingClarification? = null,
     ): AssembledContext {
         val eligible = messages.filter { it.kind != MessageKind.INTERNAL }
         val selected = selectRecentMessages(eligible)
@@ -45,12 +47,23 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
             appendLine("You are the replaceable intelligence operating inside Atlas, a durable physical-agent runtime.")
             appendLine("Atlas Core owns session truth, memory admission, physical context, permissions, tool execution, and audit history.")
             appendLine("Goal: ${session.goal.ifBlank { "Help the user with their present physical context." }}")
+            appendLine("Speak like a capable coworker. Optimize for shared understanding, not maximum response completeness.")
+            appendLine("Resolve ambiguity from current context first. Make quiet assumptions only when low-risk and reversible.")
+            appendLine("When ambiguity materially changes physical guidance, safety, cost, tool effects, or task direction, ask one focused question using atlas_clarification.")
+            appendLine("Tangents do not cancel the active task. Answer briefly, then preserve unresolved task state.")
             appendLine("Continue the conversation naturally. Resolve references from the supplied transcript and preserve unfinished task state.")
             if (toolsAvailable) appendLine("Use the supplied tools when you need current device information or must update explicit working/task memory.")
             appendLine("Never claim a tool ran until Atlas returns its result. Never invent observations or external effects.")
             appendLine("Treat physical observations according to their timestamps; call capture_current_view when the supplied view is insufficient or stale.")
             if (toolsAvailable) appendLine("Use atlas_remember for concise session facts, decisions, constraints, and task progress that later turns must retain. Durable user memory requires confirmation.")
             appendLine("Keep spoken answers direct, but do not sacrifice necessary safety context.")
+            if (pendingClarification != null) {
+                appendLine()
+                appendLine("PENDING CLARIFICATION (Core-owned; id=${pendingClarification.id}; blocking=${pendingClarification.blocking}):")
+                appendLine(pendingClarification.question)
+                appendLine("Reason: ${pendingClarification.reason}")
+                appendLine("Treat a short fragment as a possible answer. Call atlas_clarification with resolve, defer, or abandon. Until then, do not propose physical tools when blocking=true.")
+            }
             if (summary != null) {
                 appendLine()
                 appendLine("CONVERSATION CHECKPOINT (derived from earlier turns):")

@@ -17,7 +17,7 @@ enum class MessageRole { USER, ASSISTANT, TOOL }
 enum class MessageKind { DIALOGUE, TOOL_RESULT, INTERNAL }
 enum class TurnStatus {
     CREATED, ASSEMBLING_CONTEXT, WAITING_FOR_MODEL, WAITING_FOR_CONFIRMATION,
-    EXECUTING_TOOL, COMPLETED, FAILED, CANCELLED, INTERRUPTED,
+    WAITING_FOR_USER_CLARIFICATION, EXECUTING_TOOL, COMPLETED, FAILED, CANCELLED, INTERRUPTED,
 }
 enum class ToolCallStatus { PROPOSED, WAITING_FOR_CONFIRMATION, APPROVED, RUNNING, COMPLETED, REJECTED, FAILED, UNKNOWN }
 enum class ToolRisk { READ_ONLY, SESSION_WRITE, PERSONAL_DATA, EXTERNAL_EFFECT }
@@ -30,6 +30,8 @@ enum class WorkspaceKind { PERSONAL, ORGANIZATION }
 enum class PrincipalKind { USER, SERVICE, DEVICE }
 enum class TaskRunStatus { PENDING, ACTIVE, BLOCKED, COMPLETED, CANCELLED }
 enum class MemoryScope { SESSION, TASK, PRINCIPAL, WORKSPACE, ENVIRONMENT }
+enum class ClarificationStatus { WAITING, RESOLVED, DEFERRED, ABANDONED, EXPIRED }
+enum class ClarificationAmbiguity { REFERENT, INTENT, MISSING_FACT, SAFETY, AUTHORITY, TASK_SCOPE, OTHER }
 
 const val DEFAULT_PERSONAL_WORKSPACE_ID = "workspace:personal:local"
 
@@ -210,6 +212,26 @@ data class SessionSummary(
     val updatedAtMs: Long,
 )
 
+data class PendingClarification(
+    val id: String,
+    val sessionId: String,
+    val sourceTurnId: String,
+    val question: String,
+    val reason: String,
+    val ambiguity: ClarificationAmbiguity,
+    val options: List<String> = emptyList(),
+    val blocking: Boolean = true,
+    val status: ClarificationStatus = ClarificationStatus.WAITING,
+    val contextObservationIds: List<String> = emptyList(),
+    val freshnessRequirement: String? = null,
+    val createdAtMs: Long,
+    val updatedAtMs: Long,
+    val expiresAtMs: Long? = null,
+    val deferredCount: Int = 0,
+    val normalizedAnswer: String? = null,
+    val resolvedByTurnId: String? = null,
+)
+
 data class InferenceMessage(
     val role: MessageRole,
     val content: String,
@@ -334,6 +356,7 @@ data class RuntimeSnapshot(
     val pendingToolCalls: List<AtlasToolCall> = emptyList(),
     val memories: List<MemoryItem> = emptyList(),
     val sessionSummary: SessionSummary? = null,
+    val pendingClarification: PendingClarification? = null,
     val listeningState: ListeningState = ListeningState.INACTIVE,
     val partialTranscript: String? = null,
     val streamingResponse: String? = null,

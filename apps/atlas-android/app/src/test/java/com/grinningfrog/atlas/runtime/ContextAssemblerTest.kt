@@ -8,6 +8,8 @@ import com.grinningfrog.atlas.model.MemoryKind
 import com.grinningfrog.atlas.model.MemoryStatus
 import com.grinningfrog.atlas.model.MessageKind
 import com.grinningfrog.atlas.model.MessageRole
+import com.grinningfrog.atlas.model.PendingClarification
+import com.grinningfrog.atlas.model.ClarificationAmbiguity
 import com.grinningfrog.atlas.model.SessionStatus
 import com.grinningfrog.atlas.model.SessionSummary
 import org.junit.Assert.assertEquals
@@ -92,6 +94,24 @@ class ContextAssemblerTest {
         assertTrue(context.messages[1].content.startsWith("First sentence."))
         assertTrue(context.messages[1].content.contains("user interrupted playback"))
         assertFalse(context.messages[1].content.contains("Third sentence"))
+    }
+
+    @Test fun pendingClarificationIsStructuredAndSurvivesTangents() {
+        val pending = PendingClarification(
+            id = "clarify-1", sessionId = "session", sourceTurnId = "turn-1",
+            question = "The black connector or the gray one?", reason = "The next step differs.",
+            ambiguity = ClarificationAmbiguity.REFERENT, options = listOf("Black", "Gray"),
+            blocking = true, createdAtMs = 1, updatedAtMs = 2,
+        )
+        val context = ContextAssembler().assemble(
+            session(), listOf(message(1, "turn-2", MessageRole.USER, "What's the score?")),
+            emptyList(), null, null, 10, pendingClarification = pending,
+        )
+
+        assertTrue(context.systemPrompt.contains("id=clarify-1"))
+        assertTrue(context.systemPrompt.contains("The black connector or the gray one?"))
+        assertTrue(context.systemPrompt.contains("Tangents do not cancel"))
+        assertTrue(context.systemPrompt.contains("resolve, defer, or abandon"))
     }
 
     private fun session() = AtlasSession("session", "test", "stay coherent", SessionStatus.ACTIVE, 0, 0)

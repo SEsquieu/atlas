@@ -66,6 +66,7 @@ export function createSessionState(input: CreateSessionInput): AtlasSessionState
       environmentNotes: [],
       taskProgress: []
     },
+    interaction: {},
     permissions: {
       observe: true,
       captureImage: 'during_active_session',
