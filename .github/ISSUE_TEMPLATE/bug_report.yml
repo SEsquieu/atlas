@@ -1,0 +1,43 @@
+name: Bug report
+description: Report a reproducible Atlas runtime or app problem
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not report vulnerabilities or include credentials, private images, transcripts, or customer data here. Follow SECURITY.md for private reporting."
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0-alpha.1 or commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options: [Android app, Atlas Core, Managed inference gateway, Legacy adapter, Documentation]
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Include expected behavior, observed behavior, and minimal safe steps.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Device/OS, provider type, route capability, and relevant non-secret configuration.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed credentials and private user/customer content.
+          required: true
+        - label: This is not a security vulnerability requiring private reporting.
+          required: true

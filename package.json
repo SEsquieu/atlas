@@ -10,6 +10,7 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present && npm run test:examples",
+    "check:public": "node scripts/check-public-readiness.mjs",
     "test:examples": "node examples/android-openclaw-basic/wrapper-contracts.test.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "demo:live-android": "node examples/android-openclaw-basic/live-demo.mjs",
@@ -36,5 +37,12 @@
   "engines": {
     "node": ">=22"
   },
-  "license": "UNLICENSED"
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SEsquieu/atlas.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SEsquieu/atlas/issues"
+  }
 }

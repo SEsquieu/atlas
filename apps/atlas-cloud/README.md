@@ -4,6 +4,8 @@ Atlas Cloud is an optional, authenticated inference adapter for the Android runt
 
 Direct bring-your-own inference remains fully usable without an Atlas account.
 
+This reference gateway is Apache-2.0 software. That does not include Atlas-operated provider capacity, credentials, subscriptions, support, domains, or customer data. A developer may self-host it with their own infrastructure and provider account; the paid product is the supported operated service.
+
 ## What this service provides
 
 - Supabase email/password authentication with short-lived user access tokens;
@@ -47,3 +49,5 @@ The publishable Supabase key is intentionally client-visible. Never put the serv
 Each inference first resolves the authenticated principal into an active organization membership. Omitting `X-Atlas-Organization-Id` selects the caller's personal organization. Atlas then reserves the deployment's maximum per-request credit amount from that organization's balance inside one database transaction. Usage retains both organization and actor attribution. If funds are insufficient, the provider is never called. After the provider returns, Atlas settles the reservation against actual input/output usage and refunds the difference. Provider failures settle to zero. Stripe grants use unique event references, so webhook retries do not mint credits twice.
 
 Before a public beta, add rate limiting/abuse controls, App Check or device attestation, transactional email branding, tax/refund policy, stuck-reservation reconciliation, operator dashboards/alerts, and end-to-end test-mode Stripe tests. This directory is deployable plumbing, not a claim that a production billing service is already operating.
+
+The commercial and pricing boundaries are documented in [`../../docs/product-structure.md`](../../docs/product-structure.md) and [`../../docs/pricing-and-metering.md`](../../docs/pricing-and-metering.md).

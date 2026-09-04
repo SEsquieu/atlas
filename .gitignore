@@ -12,10 +12,19 @@ media-cache/
 
 # Android / IntelliJ
 .gradle/
-.kotlin/
 .idea/
 local.properties
 *.iml
+*.apk
+*.aab
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+keystore.properties
+secrets.properties
 apps/atlas-android/build/
 apps/atlas-android/app/build/
 captures/
