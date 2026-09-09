@@ -24,6 +24,8 @@ Atlas is easiest to understand by following ownership from the persistent runtim
 - [Testing](./testing.md) — test layers and the role of the legacy scenario harness.
 - [Behavioral eval fixtures](../evals/README.md) — small regression cases derived from real sessions.
 - [Public-release audit](./public-release-audit.md) — findings, evidence, and remaining publication blockers.
+- [Public name collision review](./name-review.md) — preliminary collision evidence and a qualified-name recommendation.
+- [Assets and redistribution](./assets-and-redistribution.md) — tracked media/font/audio inventory and website boundary.
 - [Proposed v0.1.0-alpha.5 notes](./releases/v0.1.0-alpha.5.md) — release scope without claiming unfinished gates are complete.
 
 ## Principles and direction

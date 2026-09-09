@@ -6,7 +6,7 @@ on:
       tag:
         description: Release tag
         required: true
-        default: android-v0.1.0-alpha.4
+        default: v0.1.0-alpha.5
 
 permissions:
   contents: write
@@ -40,21 +40,27 @@ jobs:
           ATLAS_ANDROID_KEY_PASSWORD: ${{ secrets.ATLAS_ANDROID_KEY_PASSWORD }}
         run: ./gradlew testSecureDebugUnitTest testLanDebugUnitTest lintSecureRelease lintLanRelease assembleSecureRelease assembleLanRelease
       - name: Verify signatures and package
+        env:
+          RELEASE_VERSION: 0.1.0-alpha.5
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
+          test "$RELEASE_TAG" = "v$RELEASE_VERSION"
           SECURE_APK=app/build/outputs/apk/secure/release/app-secure-release.apk
           LAN_APK=app/build/outputs/apk/lan/release/app-lan-release.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$SECURE_APK" > signing-certificate.txt
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$LAN_APK"
-          cp "$SECURE_APK" atlas-android-0.1.0-alpha.4-secure.apk
-          cp "$LAN_APK" atlas-android-0.1.0-alpha.4-trusted-lan.apk
+          cp "$SECURE_APK" "atlas-android-$RELEASE_VERSION-secure.apk"
+          cp "$LAN_APK" "atlas-android-$RELEASE_VERSION-trusted-lan.apk"
           sha256sum atlas-android-*.apk > SHA256SUMS.txt
-          zip -9 atlas-android-0.1.0-alpha.4.zip atlas-android-*.apk SHA256SUMS.txt signing-certificate.txt
+          printf '{"version":"%s","tag":"%s","commit":"%s","variants":["secure","trusted-lan"],"minSdk":28,"targetSdk":35}\n' \
+            "$RELEASE_VERSION" "$RELEASE_TAG" "$GITHUB_SHA" > provenance.json
+          zip -9 "atlas-android-$RELEASE_VERSION.zip" atlas-android-*.apk SHA256SUMS.txt signing-certificate.txt provenance.json
       - name: Publish controlled prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
-            --title "Atlas Android 0.1.0 alpha 4" \
-            --notes "Signed closed-alpha builds with the state-responsive Atlas interface. Use secure for HTTPS endpoints. Use trusted-LAN only for private-network HTTP inference." \
-            atlas-android-*.apk atlas-android-0.1.0-alpha.4.zip SHA256SUMS.txt signing-certificate.txt
+            --title "Atlas v0.1.0-alpha.5" \
+            --notes-file ../../docs/releases/v0.1.0-alpha.5.md \
+            atlas-android-*.apk atlas-android-0.1.0-alpha.5.zip SHA256SUMS.txt signing-certificate.txt provenance.json

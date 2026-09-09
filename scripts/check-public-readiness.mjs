@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 const failures = [];
 const required = [
   'LICENSE', 'NOTICE', 'CONTRIBUTING.md', 'SECURITY.md', 'CODE_OF_CONDUCT.md',
+  'THIRD_PARTY_NOTICES.md',
   'GOVERNANCE.md', 'TRADEMARKS.md', 'OPEN_SOURCE_CHECKLIST.md', 'SUPPORT.md', 'CHANGELOG.md',
   'docs/product-structure.md', 'docs/pricing-and-metering.md', 'docs/closed-alpha.md',
   'docs/alpha-data-handling.md',
@@ -11,6 +12,9 @@ const required = [
   'docs/runtime-code-map.md', 'docs/runtime-failure-semantics.md',
   'docs/design-principles.md', 'docs/endpoint-characterization.md',
   'docs/build-and-test.md', 'docs/public-release-audit.md',
+  'docs/name-review.md',
+  'docs/assets-and-redistribution.md',
+  'scripts/audit-git-history.mjs',
   'evals/fixture.schema.json', 'evals/fixtures/unsupported_causal_bridge.json',
 ];
 

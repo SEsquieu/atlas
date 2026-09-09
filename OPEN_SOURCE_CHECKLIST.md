@@ -13,15 +13,19 @@ Repository licensing and governance can be prepared before visibility changes. D
 - [x] Public-readiness script and CI added
 - [x] Example configuration uses placeholders
 - [x] Generated artifacts and local secrets are ignored
+- [x] Third-party source/distribution inventory and Android runtime attribution added
+- [x] Tracked media, font, audio, sample-data, and model assets inventoried
+- [x] Preliminary public-name collision review documented
+- [x] Full reachable-history scan is automated in public-readiness CI
 
 ## Blocking before repository visibility changes
 
-- [ ] Run a full secret scan over the real GitHub history, every branch, and tags
-- [ ] Rotate any credential that has ever appeared in history, even if later deleted
+- [ ] Confirm the full-history CI result over every reachable GitHub branch and tag; separately consider deleted/unreachable refs
+- [ ] Rotate any credential identified by automated scanning or manual artifact review
 - [ ] Review GitHub Actions logs and downloadable artifacts for secrets/user data
-- [ ] Inventory dependency licenses and generate third-party notices for distributed artifacts
-- [ ] Review copied assets, icons, sounds, fonts, sample media, and datasets for redistribution rights
-- [ ] Complete project/product name and domain clearance for `Atlas`
+- [x] Inventory dependency licenses and generate third-party notices for the source and Android artifact
+- [x] Review tracked assets, icons, sounds, fonts, sample media, and datasets for redistribution rights
+- [ ] Adopt and clear a qualified public product name; bare `Atlas` is materially crowded
 - [ ] Enable GitHub private vulnerability reporting
 - [ ] Enable branch protection, required CI, dependency alerts, and secret scanning where available
 - [ ] Configure issue/discussion moderation and a private maintainer contact path

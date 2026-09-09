@@ -1,7 +1,7 @@
 # Public-release audit
 
 Audit date: 2026-09-09  
-Audited branch head: `codex/closed-alpha-hardening` at `eaecf351eedb61dfcf1bd0037a368a2b2647e2d1`
+Initial audited branch head: `codex/closed-alpha-hardening` at `eaecf351eedb61dfcf1bd0037a368a2b2647e2d1`. Release-preparation evidence and automation were subsequently added on the same branch.
 
 This report records checks performed during the release-preparation pass. It avoids reproducing possible secrets or personal values.
 
@@ -40,7 +40,11 @@ Android managed-service URLs and publishable keys default to empty Gradle proper
 
 Root npm runtime/test dependencies report MIT or Apache-2.0 licenses. The optional cloud lockfile reports MIT, Apache-2.0, ISC, BSD-3-Clause, 0BSD, CC-BY-4.0, and platform-specific LGPL-3.0-or-later libvips packages pulled through image tooling. No lockfile entry lacked license metadata.
 
-Android direct dependencies are primarily AndroidX, Kotlin coroutines, OkHttp, JUnit, and JSON-java. A complete Gradle resolved-dependency license report was not produced in this restricted environment. Before distributing binaries, generate third-party notices from the resolved release graph and review LGPL/CC attribution and packaging obligations with competent counsel or license tooling.
+Android runtime dependencies are AndroidX, Kotlin/coroutines, OkHttp/Okio, and their Apache-2.0 transitives. Test-only dependencies include JUnit and JSON-java. [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) records the source, Android, and optional cloud license inventory, and the APK packages a compact runtime attribution. Cloud redistributors must still preserve applicable libvips LGPL material and `caniuse-lite` CC attribution; counsel or dedicated license tooling is appropriate before a paid hosted distribution.
+
+### Asset inventory
+
+No photograph, generated marketing image, recorded audio, model weight, sample session export, dataset, or font is tracked. The Android icon is a source XML vector, system typography is used, and the listening sound is generated through an Android API. The separate website asset repository remains outside this audit. See [`assets-and-redistribution.md`](./assets-and-redistribution.md).
 
 ### CI and repository controls
 
@@ -53,6 +57,8 @@ Source workflows use read-only contents permissions and placeholder service valu
 - Added failure-semantics, endpoint-characterization, design-principle, build/test, release, and essay documents.
 - Added the `unsupported_causal_bridge` behavioral fixture and deterministic fixture validation to `npm test`.
 - Added deferred roadmap constraints for embeddings, evolving personality, and managed inference.
+- Added a repeatable reachable-history audit, third-party notices, packaged Android attribution, asset inventory, and preliminary name-collision review.
+- Prepared Android version `0.1.0-alpha.5` and hardened the signed-release workflow with tag/version matching, provenance, checksums, and certificate output.
 
 ## Blocking maintainer actions before public visibility
 

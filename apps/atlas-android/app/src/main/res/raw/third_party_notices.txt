@@ -1,0 +1,9 @@
+Atlas includes AndroidX libraries, Kotlin and Kotlin Coroutines, OkHttp, Okio,
+and their runtime dependencies. These components are distributed under the
+Apache License 2.0 and retain their respective copyrights.
+
+Atlas source and the complete release dependency inventory are available at:
+https://github.com/SEsquieu/atlas
+
+Apache License 2.0:
+https://www.apache.org/licenses/LICENSE-2.0
