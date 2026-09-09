@@ -38,6 +38,7 @@ import com.grinningfrog.atlas.model.VisualObservation
 import com.grinningfrog.atlas.provider.CapabilityRouter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -49,6 +50,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -76,6 +78,8 @@ class AtlasMobileRuntime(
     private var compactionJob: Job? = null
     private var activeTurnJob: Job? = null
     private var activeTurnId: String? = null
+    private var lateTurnJob: Job? = null
+    private var lateTurnId: String? = null
     private var devicesStarted = false
     private val contextAssembler = ContextAssembler()
     private val toolHarness by lazy {
@@ -224,6 +228,7 @@ class AtlasMobileRuntime(
 
     suspend fun ask(text: String, voice: Boolean = false) {
         require(text.isNotBlank()) { "Ask Atlas something first" }
+        cancelLateTurn("superseded by a new user turn")
         compactionJob?.cancel(); compactionJob = null
         val job = currentCoroutineContext()[Job]
         activeTurnJob = job
@@ -255,7 +260,23 @@ class AtlasMobileRuntime(
             database.updateTurn(turnId, TurnStatus.CANCELLED, error = reason)
         } }
         activeTurnJob?.cancel(CancellationException(reason))
+        cancelLateTurn(reason)
         publish()
+    }
+
+    private fun cancelLateTurn(reason: String) {
+        val job = lateTurnJob ?: return
+        if (!job.isActive) return
+        val turnId = lateTurnId
+        job.cancel(CancellationException(reason))
+        turnId?.let { id ->
+            runCatching { database.updateTurn(id, TurnStatus.HARD_CANCELLED, error = reason) }
+            mutableState.value.session?.let { session ->
+                database.appendEvent(session.id, "provider.late_cancelled", JSONObject().put("turnId", id).put("reason", reason))
+            }
+        }
+        lateTurnJob = null
+        lateTurnId = null
     }
 
     suspend fun resolveToolCall(toolCallId: String, approved: Boolean) {
@@ -381,10 +402,14 @@ class AtlasMobileRuntime(
             database.updateTurn(turnId, TurnStatus.WAITING_FOR_MODEL, stepCount = step)
             publish(phase = RuntimePhase.THINKING)
             database.appendEvent(session.id, "provider.requested", JSONObject().put("turnId", turnId).put("step", step).put("requestId", request.requestId)
-                .put("capability", capability.name).put("risk", request.risk.name).put("latencyClass", request.latencyClass.name).put("toolCount", request.tools.size))
+                .put("capability", capability.name).put("risk", request.risk.name).put("latencyClass", request.latencyClass.name)
+                .put("toolCount", request.tools.size).put("visionAttached", request.image != null)
+                .put("maxOutputTokens", request.responseContract?.maxOutputTokens).put("softTimeoutMs", MODEL_SOFT_TIMEOUT_MS))
             val operationGeneration = generation.get()
             val response = try {
                 streamModelStep(session, turnId, request, spoken)
+            } catch (_: SoftTimeoutDetached) {
+                return
             } catch (error: Exception) {
                 database.appendEvent(session.id, "provider.failed", JSONObject().put("turnId", turnId).put("step", step).put("requestId", request.requestId).put("error", error.safeMessage()))
                 throw error
@@ -398,6 +423,7 @@ class AtlasMobileRuntime(
                 put("model", response.selectedModel); put("routingProfile", response.routingProfile); put("routingReason", response.routingReason)
                 put("routingRevision", response.routingRevision); put("latencyMs", response.latencyMs); put("degraded", response.degraded)
                 put("firstTokenLatencyMs", response.firstTokenLatencyMs)
+                put("promptTokens", response.promptTokens); put("completionTokens", response.completionTokens); put("totalTokens", response.totalTokens)
                 put("finishReason", response.finishReason); put("providerContinuationId", response.providerContinuationId)
                 put("text", response.text); put("toolCallCount", response.toolCalls.size)
             })
@@ -549,6 +575,7 @@ class AtlasMobileRuntime(
             role = MessageRole.ASSISTANT,
             content = "",
             createdAtMs = System.currentTimeMillis(),
+            kind = MessageKind.INTERNAL,
             deliveryStatus = if (spoken) DeliveryStatus.PENDING else DeliveryStatus.TEXT_ONLY,
         ))
         val generated = StringBuilder()
@@ -556,58 +583,103 @@ class AtlasMobileRuntime(
         var sentenceIndex = 0
         var completed: InferenceResponse? = null
         var lastCheckpointAt = 0L
-        try {
-            router.stream(request).collect { event ->
-                when (event) {
-                    is InferenceStreamEvent.TextDelta -> {
-                        generated.append(event.text)
-                        val now = System.currentTimeMillis()
-                        if (now - lastCheckpointAt >= STREAM_CHECKPOINT_INTERVAL_MS) {
-                            database.updateAssistantMessage(messageId, generated.toString())
-                            lastCheckpointAt = now
+        val softTimedOut = AtomicBoolean(false)
+        val result = CompletableDeferred<Result<InferenceResponse>>()
+        val collector = scope.launch {
+            try {
+                router.stream(request).collect { event ->
+                    when (event) {
+                        is InferenceStreamEvent.TextDelta -> {
+                            generated.append(event.text)
+                            val now = System.currentTimeMillis()
+                            if (now - lastCheckpointAt >= STREAM_CHECKPOINT_INTERVAL_MS) {
+                                database.updateAssistantMessage(messageId, generated.toString())
+                                lastCheckpointAt = now
+                            }
+                            if (!softTimedOut.get()) {
+                                publishTransient(response = generated.toString(), streamingResponse = generated.toString(),
+                                    phase = if (speech.isSpeaking) RuntimePhase.SPEAKING else RuntimePhase.THINKING)
+                                if (spoken) segmenter.append(event.text).forEach { sentence ->
+                                    enqueueSentence(session, turnId, messageId, sentenceIndex++, sentence)
+                                }
+                            }
                         }
-                        publishTransient(
-                            response = generated.toString(),
-                            streamingResponse = generated.toString(),
-                            phase = if (speech.isSpeaking) RuntimePhase.SPEAKING else RuntimePhase.THINKING,
-                        )
-                        if (spoken) segmenter.append(event.text).forEach { sentence ->
-                            enqueueSentence(session, turnId, messageId, sentenceIndex++, sentence)
-                        }
+                        is InferenceStreamEvent.ToolCallDelta -> Unit
+                        is InferenceStreamEvent.Completed -> completed = event.response
                     }
-                    is InferenceStreamEvent.ToolCallDelta -> Unit
-                    is InferenceStreamEvent.Completed -> completed = event.response
                 }
+                if (spoken && !softTimedOut.get()) segmenter.finish().forEach { sentence ->
+                    enqueueSentence(session, turnId, messageId, sentenceIndex++, sentence)
+                }
+                val response = checkNotNull(completed) { "Provider stream ended without a completed response" }
+                database.updateAssistantMessage(messageId, response.text, response.toolCalls.takeIf { it.isNotEmpty() }?.let(::toolCallsJson))
+                if (softTimedOut.get()) {
+                    database.refreshMessageDelivery(messageId, DeliveryStatus.TEXT_ONLY)
+                    database.updateTurn(turnId, TurnStatus.COMPLETED_LATE, stepCount = request.step)
+                    database.appendEvent(session.id, "provider.completed_late", lateResultEvent(turnId, messageId, request, response))
+                    publish(error = "Response timed out at ${MODEL_SOFT_TIMEOUT_MS / 1_000}s and completed later. The diagnostic result is available below.", phase = RuntimePhase.READY)
+                } else {
+                    database.promoteAssistantMessage(messageId)
+                    database.refreshMessageDelivery(messageId, when {
+                        !spoken || response.text.isBlank() -> DeliveryStatus.TEXT_ONLY
+                        sentenceIndex > 0 -> DeliveryStatus.PENDING
+                        else -> DeliveryStatus.FAILED
+                    })
+                    publish(response = response.text, streamingResponse = null)
+                }
+                result.complete(Result.success(response))
+            } catch (cancelled: CancellationException) {
+                speech.stopSpeaking()
+                database.updateAssistantMessage(messageId, generated.toString().trim())
+                database.refreshMessageDelivery(messageId, DeliveryStatus.INTERRUPTED)
+                database.appendEvent(session.id, "provider.stream_interrupted", JSONObject().put("turnId", turnId).put("requestId", request.requestId)
+                    .put("messageId", messageId).put("receivedCharacters", generated.length).put("afterSoftTimeout", softTimedOut.get()))
+                result.cancel(cancelled)
+            } catch (error: Exception) {
+                speech.stopSpeaking()
+                database.updateAssistantMessage(messageId, generated.toString().trim())
+                database.refreshMessageDelivery(messageId, DeliveryStatus.FAILED)
+                if (softTimedOut.get()) {
+                    database.updateTurn(turnId, TurnStatus.HARD_CANCELLED, stepCount = request.step, error = error.safeMessage())
+                    database.appendEvent(session.id, "provider.late_failed", JSONObject().put("turnId", turnId).put("requestId", request.requestId)
+                        .put("messageId", messageId).put("error", error.safeMessage()).put("receivedCharacters", generated.length))
+                    publish(error = "Late generation stopped: ${error.safeMessage()}", phase = RuntimePhase.READY)
+                }
+                result.complete(Result.failure(error))
+            } finally {
+                if (lateTurnId == turnId) {
+                    lateTurnJob = null
+                    lateTurnId = null
+                }
+                publish()
             }
-            if (spoken) segmenter.finish().forEach { sentence ->
-                enqueueSentence(session, turnId, messageId, sentenceIndex++, sentence)
-            }
-            val response = checkNotNull(completed) { "Provider stream ended without a completed response" }
-            database.updateAssistantMessage(
-                messageId,
-                response.text,
-                response.toolCalls.takeIf { it.isNotEmpty() }?.let(::toolCallsJson),
-            )
-            database.refreshMessageDelivery(messageId, when {
-                !spoken || response.text.isBlank() -> DeliveryStatus.TEXT_ONLY
-                sentenceIndex > 0 -> DeliveryStatus.PENDING
-                else -> DeliveryStatus.FAILED
-            })
-            publish(response = response.text, streamingResponse = null)
-            return response
-        } catch (cancelled: CancellationException) {
-            speech.stopSpeaking()
-            database.updateAssistantMessage(messageId, generated.toString().trim())
-            database.refreshMessageDelivery(messageId, DeliveryStatus.INTERRUPTED)
-            database.appendEvent(session.id, "provider.stream_interrupted", JSONObject().put("turnId", turnId).put("requestId", request.requestId)
-                .put("messageId", messageId).put("receivedCharacters", generated.length))
-            throw cancelled
-        } catch (error: Exception) {
-            speech.stopSpeaking()
-            database.updateAssistantMessage(messageId, generated.toString().trim())
-            database.refreshMessageDelivery(messageId, DeliveryStatus.FAILED)
-            throw error
         }
+        lateTurnJob = collector
+        lateTurnId = turnId
+        val timely = withTimeoutOrNull(MODEL_SOFT_TIMEOUT_MS) { result.await() }
+        if (timely != null) return timely.getOrThrow()
+
+        softTimedOut.set(true)
+        speech.stopSpeaking()
+        database.updateAssistantMessage(messageId, generated.toString().trim())
+        database.refreshMessageDelivery(messageId, DeliveryStatus.INTERRUPTED)
+        database.updateTurn(turnId, TurnStatus.SOFT_TIMED_OUT, stepCount = request.step, error = "Provider exceeded the ${MODEL_SOFT_TIMEOUT_MS / 1_000}s interaction deadline")
+        database.appendEvent(session.id, "provider.soft_timed_out", JSONObject().put("turnId", turnId).put("requestId", request.requestId)
+            .put("messageId", messageId).put("softTimeoutMs", MODEL_SOFT_TIMEOUT_MS).put("receivedCharacters", generated.length)
+            .put("partialText", generated.toString()).put("generationContinues", true))
+        publish(response = null, streamingResponse = null,
+            error = "Response timed out after ${MODEL_SOFT_TIMEOUT_MS / 1_000}s. Diagnostic generation is still running.", phase = RuntimePhase.READY)
+        throw SoftTimeoutDetached()
+    }
+
+    private fun lateResultEvent(turnId: String, messageId: String, request: InferenceRequest, response: InferenceResponse) = JSONObject().apply {
+        put("turnId", turnId); put("messageId", messageId); put("requestId", request.requestId); put("endpointId", response.endpointId)
+        put("text", response.text); put("latencyMs", response.latencyMs); put("firstTokenLatencyMs", response.firstTokenLatencyMs)
+        put("promptTokens", response.promptTokens); put("completionTokens", response.completionTokens); put("totalTokens", response.totalTokens)
+        put("tokensPerSecond", response.completionTokens?.takeIf { response.latencyMs > 0 }?.let { it * 1_000.0 / response.latencyMs })
+        put("finishReason", response.finishReason); put("toolCallCount", response.toolCalls.size)
+        put("visionAttached", request.image != null); put("maxOutputTokens", request.responseContract?.maxOutputTokens)
+        put("completedAtMs", System.currentTimeMillis())
     }
 
     private suspend fun enqueueSentence(
@@ -810,7 +882,8 @@ class AtlasMobileRuntime(
     fun stopSpeaking() {
         val turnStatus = activeTurnId?.let(database::loadTurn)?.status
         val turnStillGenerating = activeTurnJob?.isActive == true && turnStatus !in setOf(
-            TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.CANCELLED, TurnStatus.INTERRUPTED,
+            TurnStatus.COMPLETED, TurnStatus.COMPLETED_LATE, TurnStatus.FAILED, TurnStatus.CANCELLED,
+            TurnStatus.HARD_CANCELLED, TurnStatus.INTERRUPTED,
         )
         if (turnStillGenerating) cancelActiveTurn("user stopped speech") else speech.stopSpeaking()
         mutableState.value.session?.let { database.appendEvent(it.id, "audio.speech_interrupted", JSONObject().put("generationCancelled", turnStillGenerating)) }
@@ -820,6 +893,7 @@ class AtlasMobileRuntime(
     fun close() {
         heartbeatJob?.cancel()
         compactionJob?.cancel()
+        lateTurnJob?.cancel()
         onLiveContextChanged(false)
         stopDevices()
     }
@@ -1060,4 +1134,7 @@ object AgentLoopPolicy {
 
 private enum class ClarificationControlOutcome { WAITING, DEFERRED, CONTINUE }
 
+private class SoftTimeoutDetached : Exception()
+
 private const val STREAM_CHECKPOINT_INTERVAL_MS = 250L
+private const val MODEL_SOFT_TIMEOUT_MS = 60_000L

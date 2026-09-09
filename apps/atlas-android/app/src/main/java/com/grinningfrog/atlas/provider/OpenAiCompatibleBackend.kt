@@ -20,6 +20,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.ConnectException
+import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
@@ -41,6 +42,13 @@ class OpenAiCompatibleBackend(
         val networkResponse = try {
             client.newCall(httpRequest).await()
         } catch (error: IOException) {
+            if (error is SocketTimeoutException) {
+                throw InferenceUnavailableException(
+                    "${endpoint.name} reached its ${hardTimeoutMs(endpoint) / 1_000}s hard deadline.",
+                    error,
+                    outcomeAmbiguous = true,
+                )
+            }
             val definitelyNotAccepted = error is ConnectException || error is UnknownHostException
             throw InferenceUnavailableException("${endpoint.name} request failed: ${error.message ?: error.javaClass.simpleName}", error, outcomeAmbiguous = !definitelyNotAccepted)
         }
@@ -48,7 +56,7 @@ class OpenAiCompatibleBackend(
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 val safeToTryAnotherRoute = response.code in setOf(401, 403, 404, 429)
-                throw InferenceUnavailableException("${endpoint.name} returned HTTP ${response.code}: ${body.take(300)}", outcomeAmbiguous = !safeToTryAnotherRoute)
+                throw InferenceUnavailableException(providerHttpError(endpoint, response.code, body), outcomeAmbiguous = !safeToTryAnotherRoute)
             }
             val parsed = parseAssistant(body)
             if (parsed.text.isBlank() && parsed.toolCalls.isEmpty()) throw InferenceUnavailableException("${endpoint.name} returned neither assistant text nor tool calls")
@@ -64,6 +72,9 @@ class OpenAiCompatibleBackend(
                 toolCalls = parsed.toolCalls,
                 finishReason = parsed.finishReason,
                 providerContinuationId = parsed.responseId,
+                promptTokens = parsed.promptTokens,
+                completionTokens = parsed.completionTokens,
+                totalTokens = parsed.totalTokens,
             )
         }
     }
@@ -75,6 +86,13 @@ class OpenAiCompatibleBackend(
             val response = try {
                 client(endpoint).newCall(httpRequest(endpoint, apiKey, request, streaming = true)).await()
             } catch (error: IOException) {
+                if (error is SocketTimeoutException) {
+                    throw InferenceUnavailableException(
+                        "${endpoint.name} reached its ${hardTimeoutMs(endpoint) / 1_000}s hard deadline.",
+                        error,
+                        outcomeAmbiguous = true,
+                    )
+                }
                 val definitelyNotAccepted = error is ConnectException || error is UnknownHostException
                 throw InferenceUnavailableException("${endpoint.name} request failed: ${error.message ?: error.javaClass.simpleName}", error, outcomeAmbiguous = !definitelyNotAccepted)
             }
@@ -82,7 +100,7 @@ class OpenAiCompatibleBackend(
                 if (!networkResponse.isSuccessful) {
                     val body = networkResponse.body?.string().orEmpty()
                     val safeToTryAnotherRoute = networkResponse.code in setOf(401, 403, 404, 429)
-                    throw InferenceUnavailableException("${endpoint.name} returned HTTP ${networkResponse.code}: ${body.take(300)}", outcomeAmbiguous = !safeToTryAnotherRoute)
+                    throw InferenceUnavailableException(providerHttpError(endpoint, networkResponse.code, body), outcomeAmbiguous = !safeToTryAnotherRoute)
                 }
                 val body = networkResponse.body ?: throw InferenceUnavailableException("${endpoint.name} returned an empty stream", outcomeAmbiguous = true)
                 val tools = linkedMapOf<Int, MutableToolCall>()
@@ -91,6 +109,9 @@ class OpenAiCompatibleBackend(
                 var responseModel: String? = null
                 var finishReason: String? = null
                 var firstTokenMs: Long? = null
+                var promptTokens: Int? = null
+                var completionTokens: Int? = null
+                var totalTokens: Int? = null
                 try {
                     while (true) {
                         val line = body.source().readUtf8Line() ?: break
@@ -102,12 +123,19 @@ class OpenAiCompatibleBackend(
                         root.optJSONObject("error")?.let { error -> throw IllegalStateException(error.optString("message", "Provider stream error")) }
                         responseId = root.optString("id").takeIf(String::isNotBlank) ?: responseId
                         responseModel = root.optString("model").takeIf(String::isNotBlank) ?: responseModel
+                        root.optJSONObject("usage")?.let { usage ->
+                            promptTokens = usage.optInt("prompt_tokens").takeIf { usage.has("prompt_tokens") }
+                            completionTokens = usage.optInt("completion_tokens").takeIf { usage.has("completion_tokens") }
+                            totalTokens = usage.optInt("total_tokens").takeIf { usage.has("total_tokens") }
+                        }
                         val choices = root.optJSONArray("choices") ?: continue
                         if (choices.length() == 0) continue
                         val choice = choices.getJSONObject(0)
                         finishReason = choice.optString("finish_reason").takeIf(String::isNotBlank) ?: finishReason
                         val delta = choice.optJSONObject("delta") ?: continue
-                        delta.optString("content").takeIf(String::isNotEmpty)?.let { chunk ->
+                        delta.opt("content").takeIf { it != null && it !== JSONObject.NULL }?.let { value ->
+                            val chunk = value as? String ?: return@let
+                            if (chunk.isEmpty()) return@let
                             if (firstTokenMs == null) firstTokenMs = elapsedMs(started)
                             text.append(chunk)
                             emit(InferenceStreamEvent.TextDelta(chunk))
@@ -120,7 +148,8 @@ class OpenAiCompatibleBackend(
                                 val id = part.optString("id").takeIf(String::isNotBlank)
                                 val function = part.optJSONObject("function")
                                 val name = function?.optString("name")?.takeIf(String::isNotBlank)
-                                val arguments = function?.optString("arguments").orEmpty()
+                                val arguments = function?.opt("arguments")
+                                    .takeIf { it != null && it !== JSONObject.NULL } as? String ?: ""
                                 if (id != null) aggregate.id = id
                                 if (name != null) aggregate.name = name
                                 aggregate.arguments.append(arguments)
@@ -154,19 +183,37 @@ class OpenAiCompatibleBackend(
                     finishReason = finishReason,
                     providerContinuationId = responseId,
                     firstTokenLatencyMs = firstTokenMs,
+                    promptTokens = promptTokens,
+                    completionTokens = completionTokens,
+                    totalTokens = totalTokens,
                 )))
             }
         }.flowOn(Dispatchers.IO)
+    }
+
+    private fun providerHttpError(endpoint: ProviderEndpoint, code: Int, body: String): String {
+        if (body.contains("image input is not supported", ignoreCase = true) &&
+            body.contains("mmproj", ignoreCase = true)
+        ) {
+            return "${endpoint.name} rejected image input. Atlas sent the image correctly, but llama.cpp was started without a compatible multimodal projector. Restart llama-server with the matching --mmproj GGUF file."
+        }
+        return "${endpoint.name} returned HTTP $code: ${body.take(300)}"
     }
 
     private fun httpRequest(endpoint: ProviderEndpoint, apiKey: String?, request: InferenceRequest, streaming: Boolean): Request {
         val payload = JSONObject().apply {
             put("model", endpoint.model)
             put("stream", streaming)
+            if (streaming) put("stream_options", JSONObject().put("include_usage", true))
             put("temperature", 0.2)
             put("messages", requestMessages(request))
             request.responseContract?.let { put("max_tokens", it.maxOutputTokens) }
             if (request.tools.isNotEmpty()) put("tools", JSONArray(request.tools.map(::toolJson)))
+            if (isOnDevice(endpoint)) {
+                // llama.cpp exposes Qwen's thinking tokens separately from assistant content.
+                // Disable them so small local budgets are spent on the actual response.
+                put("chat_template_kwargs", JSONObject().put("enable_thinking", endpoint.reasoningEnabled))
+            }
         }
         return Request.Builder()
             .url(chatCompletionsUrl(endpoint.baseUrl))
@@ -188,12 +235,18 @@ class OpenAiCompatibleBackend(
             .build()
     }
 
-    private fun client(endpoint: ProviderEndpoint) = baseClient.newBuilder()
-        .connectTimeout(endpoint.timeoutMs, TimeUnit.MILLISECONDS)
-        .readTimeout(endpoint.timeoutMs, TimeUnit.MILLISECONDS)
-        .writeTimeout(endpoint.timeoutMs, TimeUnit.MILLISECONDS)
-        .callTimeout(endpoint.timeoutMs, TimeUnit.MILLISECONDS)
+    private fun client(endpoint: ProviderEndpoint): OkHttpClient {
+        val hardTimeoutMs = hardTimeoutMs(endpoint)
+        return baseClient.newBuilder()
+        .connectTimeout(minOf(endpoint.timeoutMs, 15_000), TimeUnit.MILLISECONDS)
+        .readTimeout(hardTimeoutMs, TimeUnit.MILLISECONDS)
+        .writeTimeout(minOf(endpoint.timeoutMs, 30_000), TimeUnit.MILLISECONDS)
+        .callTimeout(hardTimeoutMs, TimeUnit.MILLISECONDS)
         .build()
+    }
+
+    private fun hardTimeoutMs(endpoint: ProviderEndpoint) =
+        if (isOnDevice(endpoint)) LOCAL_DIAGNOSTIC_HARD_TIMEOUT_MS else endpoint.timeoutMs
 
     private data class MutableToolCall(var id: String? = null, var name: String? = null, val arguments: StringBuilder = StringBuilder())
 
@@ -262,6 +315,9 @@ class OpenAiCompatibleBackend(
         val toolCalls: List<ToolCallProposal>,
         val finishReason: String?,
         val responseId: String?,
+        val promptTokens: Int?,
+        val completionTokens: Int?,
+        val totalTokens: Int?,
     )
 
     private fun parseAssistant(raw: String): ParsedAssistant = runCatching {
@@ -286,7 +342,13 @@ class OpenAiCompatibleBackend(
                 add(ToolCallProposal(item.getString("id"), function.getString("name"), function.optString("arguments", "{}")))
             }
         } }.orEmpty()
-        ParsedAssistant(text, toolCalls, choice.optString("finish_reason").ifBlank { null }, root.optString("id").ifBlank { null })
+        val usage = root.optJSONObject("usage")
+        ParsedAssistant(
+            text, toolCalls, choice.optString("finish_reason").ifBlank { null }, root.optString("id").ifBlank { null },
+            usage?.optInt("prompt_tokens")?.takeIf { usage.has("prompt_tokens") },
+            usage?.optInt("completion_tokens")?.takeIf { usage.has("completion_tokens") },
+            usage?.optInt("total_tokens")?.takeIf { usage.has("total_tokens") },
+        )
     }.getOrElse { throw InferenceUnavailableException("Provider returned malformed assistant output", it, outcomeAmbiguous = true) }
 
     private fun chatCompletionsUrl(baseUrl: String): String {
@@ -302,7 +364,12 @@ class OpenAiCompatibleBackend(
 
     private fun isUuid(value: String) = UUID_PATTERN.matches(value)
 
+    private fun isOnDevice(endpoint: ProviderEndpoint) =
+        runCatching { EndpointSecurity.assess(endpoint.baseUrl).location == EndpointLocation.DEVICE }.getOrDefault(false)
+
     private companion object {
         val UUID_PATTERN = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
     }
 }
+
+private const val LOCAL_DIAGNOSTIC_HARD_TIMEOUT_MS = 300_000L

@@ -12,7 +12,12 @@ class ProviderConnectionTester(private val backend: InferenceBackend = OpenAiCom
     suspend fun check(endpoint: ProviderEndpoint, apiKey: String?): ProviderCheck {
         val assessment = runCatching { EndpointSecurity.assess(endpoint.baseUrl) }
             .getOrElse { return ProviderCheck(false, it.message ?: "Invalid endpoint") }
-        val safeEndpoint = endpoint.copy(baseUrl = assessment.normalizedBaseUrl, timeoutMs = 15_000, supportsStreaming = false)
+        val testTimeoutMs = when (assessment.location) {
+            EndpointLocation.DEVICE -> endpoint.timeoutMs.coerceAtLeast(60_000)
+            EndpointLocation.PRIVATE_NETWORK -> endpoint.timeoutMs.coerceAtLeast(30_000)
+            EndpointLocation.REMOTE -> endpoint.timeoutMs.coerceAtMost(30_000)
+        }
+        val safeEndpoint = endpoint.copy(baseUrl = assessment.normalizedBaseUrl, timeoutMs = testTimeoutMs, supportsStreaming = false)
         return runCatching {
             val response = backend.infer(
                 safeEndpoint,
@@ -25,7 +30,8 @@ class ProviderConnectionTester(private val backend: InferenceBackend = OpenAiCom
                     responseContract = ResponseContract(ResponseMode.IMMEDIATE, 1, 3, 1, 8),
                 ),
             )
-            ProviderCheck(true, "Text connected in ${response.latencyMs} ms · ${assessment.notice}. Declared vision, tools, and streaming are not probed.", response.latencyMs)
+            val tuning = if (assessment.location == EndpointLocation.DEVICE) " · on-device thinking disabled" else ""
+            ProviderCheck(true, "Text connected in ${response.latencyMs} ms$tuning · ${assessment.notice}. Declared vision, tools, and streaming are not probed.", response.latencyMs)
         }.getOrElse { error ->
             ProviderCheck(false, error.message?.take(240) ?: "Connection failed")
         }

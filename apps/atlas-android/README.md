@@ -20,13 +20,13 @@ Android database version 8 creates a personal workspace automatically and durabl
 ## First run
 
 1. Read the three-screen first-run explanation, then grant camera, microphone, and notification access. Atlas acquires camera, microphone, speech, and motion resources on session start/resume and releases them on pause/end.
-2. Open **Inference**, add an endpoint name, base URL, model, and optional API key, then pass the bounded connection test before saving.
+2. Open **System → Inference**, add an endpoint name, base URL, model, and optional API key, then pass the bounded connection test before saving.
 3. Mark the endpoint as image-capable only if its chat-completions API accepts an `image_url` content part.
 4. Mark it tool-capable only if it accepts OpenAI-compatible function tools and returns assistant `tool_calls`. Enable **Stream** only for endpoints that return chat-completion SSE deltas.
-5. Open **Session**, enter a durable goal, and start. New sessions begin with **Live Context** off.
-6. Tap **Observe**, type a question, or tap **Talk**. Begin speaking after the haptic and soft chirp when the card says **Speak now**.
+5. Open **Atlas**, enter a durable goal, and start. New sessions begin with **Live Context** off.
+6. Tap the camera control, open text input, or tap the central voice control. Begin speaking after the haptic and soft chirp when the interface says **Speak now**.
 7. Enable **Live Context** only when Atlas should maintain rolling physical context in the background.
-8. Inspect **Events** to see the ordered session trace.
+8. Inspect **System → Data & logs** to see the ordered session trace.
 
 Examples of base URLs:
 
@@ -37,6 +37,11 @@ Examples of base URLs:
 | Cloud provider | `https://provider.example.com/v1` | The API key is encrypted with Android Keystore. |
 
 Atlas appends `/v1/chat/completions` unless the configured URL already ends in `/v1` or `/chat/completions`.
+
+For endpoints running on the phone (`localhost`, `127.0.0.1`, or `::1`), Atlas automatically sends
+`chat_template_kwargs.enable_thinking=false`. This keeps Qwen/llama.cpp reasoning tokens from consuming
+the response budget before the model emits assistant text. On-device requests use the endpoint's normal
+60-second timeout, including during connection tests.
 
 ## Security and privacy posture
 
@@ -120,7 +125,9 @@ The app uses OpenAI-compatible chat completions and function tools:
 
 Routes are expressed as capabilities, not model names. The initial UI adds each configured endpoint to `fast`, `reasoning`, and `fallback`, and adds image-capable endpoints to `vision`. Tool-bearing steps only use endpoints that explicitly advertise support. Core retries another route only when the prior attempt is known not to have been accepted; ambiguous outcomes stop to avoid duplicate cost.
 
-Existing endpoint cards expose **Vision**, **Tools**, and **Stream** capability toggles. Enable only the behavior that endpoint actually implements; Atlas will continue to use a text-only/non-streaming endpoint for conversation but will never send it unsupported modalities.
+Existing endpoint cards expose **Vision**, **Tools**, **Stream**, and **Reasoning** toggles. Enable only the behavior that endpoint actually implements; Atlas will continue to use a text-only/non-streaming endpoint for conversation but will never send it unsupported modalities. Reasoning is off by default so constrained local models spend their output budget on visible responses.
+
+Interactive turns use a 60-second soft deadline. On-device diagnostic generation may continue silently to a five-minute hard ceiling, preserving partial and late output as internal evidence rather than accepted conversation context. A new user turn or an explicit cancel stops the late generation. Session exports include the diagnostic lifecycle and output for alpha refinement.
 
 See [`../../docs/agent-runtime.md`](../../docs/agent-runtime.md) for turn persistence, context assembly, memory admission, tools, recovery, and loop budgets.
 

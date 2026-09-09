@@ -17,7 +17,8 @@ enum class MessageRole { USER, ASSISTANT, TOOL }
 enum class MessageKind { DIALOGUE, TOOL_RESULT, INTERNAL }
 enum class TurnStatus {
     CREATED, ASSEMBLING_CONTEXT, WAITING_FOR_MODEL, WAITING_FOR_CONFIRMATION,
-    WAITING_FOR_USER_CLARIFICATION, EXECUTING_TOOL, COMPLETED, FAILED, CANCELLED, INTERRUPTED,
+    WAITING_FOR_USER_CLARIFICATION, EXECUTING_TOOL, SOFT_TIMED_OUT, COMPLETED_LATE,
+    HARD_CANCELLED, COMPLETED, FAILED, CANCELLED, INTERRUPTED,
 }
 enum class ToolCallStatus { PROPOSED, WAITING_FOR_CONFIRMATION, APPROVED, RUNNING, COMPLETED, REJECTED, FAILED, UNKNOWN }
 enum class ToolRisk { READ_ONLY, SESSION_WRITE, PERSONAL_DATA, EXTERNAL_EFFECT }
@@ -264,6 +265,7 @@ data class ProviderEndpoint(
     val supportsTools: Boolean = false,
     val supportsStreaming: Boolean = false,
     val timeoutMs: Long = 60_000,
+    val reasoningEnabled: Boolean = false,
 )
 
 data class RouteTable(
@@ -314,6 +316,9 @@ data class InferenceResponse(
     val finishReason: String? = null,
     val providerContinuationId: String? = null,
     val firstTokenLatencyMs: Long? = null,
+    val promptTokens: Int? = null,
+    val completionTokens: Int? = null,
+    val totalTokens: Int? = null,
 )
 
 sealed interface InferenceStreamEvent {

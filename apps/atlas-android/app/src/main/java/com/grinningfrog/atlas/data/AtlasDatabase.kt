@@ -711,7 +711,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     ).use { cursor -> if (!cursor.moveToFirst()) null else cursor.toTurn() }
 
     fun loadActiveTurn(sessionId: String): AgentTurn? = readableDatabase.rawQuery(
-        "SELECT turn_id,session_id,status,trigger,created_at,updated_at,step_count,error FROM turns WHERE session_id = ? AND status NOT IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED') ORDER BY created_at DESC LIMIT 1",
+        "SELECT turn_id,session_id,status,trigger,created_at,updated_at,step_count,error FROM turns WHERE session_id = ? AND status NOT IN ('COMPLETED','COMPLETED_LATE','FAILED','CANCELLED','HARD_CANCELLED','INTERRUPTED') ORDER BY created_at DESC LIMIT 1",
         arrayOf(sessionId),
     ).use { cursor -> if (!cursor.moveToFirst()) null else cursor.toTurn() }
 
@@ -741,6 +741,11 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             put("content", content)
             put("tool_calls_json", toolCallsJson)
         }, "message_id = ?", arrayOf(messageId))
+    }
+
+    @Synchronized
+    fun promoteAssistantMessage(messageId: String) {
+        writableDatabase.update("messages", ContentValues().apply { put("kind", MessageKind.DIALOGUE.name) }, "message_id = ?", arrayOf(messageId))
     }
 
     fun loadMessages(sessionId: String, afterSequence: Long = 0, limit: Int = 80): List<AtlasMessage> = readableDatabase.rawQuery(
@@ -990,7 +995,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     fun recoverInterruptedRuntime(sessionId: String, nowMs: Long = System.currentTimeMillis()) {
         writableDatabase.transaction {
             val turnIds = mutableListOf<String>()
-            rawQuery("SELECT turn_id FROM turns WHERE session_id = ? AND status IN ('CREATED','ASSEMBLING_CONTEXT','WAITING_FOR_MODEL','EXECUTING_TOOL')", arrayOf(sessionId)).use { cursor ->
+            rawQuery("SELECT turn_id FROM turns WHERE session_id = ? AND status IN ('CREATED','ASSEMBLING_CONTEXT','WAITING_FOR_MODEL','EXECUTING_TOOL','SOFT_TIMED_OUT')", arrayOf(sessionId)).use { cursor ->
                 while (cursor.moveToNext()) turnIds += cursor.getString(0)
             }
             turnIds.forEach { turnId ->

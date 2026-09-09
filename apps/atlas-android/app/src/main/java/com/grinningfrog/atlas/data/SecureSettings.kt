@@ -38,6 +38,11 @@ class SecureSettings(context: Context) {
         prefs.edit().putString("providers", JSONArray(providers.map(::endpointJson)).toString()).apply()
     }
 
+    fun updateProviderReasoning(id: String, enabled: Boolean) {
+        val providers = loadProviders().map { if (it.id == id) it.copy(reasoningEnabled = enabled) else it }
+        prefs.edit().putString("providers", JSONArray(providers.map(::endpointJson)).toString()).apply()
+    }
+
     var onboardingComplete: Boolean
         get() = prefs.getBoolean("onboarding.complete.v1", false)
         set(value) { prefs.edit().putBoolean("onboarding.complete.v1", value).apply() }
@@ -59,7 +64,8 @@ class SecureSettings(context: Context) {
                 add(ProviderEndpoint(
                     id = json.getString("id"), name = json.getString("name"), baseUrl = json.getString("baseUrl"), model = json.getString("model"),
                     apiKeyAlias = json.optString("apiKeyAlias").ifBlank { null }, supportsVision = json.optBoolean("supportsVision"),
-                    supportsTools = json.optBoolean("supportsTools"), supportsStreaming = json.optBoolean("supportsStreaming"), timeoutMs = json.optLong("timeoutMs", 60_000),
+                    supportsTools = json.optBoolean("supportsTools"), supportsStreaming = json.optBoolean("supportsStreaming"),
+                    timeoutMs = json.optLong("timeoutMs", 60_000), reasoningEnabled = json.optBoolean("reasoningEnabled", false),
                 ))
             }
         }
@@ -84,6 +90,7 @@ class SecureSettings(context: Context) {
         put("id", endpoint.id); put("name", endpoint.name); put("baseUrl", endpoint.baseUrl); put("model", endpoint.model)
         put("apiKeyAlias", endpoint.apiKeyAlias); put("supportsVision", endpoint.supportsVision); put("supportsTools", endpoint.supportsTools)
         put("supportsStreaming", endpoint.supportsStreaming); put("timeoutMs", endpoint.timeoutMs)
+        put("reasoningEnabled", endpoint.reasoningEnabled)
     }
 }
 
