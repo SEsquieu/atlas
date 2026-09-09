@@ -1,5 +1,7 @@
 # Atlas Decisions
 
+This is a chronological decision log. Earlier entries describe the system as it existed when the decision was made; later entries supersede them. In particular, all May 2026 OpenClaw-first and bridge-first decisions are historical prototype choices superseded by the September 2026 native Android runtime decision below.
+
 ## 2026-05-05 — Name
 
 The project name is **Atlas**.
@@ -8,14 +10,18 @@ We intentionally dropped “Project” from the name. Atlas is the framework/pro
 
 ## 2026-05-05 — Architecture Shape
 
+**Status: partially superseded.** Provider independence and Core ownership remain; the OpenClaw-first and downstream-device implementation choices do not.
+
 Atlas is standalone and provider-agnostic.
 
-- OpenClaw is the first upstream provider adapter.
+- Historical choice at the time: OpenClaw would be the first upstream provider adapter.
 - Android phone is the first downstream device adapter.
 - Atlas Core owns the physical session loop, context freshness, tool execution, and audit trail.
 - Provider/device adapters should remain thin and swappable.
 
 ## 2026-05-05 — Phase 0 Implementation Locks
+
+**Status: superseded implementation plan.** These constraints document the TypeScript/bridge prototype, not the native Android release path.
 
 Phase 0 decisions are locked as the base for implementation:
 
@@ -41,6 +47,8 @@ Atlas should preserve the architectural shape for richer situated memory without
 See `docs/context-memory-and-sidecars.md` for the detailed shape and MVP/deferred split.
 
 ## 2026-05-06 — Command-backed live harness seam
+
+**Status: retained only as a legacy test seam.** It is not the current application architecture.
 
 For the first live MVP harness, Atlas will support command-backed adapters selected from config:
 

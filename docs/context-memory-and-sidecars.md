@@ -1,6 +1,6 @@
 # Context, Memory, Spillover, and Sidecars
 
-Status: architectural shape captured 2026-05-06. Some pieces are MVP-relevant now; others are intentionally deferred but should shape interfaces so Atlas does not paint itself into a corner.
+Status: architectural shape captured 2026-05-06 and reviewed against the native Android runtime in September 2026. Some pieces exist now; others remain intentionally deferred.
 
 ## Core Frame
 
@@ -27,7 +27,7 @@ These concepts should influence current type/event boundaries even if the first 
 
 ### Stub/defer after solid MVP
 
-These should be documented and kept compatible, but not required for the first live Android/OpenClaw loop:
+These should be documented and kept compatible, but are not required for the current native Android loop:
 
 - full weighted-belief memory store
 - sophisticated truth-state transitions and decay policies
@@ -313,4 +313,3 @@ No sidecar runs without:
 4. permission to be ignored
 
 MVP implication: leave room in the event model for async enrichment results, but do not let sidecars become required for the first response path.
-

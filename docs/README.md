@@ -33,4 +33,10 @@ Atlas is easiest to understand by following ownership from the persistent runtim
 - [“The Model Is Not the Agent” essay outline](./the-model-is-not-the-agent-outline.md) — future technical essay structure.
 - [Roadmap](../ROADMAP.md) — explicitly deferred work, including packaged embeddings and evolving personality.
 
+## Historical prototypes
+
+- [OpenClaw prototype build plan](./history/openclaw-prototype-build-plan.md) — the superseded May 2026 plan preserved as architectural history.
+- [OpenClaw latency notes](./latency-notes.md) — measurements from the bridge era that motivated native ownership and warm-path work.
+- [Legacy Android/OpenClaw example](../examples/android-openclaw-basic/README.md) — retained adapter harness and contract tests, not current app setup.
+
 Documents describe the code that exists. A future direction is labeled as such; absence of a document is preferable to pretending that a subsystem has already shipped.

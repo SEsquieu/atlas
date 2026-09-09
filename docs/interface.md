@@ -2,6 +2,8 @@
 
 Atlas is a physical-session runtime with multiple front doors, not just a CLI or just a daemon.
 
+Current product interface: the native Android app. The TypeScript CLI described below is a development, contract-testing, and historical prototype surface; it is not the runtime installed on the phone.
+
 ## Layers
 
 ```text
@@ -50,7 +52,9 @@ node packages/atlas-cli/dist/index.js session inspect <sessionId>
 - Android bridge total/capture/stage/analysis timings
 - provider round trip
 
-The Android/OpenClaw example also provides a one-command live demo:
+### Legacy OpenClaw harness
+
+The preserved Android/OpenClaw prototype example provides a one-command live demo:
 
 ```bash
 npm run demo:live-android -- "What am I looking at?"
@@ -61,7 +65,7 @@ The CLI can now resolve command-backed edge adapters from config:
 - `@atlas/device-android/bridge-command`
 - `@atlas/provider-openclaw/command`
 
-These let live wrappers connect Atlas to OpenClaw/Android without importing OpenClaw-specific tool APIs into Atlas Core. See `docs/adapter-contracts.md` for the command environment contracts.
+These let the legacy harness connect Atlas to OpenClaw/Android without importing OpenClaw-specific tool APIs into Atlas Core. See `docs/adapter-contracts.md` for the command environment contracts. They are not prerequisites for building or running the native app.
 
 By default, the CLI reads sessions from:
 

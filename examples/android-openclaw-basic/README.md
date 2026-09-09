@@ -1,6 +1,8 @@
 # Android + OpenClaw Basic Example
 
-First target scenario for Atlas:
+> **Legacy prototype harness.** This example preserves Atlas's first live physical-loop integration and remains useful for adapter contract tests. It is not the current Android application, inference path, or MVP setup. Use [`../../apps/atlas-android`](../../apps/atlas-android) and the current [`../../BUILD_DOC.md`](../../BUILD_DOC.md) for the native runtime.
+
+Original target scenario for Atlas:
 
 ```text
 Android phone camera
@@ -25,7 +27,7 @@ Expected behavior:
 
 ## Live command harness
 
-This example now includes command wrappers for the first local live path:
+This example includes command wrappers for the original local live path:
 
 - `bridge-wrapper.mjs` calls `openclaw nodes camera snap`, stages the image into `.atlas-cache/images`, optionally asks OpenClaw/Codex or Ollama for a visual summary, and prints Android bridge result JSON.
 - `openclaw-image-worker.mjs` keeps OpenClaw image understanding warm in one Node process, avoiding the ~20–30s cold provider/model-runtime load on every capture.
