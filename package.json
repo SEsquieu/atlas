@@ -33,7 +33,7 @@
     "bench:image-openclaw:concurrent": "node examples/android-openclaw-basic/benchmark-image-concurrent.mjs"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
+    "@types/node": "^26.4.1",
     "typescript": "^5.8.0"
   },
   "engines": {
