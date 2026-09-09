@@ -23,8 +23,8 @@ Repository licensing and governance can be prepared before visibility changes. D
 
 ## Blocking before repository visibility changes
 
-- [ ] Confirm the full-history CI result over every reachable GitHub branch and tag; separately consider deleted/unreachable refs
-- [ ] Rotate any credential identified by automated scanning or manual artifact review
+- [x] Confirm the full-history CI result over every reachable GitHub branch and tag; separately consider deleted/unreachable refs
+- [x] No credential requiring rotation was identified by the source/history scans; rotate immediately if the remaining manual artifact review finds one
 - [ ] Review GitHub Actions logs and downloadable artifacts for secrets/user data
 - [x] Inventory dependency licenses and generate third-party notices for the source and Android artifact
 - [x] Review tracked assets, icons, sounds, fonts, sample media, and datasets for redistribution rights
