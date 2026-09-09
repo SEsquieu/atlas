@@ -1,6 +1,6 @@
-# Atlas Alongside
+# Atlas
 
-**Android-native physical agent runtime. The agent is Atlas. The open-source project is Atlas Alongside.**
+**Android-native physical agent runtime by Seth Esquieu.**
 
 ## The Model Is Not the Agent
 

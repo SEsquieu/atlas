@@ -28,7 +28,7 @@ Repository licensing and governance can be prepared before visibility changes. D
 - [ ] Review GitHub Actions logs and downloadable artifacts for secrets/user data
 - [x] Inventory dependency licenses and generate third-party notices for the source and Android artifact
 - [x] Review tracked assets, icons, sounds, fonts, sample media, and datasets for redistribution rights
-- [x] Adopt `Atlas Alongside` as the qualified open-source project identity; retain professional clearance as a commercial-launch task
+- [x] Record the decision to publish as `Atlas`, attributed to Seth Esquieu, and accept name collision for the open-source alpha
 - [ ] Enable GitHub private vulnerability reporting
 - [ ] Enable branch protection, required CI, dependency alerts, and secret scanning where available
 - [ ] Configure issue/discussion moderation and a private maintainer contact path

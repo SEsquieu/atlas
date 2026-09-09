@@ -1,6 +1,6 @@
 # Public Release Runbook
 
-Target: **Atlas Alongside v0.1.0-alpha.5**
+Target: **Atlas v0.1.0-alpha.5**
 
 ## 1. Freeze source
 
@@ -19,7 +19,7 @@ Before changing visibility:
 - enable private vulnerability reporting, dependency alerts, Dependabot security updates, and secret scanning where the plan supports them;
 - protect `main`, disallow force pushes/deletion, and require pull requests plus the Atlas Core, Android, Atlas Cloud when changed, and Public readiness checks;
 - retain `SECURITY.md`, issue forms, CODEOWNERS, DCO, and the pull-request template; and
-- set the repository description to “Atlas Alongside — Android-native, provider-independent physical agent runtime.”
+- set the repository description to “Atlas — Android-native, provider-independent physical agent runtime by Seth Esquieu.”
 
 ## 4. Configure signing
 

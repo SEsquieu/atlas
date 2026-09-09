@@ -4,7 +4,9 @@ Decision date: 2026-09-09
 
 ## Public identity
 
-The qualified open-source project name is **Atlas Alongside**. The persistent agent inside the application remains **Atlas**. Package coordinates, the Android application ID, repository name, database identifiers, and event schemas remain unchanged for v0.1 to avoid a cosmetic migration through durable state.
+The agent and open-source project remain **Atlas**, published by Seth Esquieu. The maintainer accepts the project's weak search distinctiveness for this experimental open-source release rather than adopting a compound name that does not fit the project. Package coordinates, the Android application ID, repository name, database identifiers, and event schemas remain unchanged for v0.1.
+
+This decision does not assert exclusive rights to the name and does not prevent a later rename. A distinct name and professional clearance remain gates before substantial commercial investment or paid distribution.
 
 ## Git attribution
 

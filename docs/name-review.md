@@ -1,6 +1,6 @@
 # Public Name Collision Review
 
-Status: preliminary engineering/product search performed 2026-09-09. **Atlas Alongside** is adopted as the qualified open-source project identity; the agent remains **Atlas**. This is not a trademark clearance opinion.
+Status: preliminary engineering/product search performed 2026-09-09. The maintainer has chosen to publish the open-source alpha as **Atlas**, attributed to Seth Esquieu, while accepting its limited search distinctiveness. This is not a trademark clearance opinion.
 
 ## Finding
 
@@ -19,26 +19,27 @@ The collision creates two separate risks:
 1. **Discovery:** searches, package names, app-store listings, and technical discussion cannot reliably identify this project.
 2. **Brand/legal:** existing marks and common-law uses may limit a bare software name even when implementations differ.
 
-## Adopted identity structure
+## Release identity decision
 
 - Agent/persona inside the product: **Atlas**
-- Distinct public open-source project name: **Atlas Alongside**
+- Open-source project name: **Atlas**
 - Descriptive subtitle: **Android-native physical agent runtime**
+- Attribution: **by Seth Esquieu**
 - Existing source identifiers: keep `com.grinningfrog.atlas` and `@atlas/*` during alpha unless a package registry collision requires migration
-- Repository: it may remain `atlas`; the README, release title, website metadata, and app listing should use the qualified public mark
+- Repository: remain `atlas`
 
-“Atlas Alongside” expresses the central product distinction—Atlas lives alongside the user rather than inside a remote chat surface—and produced no direct software-product match in the preliminary exact-phrase search. The repository may publish under this qualified name, but it still requires a professional federal/state/common-law and app-store clearance search before commercial investment or a trademark filing.
+The collision is accepted for this experimental open-source release. The project does not claim exclusive rights to the name, and attribution plus the descriptive subtitle provide practical identification without forcing a compound brand. The project may migrate to a distinct name later; package IDs and durable schemas do not need to change merely because the public display name changes.
 
 ## Alternatives considered
 
 | Candidate | Assessment |
 | --- | --- |
-| Atlas | Strong continuity, unacceptable discovery collision, weak standalone clearance posture |
+| Atlas | Adopted for the open-source alpha; strong continuity, weak discovery and standalone clearance posture |
 | Atlas Core | Already used by adjacent agent/automation projects |
 | Atlas Runtime | Already used by adjacent AI and systems projects |
 | Grinning Frog Atlas | More distinct, but “The Grinning Frog” is already used by an established UK tabletop publisher |
 | Atlas Physical Agent | Clear but primarily descriptive and difficult to own |
-| Atlas Alongside | Best current balance of continuity, thesis, memorability, and preliminary distinctiveness |
+| Atlas Alongside | More distinctive, but rejected because the compound name does not fit the maintainer's intended identity |
 
 ## Before commercial launch
 
