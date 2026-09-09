@@ -5,6 +5,7 @@ on:
     paths:
       - "packages/**"
       - "examples/**"
+      - "evals/**"
       - "scripts/**"
       - "package.json"
       - "package-lock.json"
@@ -14,6 +15,7 @@ on:
     paths:
       - "packages/**"
       - "examples/**"
+      - "evals/**"
       - "scripts/**"
       - "package.json"
       - "package-lock.json"

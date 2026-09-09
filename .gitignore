@@ -28,3 +28,12 @@ secrets.properties
 apps/atlas-android/build/
 apps/atlas-android/app/build/
 captures/
+*.log
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.gguf
+session-logs/
+session-exports/
+atlas-session-export-*

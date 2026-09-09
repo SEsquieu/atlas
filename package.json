@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present && npm run test:examples",
+    "test": "npm run test --workspaces --if-present && npm run test:examples && npm run test:evals",
+    "test:evals": "node evals/validate-fixtures.mjs",
     "check:public": "node scripts/check-public-readiness.mjs",
     "test:examples": "node examples/android-openclaw-basic/wrapper-contracts.test.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
