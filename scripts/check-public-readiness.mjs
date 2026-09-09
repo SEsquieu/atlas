@@ -7,6 +7,7 @@ const required = [
   'GOVERNANCE.md', 'TRADEMARKS.md', 'OPEN_SOURCE_CHECKLIST.md', 'SUPPORT.md', 'CHANGELOG.md',
   'docs/product-structure.md', 'docs/pricing-and-metering.md', 'docs/closed-alpha.md',
   'docs/alpha-data-handling.md',
+  'docs/README.md',
   'docs/runtime-code-map.md', 'docs/runtime-failure-semantics.md',
   'docs/design-principles.md', 'docs/endpoint-characterization.md',
   'docs/build-and-test.md', 'docs/public-release-audit.md',

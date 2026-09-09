@@ -2,6 +2,8 @@
 
 This app runs Atlas Core on an Android phone. It is a reference experience for the complete physical loop, not a thin node controlled by another agent runtime.
 
+For the end-to-end ownership path, see the [runtime code map](../../docs/runtime-code-map.md). For reproducible repository, Android, and cloud checks, see [Build and test](../../docs/build-and-test.md).
+
 ## Requirements
 
 - Android Studio with JDK 17

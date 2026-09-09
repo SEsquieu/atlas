@@ -108,7 +108,7 @@ Managed inference is optional. See [`apps/atlas-cloud/README.md`](./apps/atlas-c
 | `packages/atlas-provider-openclaw` | Legacy OpenClaw proof adapter, not a product dependency |
 | `docs` | Architecture, product boundaries, testing, policies, and release gates |
 
-Start with the [runtime code map](./docs/runtime-code-map.md), then descend into [Android runtime architecture](./docs/android-runtime-architecture.md), [visual freshness](./docs/visual-freshness-policy.md), [routing](./docs/model-routing.md), [context and memory](./docs/context-memory-and-sidecars.md), and [failure semantics](./docs/runtime-failure-semantics.md). Claims in those documents link to the implementation that supports them and call out important gaps.
+Start with the [engineering documentation index](./docs/README.md) or go directly to the [runtime code map](./docs/runtime-code-map.md), then descend into the boundary that matters. Claims in those documents link to the implementation that supports them and call out important gaps.
 
 ## v0.1 boundary
 
