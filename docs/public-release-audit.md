@@ -1,9 +1,9 @@
 # Public-release audit
 
 Audit date: 2026-09-09  
-Initial audited branch head: `codex/closed-alpha-hardening` at `eaecf351eedb61dfcf1bd0037a368a2b2647e2d1`. Release-preparation evidence and automation were subsequently added on the same branch.
+Initial audited branch head: `codex/closed-alpha-hardening` at `eaecf351eedb61dfcf1bd0037a368a2b2647e2d1`. Release-preparation evidence and automation were subsequently added and merged to `main` before the repository became public.
 
-This report records checks performed during the release-preparation pass. It avoids reproducing possible secrets or personal values.
+**Current state:** the source repository is public as a pre-v0.1 open-source alpha. This document records the audit evidence that supported that decision and the remaining hardening work. It does not certify Atlas for production use or broad APK distribution.
 
 ## Scope and method
 
@@ -24,19 +24,17 @@ No high-confidence credential pattern was found in the current source or scanned
 
 The automated remote CI pass subsequently scanned 121 reachable commits, 9 refs, 1,858 path-bearing objects, and 880 text blobs without a finding. The check now runs on every push and pull request with full checkout history. It intentionally redacts matching values.
 
-This is strong evidence, not a guarantee. GitHub secret scanning or a specialist history scanner should be run independently before visibility changes, especially over deleted refs, forks, Actions logs, caches, and artifacts not represented by reachable Git objects.
+This is strong evidence, not a guarantee. A specialist history scanner remains worthwhile for deleted/unreachable refs, forks, Actions caches, and artifacts not represented by reachable Git objects.
 
 ### Personal metadata
 
-Commit author/committer metadata contains a personal email address across history. This is not an application secret, but it becomes public repository metadata. The maintainer must decide whether that exposure is intentional; otherwise rewrite history before publishing and configure a GitHub no-reply address for future commits.
-
-Release decision: preserve the existing authorship and chronology rather than rewrite shared history. Configure a no-reply identity for future commits if future exposure is unwanted.
+Commit author/committer metadata contains a personal email address across history. This is not an application secret. The release decision was to preserve existing authorship and chronology rather than rewrite shared history. Configure a GitHub no-reply identity for future commits if future exposure is unwanted.
 
 ### Build and binary artifacts
 
-The repository has one existing Android prerelease with unsigned debug APK/ZIP assets and checksums. These assets are not tracked source, but they and their workflow logs must be reviewed for embedded configuration, debug-only behavior, signing expectations, and accidental user data. Do not present that prerelease as the first public production artifact.
+The release-preparation audit found an obsolete Android prerelease with unsigned debug APK/ZIP assets and checksums. Its associated job log was retrieved and scanned without a high-confidence credential, private-key, JWT, or signing-material finding. It was not suitable to present as the canonical public Android release.
 
-The associated prerelease job log was retrieved and scanned without a high-confidence credential, private-key, JWT, or signing-material finding. Release metadata confirms that its APK is an explicitly unsigned debug artifact. Delete the prerelease and its tag before visibility changes because it is obsolete and misleading, not because a secret was found.
+At the time of this canonical-state update, the GitHub Releases API returns no current releases. Broad APK distribution remains separately gated by the closed-alpha release process.
 
 ### Configuration and signing
 
@@ -54,11 +52,11 @@ No photograph, generated marketing image, recorded audio, model weight, sample s
 
 ### CI and repository controls
 
-Source workflows use read-only contents permissions and placeholder service values. Branches are currently unprotected. Private vulnerability reporting, dependency alerts, secret scanning settings, environment protection, and required checks were not verifiable through the available repository connection and remain maintainer actions.
+Source workflows use read-only contents permissions and placeholder service values. All third-party workflow actions are pinned to reviewed full commit SHAs, with human-readable version comments. The public-readiness source check rejects mutable action tags in future changes; Dependabot remains configured to propose action updates.
 
-All third-party workflow actions are pinned to reviewed full commit SHAs, with human-readable version comments. The public-readiness source check rejects mutable action tags in future changes; Dependabot remains configured to propose action updates.
+The current repository rejects direct writes to `main` and reports the required `source-boundary` status check when a direct update is attempted. CodeQL is enabled and completed successfully on `main` on 2026-09-09. The connected GitHub integration cannot read all repository-administration/security settings, so private vulnerability reporting, dependency alerts, secret scanning, and related settings still require maintainer verification in GitHub.
 
-## Changes made by this pass
+## Changes made by the release-preparation pass
 
 - Expanded ignore and source scanning rules for common credentials, logs, databases, session exports, and model files.
 - Added engineer-facing runtime ownership/code mapping and explicit Kotlin-versus-TypeScript boundaries.
@@ -68,16 +66,18 @@ All third-party workflow actions are pinned to reviewed full commit SHAs, with h
 - Added a repeatable reachable-history audit, third-party notices, packaged Android attribution, asset inventory, and preliminary name-collision review.
 - Prepared Android version `0.1.0-alpha.5` and hardened the signed-release workflow with tag/version matching, provenance, checksums, and certificate output.
 
-## Blocking maintainer actions before public visibility
+## Public-source decision
 
-1. Decide whether the personal email in Git history may become public; rewrite before publishing if not.
-2. Run an independent full history/ref secret scan and rotate any credential it identifies.
-3. Review all Actions logs, caches, and downloadable release artifacts; remove unsafe artifacts before publishing.
-4. Generate and review third-party notices for the resolved Android release and optional cloud distribution, including LGPL and CC-licensed transitive material.
-5. Confirm rights to the Atlas name, icon, visual assets, copy, sample data, and any future screenshots/media.
-6. Configure branch protection, required CI, dependency/security alerts, private vulnerability reporting, moderation, and a private maintainer security address.
-7. Decide whether legacy OpenClaw examples ship in the first public source release or move to an explicitly archived location.
-8. Complete a physical-device release matrix, including fresh install/upgrade, permissions, secure/LAN transport, CameraX, STT/TTS, Bluetooth, process death, late response, export/delete/retention, and tool interruption.
-9. Produce a signed release APK from a protected environment and independently verify its checksum, certificate, install, and smoke loop.
+The source repository was published as a pre-v0.1 open-source alpha after the reachable-history/source audit, licensing and asset inventory, public-readiness automation, and explicit project-name decision were completed. Public source availability is intentionally separated from the stronger requirements for distributing a signed closed-alpha APK or operating paid/production services.
 
-Repository visibility must remain private until these decisions are closed with evidence.
+## Remaining maintainer actions
+
+1. Complete a manual review of historical Actions logs, caches, and downloadable artifacts beyond the obsolete prerelease log already reviewed.
+2. Verify private vulnerability reporting, dependency alerts, secret scanning, and related repository security settings are enabled where available.
+3. Configure issue/discussion moderation and a private maintainer security/contact path.
+4. Consider an independent specialist scan for deleted/unreachable refs and other objects outside reachable Git history.
+5. Complete the physical-device release matrix before broad APK distribution, including fresh install/upgrade, permissions, secure/LAN transport, CameraX, STT/TTS, Bluetooth, process death, late response, export/delete/retention, and tool interruption.
+6. Produce a signed release APK from a protected environment and independently verify its checksum, certificate, install, and smoke loop before presenting it as the canonical Android alpha.
+7. Have counsel review licensing, privacy disclosures, managed-inference terms, and trademark posture before paid beta.
+
+See [`../OPEN_SOURCE_CHECKLIST.md`](../OPEN_SOURCE_CHECKLIST.md) for the canonical current checklist and [`closed-alpha.md`](./closed-alpha.md) for the separate APK-distribution gate.

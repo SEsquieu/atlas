@@ -10,7 +10,7 @@ Atlas is therefore not a chatbot shell and not a model-provider picker. It is th
 
 Atlas Core owns session state, device bindings, observations, freshness and confidence, heartbeat behavior, memory admission, speech, tool execution and policy, budgets, events, replay, and lifecycle. Inference remains downstream intelligence that can run on-device, across a LAN, or through a user-configured cloud provider.
 
-> **Status:** pre-v0.1 alpha software. Atlas is appropriate for development and invited physical-device testing, not unattended, emergency, safety-critical, or production operation.
+> **Status:** public pre-v0.1 open-source alpha. Atlas is appropriate for development and invited physical-device testing, not unattended, emergency, safety-critical, or production operation.
 
 ## Why Atlas exists
 
@@ -116,7 +116,7 @@ Start with the [engineering documentation index](./docs/README.md) or go directl
 
 One Android phone, one durable personal workspace, one excellent observe–reason–act–respond loop, user-owned inference, and enough evidence to explain every consequential decision.
 
-The closed alpha is gated by [`docs/closed-alpha.md`](./docs/closed-alpha.md). Public-repository preparation is tracked in [`OPEN_SOURCE_CHECKLIST.md`](./OPEN_SOURCE_CHECKLIST.md). Repository visibility should not change until history-level secret, dependency-license, asset-rights, and project-name reviews are complete.
+The source repository is public. [`OPEN_SOURCE_CHECKLIST.md`](./OPEN_SOURCE_CHECKLIST.md) records the release-readiness work and remaining repository hardening. Distribution of a signed closed-alpha APK is a separate gate tracked by [`docs/closed-alpha.md`](./docs/closed-alpha.md).
 
 ## Contributing and security
 
