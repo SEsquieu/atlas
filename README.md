@@ -1,6 +1,10 @@
 # Atlas
 
-Atlas is an open, device-owned runtime for physical AI agents. It gives replaceable models a durable place to live without allowing an inference provider to own the physical session.
+## The Model Is Not the Agent
+
+Atlas is an Android-native runtime for a persistent physical agent. The phone is Atlas's body; inference models are replaceable reasoning engines. Changing from an on-device model to a LAN server or cloud API changes a capability, not the identity that owns the session.
+
+Atlas is therefore not a chatbot shell and not a model-provider picker. It is the deterministic machinery around inference: the part that decides what evidence is current, what the user actually heard, what a tool is allowed to do, whether an interrupted action has an unknown outcome, and what must survive a process restart.
 
 Atlas Core owns session state, device bindings, observations, freshness and confidence, heartbeat behavior, memory admission, speech, tool execution and policy, budgets, events, replay, and lifecycle. Inference remains downstream intelligence that can run on-device, across a LAN, or through a user-configured cloud provider.
 
@@ -19,6 +23,23 @@ Most agent frameworks begin with a model conversation and attach tools. Atlas be
 - What happened across failure, restart, and provider replacement?
 
 The model can reason about these questions. It does not get to define their answers.
+
+## One turn, end to end
+
+```mermaid
+flowchart TD
+    Input["Voice or text"] --> Core["Atlas Core"]
+    Core --> Context["Context + freshness"]
+    Context --> Route["Capability route"]
+    Route --> Model["Replaceable model"]
+    Model --> Decision{"Answer or tool proposal"}
+    Decision -->|answer| Delivery["Persist + speak"]
+    Decision -->|tool| Policy["Policy + confirmation"]
+    Policy --> Device["Phone capability"]
+    Device --> Core
+```
+
+The native implementation starts at [`AtlasMobileRuntime.startUserTurnLocked`](./apps/atlas-android/app/src/main/java/com/grinningfrog/atlas/runtime/AtlasMobileRuntime.kt), projects Core-owned state through [`ContextAssembler`](./apps/atlas-android/app/src/main/java/com/grinningfrog/atlas/runtime/ContextAssembler.kt), chooses endpoints with [`CapabilityRouter`](./apps/atlas-android/app/src/main/java/com/grinningfrog/atlas/provider/CapabilityRouter.kt), and persists lifecycle evidence through [`AtlasDatabase`](./apps/atlas-android/app/src/main/java/com/grinningfrog/atlas/data/AtlasDatabase.kt). The [runtime code map](./docs/runtime-code-map.md) traces the complete path and distinguishes the shipping Kotlin runtime from the provider-independent TypeScript reference Core.
 
 ## What is real today
 
@@ -86,6 +107,8 @@ Managed inference is optional. See [`apps/atlas-cloud/README.md`](./apps/atlas-c
 | `packages/atlas-device-android` | Legacy TypeScript Android bridge adapter |
 | `packages/atlas-provider-openclaw` | Legacy OpenClaw proof adapter, not a product dependency |
 | `docs` | Architecture, product boundaries, testing, policies, and release gates |
+
+Start with the [runtime code map](./docs/runtime-code-map.md), then descend into [Android runtime architecture](./docs/android-runtime-architecture.md), [visual freshness](./docs/visual-freshness-policy.md), [routing](./docs/model-routing.md), [context and memory](./docs/context-memory-and-sidecars.md), and [failure semantics](./docs/runtime-failure-semantics.md). Claims in those documents link to the implementation that supports them and call out important gaps.
 
 ## v0.1 boundary
 

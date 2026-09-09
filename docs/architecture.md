@@ -1,12 +1,17 @@
 # Atlas Architecture
 
-Atlas is organized around a stable core with swappable upstream provider adapters and downstream device adapters.
+Atlas is organized around a stable Core with replaceable inference and device capabilities. In the native app, the phone-side runtime is Core; a model endpoint is downstream reasoning, not an upstream agent owner.
 
-```text
-Device Adapter → Atlas Core → Provider Adapter → Agent Runtime
+```mermaid
+flowchart TD
+    User["User · voice · text"] --> Core["Atlas Core"]
+    Device["Phone body · camera · audio · sensors"] <--> Core
+    Core <--> Store["Session · memory · events"]
+    Core --> Provider["Inference endpoint"]
+    Provider --> Core
 ```
 
-The core owns the physical session loop. Adapters translate.
+Core owns the physical session loop. Adapters translate protocols and capabilities. See [`runtime-code-map.md`](./runtime-code-map.md) for the shipping Kotlin/runtime-reference TypeScript boundary.
 
 See also [`context-memory-and-sidecars.md`](./context-memory-and-sidecars.md) for the longer-term architecture around context lanes, weighted belief memory, spillover quarantine, provider sidebands, and budgeted inference sidecars.
 

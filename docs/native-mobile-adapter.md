@@ -1,6 +1,6 @@
 # Native Mobile Adapter Contract
 
-Status: draft target contract for a future Atlas-owned mobile adapter. The current OpenClaw Android path remains a proof adapter for validating loop semantics, telemetry, and user feel; it should not dictate Atlas Core behavior.
+Status: historical design document. The Atlas-owned native Kotlin runtime now exists under `apps/atlas-android`; this document preserves the earlier adapter contract that informed it. The OpenClaw Android path remains a legacy proof adapter and does not dictate current mobile behavior.
 
 ## Purpose
 

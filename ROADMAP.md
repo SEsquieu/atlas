@@ -104,6 +104,18 @@ The pilot should reuse the same session, memory, observation, tool, and event co
 - Broad enterprise connector catalog
 - Regulated-industry or safety certification claims
 
+### Packaged semantic retrieval
+
+Do not add a bundled embedding model until lexical/scoped retrieval produces measured misses in real sessions. If that threshold is reached, embeddings should be a replaceable local index over Atlas-owned memory—not the memory source of truth. Core must continue to own provenance, scope, supersession, confidence, expiry, and authority. Adoption requires device-size/latency/battery measurements, deterministic fallback when the index is absent, and rebuildability from canonical records.
+
+### Evolving identity and personality
+
+Atlas should eventually support a durable, user-controlled identity layer that survives provider changes. Preserve room for explicit user preferences, learned expression, version history, approval, and rollback. Personality must compile into endpoint context without gaining authority over permissions, safety policy, physical evidence, tool outcomes, or memory truth. Do not infer or silently mutate a "soul" file in v0.1.
+
+### Managed inference
+
+Managed inference remains an optional capability provider. Core contracts must not depend on an unshipped service, provider-specific continuation state, billing identity, or a proprietary model catalog.
+
 ## Working order
 
 1. Make the signed Android alpha safe and operable.
