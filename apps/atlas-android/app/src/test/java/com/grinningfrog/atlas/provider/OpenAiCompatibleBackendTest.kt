@@ -47,6 +47,27 @@ class OpenAiCompatibleBackendTest {
     }
 
     @Test
+    fun `on-device endpoint sends compact prompt and reduced output budget`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody(SUCCESS_BODY).setHeader("Content-Type", "application/json"))
+        server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
+        try {
+            val endpoint = ProviderEndpoint("local", "Local", server.url("/").toString(), "atlas-local")
+            val request = request().copy(
+                systemPrompt = "You are the replaceable intelligence operating inside Atlas.\nGoal: Converse quickly.",
+                responseContract = com.grinningfrog.atlas.model.ResponseContract(com.grinningfrog.atlas.model.ResponseMode.DEFAULT, 35, 65, 3, 115),
+            )
+            OpenAiCompatibleBackend().infer(endpoint, null, request)
+
+            val payload = JSONObject(server.takeRequest().body.readUtf8())
+            assertTrue(payload.getJSONArray("messages").getJSONObject(0).getString("content").startsWith("You are Atlas on the user's phone."))
+            assertTrue(payload.getInt("max_tokens") == 72)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
     fun `stream ignores null content frames`() = runTest {
         val server = MockWebServer()
         server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(

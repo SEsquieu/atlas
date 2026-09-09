@@ -38,4 +38,12 @@ class SpeechDeliveryTest {
         assertTrue(detailed.hardMaxWords > immediate.hardMaxWords)
         assertTrue(safety.actionFirst)
     }
+
+    @Test fun exactResponseRequestGetsAOneSentenceTinyBudget() {
+        val exact = ResponsePolicy.contract("Reply with exactly OK", spoken = true, risk = InferenceRisk.NORMAL)
+
+        assertEquals(ResponseMode.IMMEDIATE, exact.mode)
+        assertEquals(1, exact.maxSentences)
+        assertEquals(16, exact.maxOutputTokens)
+    }
 }

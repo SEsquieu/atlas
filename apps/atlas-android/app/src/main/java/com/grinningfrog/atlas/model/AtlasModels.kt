@@ -27,6 +27,7 @@ enum class MemoryStatus { ACTIVE, SUPERSEDED, FORGOTTEN }
 enum class DeliveryStatus { NOT_APPLICABLE, PENDING, DELIVERED, INTERRUPTED, TEXT_ONLY, FAILED }
 enum class SpeechSegmentStatus { QUEUED, STARTED, COMPLETED, INTERRUPTED, SKIPPED, FAILED }
 enum class ResponseMode { IMMEDIATE, DEFAULT, PHYSICAL_GUIDANCE, SAFETY, EXPLANATION }
+enum class PromptProfile { AUTO, FULL, COMPACT }
 enum class WorkspaceKind { PERSONAL, ORGANIZATION }
 enum class PrincipalKind { USER, SERVICE, DEVICE }
 enum class TaskRunStatus { PENDING, ACTIVE, BLOCKED, COMPLETED, CANCELLED }
@@ -266,6 +267,7 @@ data class ProviderEndpoint(
     val supportsStreaming: Boolean = false,
     val timeoutMs: Long = 60_000,
     val reasoningEnabled: Boolean = false,
+    val promptProfile: PromptProfile = PromptProfile.AUTO,
 )
 
 data class RouteTable(

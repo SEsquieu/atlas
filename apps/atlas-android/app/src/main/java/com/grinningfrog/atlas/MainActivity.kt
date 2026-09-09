@@ -105,6 +105,7 @@ import com.grinningfrog.atlas.model.MessageKind
 import com.grinningfrog.atlas.model.MessageRole
 import com.grinningfrog.atlas.model.ContextMode
 import com.grinningfrog.atlas.model.ProviderEndpoint
+import com.grinningfrog.atlas.model.PromptProfile
 import com.grinningfrog.atlas.model.RouteTable
 import com.grinningfrog.atlas.model.RuntimePhase
 import com.grinningfrog.atlas.model.RuntimeSnapshot
@@ -919,6 +920,7 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
     var tools by remember { mutableStateOf(true) }
     var streaming by remember { mutableStateOf(true) }
     var reasoning by remember { mutableStateOf(false) }
+    var promptProfile by remember { mutableStateOf(PromptProfile.AUTO) }
     var draftCheck by remember { mutableStateOf<com.grinningfrog.atlas.provider.ProviderCheck?>(null) }
     var endpointChecks by remember { mutableStateOf<Map<String, com.grinningfrog.atlas.provider.ProviderCheck>>(emptyMap()) }
     val routes = remember(providers) { settings.loadRoutes() }
@@ -926,6 +928,7 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
     fun draftEndpoint(id: String = "connection-test") = ProviderEndpoint(
         id, name.trim().ifBlank { "Endpoint" }, EndpointSecurity.assess(baseUrl).normalizedBaseUrl,
         model.trim(), id, supportsVision = vision, supportsTools = tools, supportsStreaming = streaming, reasoningEnabled = reasoning,
+        promptProfile = promptProfile,
     )
 
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -1007,6 +1010,18 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                             })
                             Text("Reasoning (slower; off is recommended on-device)")
                         }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Prompt", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            TextButtonCompact(endpoint.promptProfile.name.lowercase().replaceFirstChar { it.uppercase() }) {
+                                val next = when (endpoint.promptProfile) {
+                                    PromptProfile.AUTO -> PromptProfile.COMPACT
+                                    PromptProfile.COMPACT -> PromptProfile.FULL
+                                    PromptProfile.FULL -> PromptProfile.AUTO
+                                }
+                                settings.updateProviderPromptProfile(endpoint.id, next)
+                                onChanged()
+                            }
+                        }
                     }
                     TextButtonCompact("Remove") {
                         settings.deleteProvider(endpoint.id)
@@ -1039,6 +1054,26 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                         Checkbox(reasoning, { reasoning = it }); Text("Enable model reasoning (slower; off by default)")
                     }
                     OutlinedButton(
+                        onClick = {
+                            promptProfile = when (promptProfile) {
+                                PromptProfile.AUTO -> PromptProfile.COMPACT
+                                PromptProfile.COMPACT -> PromptProfile.FULL
+                                PromptProfile.FULL -> PromptProfile.AUTO
+                            }
+                            draftCheck = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Prompt profile: ${promptProfile.name.lowercase()}") }
+                    Text(
+                        when (promptProfile) {
+                            PromptProfile.AUTO -> "Auto uses a compact prompt on this phone and the full Atlas contract elsewhere."
+                            PromptProfile.COMPACT -> "Compact minimizes prompt ingestion for small local or self-hosted models."
+                            PromptProfile.FULL -> "Full preserves the complete Atlas instruction contract for capable models."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(
                         enabled = baseUrl.isNotBlank() && model.isNotBlank(),
                         onClick = { scope.launch {
                             draftCheck = runCatching { tester.check(draftEndpoint(), apiKey.takeIf(String::isNotBlank)) }
@@ -1056,7 +1091,7 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                             val all = settings.loadProviders()
                             val allIds = all.map { it.id }
                             settings.saveRoutes(RouteTable(allIds, all.filter { it.supportsVision }.map { it.id }, allIds, allIds))
-                            name = ""; baseUrl = ""; model = ""; apiKey = ""; reasoning = false; draftCheck = null; onChanged()
+                            name = ""; baseUrl = ""; model = ""; apiKey = ""; reasoning = false; promptProfile = PromptProfile.AUTO; draftCheck = null; onChanged()
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Save endpoint") }

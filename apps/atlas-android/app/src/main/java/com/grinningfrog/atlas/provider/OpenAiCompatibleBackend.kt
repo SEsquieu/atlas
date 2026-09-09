@@ -36,7 +36,7 @@ class OpenAiCompatibleBackend(
 ) : InferenceBackend {
     override suspend fun infer(endpoint: ProviderEndpoint, apiKey: String?, request: InferenceRequest): InferenceResponse {
         val started = System.nanoTime()
-        val httpRequest = httpRequest(endpoint, apiKey, request, streaming = false)
+        val httpRequest = httpRequest(endpoint, apiKey, EndpointPromptCompiler.compile(endpoint, request), streaming = false)
         val client = client(endpoint)
 
         val networkResponse = try {
@@ -84,7 +84,7 @@ class OpenAiCompatibleBackend(
         return flow {
             val started = System.nanoTime()
             val response = try {
-                client(endpoint).newCall(httpRequest(endpoint, apiKey, request, streaming = true)).await()
+                client(endpoint).newCall(httpRequest(endpoint, apiKey, EndpointPromptCompiler.compile(endpoint, request), streaming = true)).await()
             } catch (error: IOException) {
                 if (error is SocketTimeoutException) {
                     throw InferenceUnavailableException(
