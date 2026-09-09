@@ -1,8 +1,8 @@
 # Open-source readiness checklist
 
-Repository licensing and governance can be prepared before visibility changes. Do not make the repository public until every blocking item is complete.
+Atlas is now a public pre-v0.1 open-source alpha. This checklist records the release-readiness work that preceded publication and the repository hardening that remains. Closed-alpha APK distribution and paid/open beta remain separate gates below.
 
-## Completed in source
+## Completed for public source release
 
 - [x] Apache License 2.0 added
 - [x] Package metadata identifies Apache-2.0
@@ -20,24 +20,30 @@ Repository licensing and governance can be prepared before visibility changes. D
 - [x] Preserve existing author history and recommend no-reply metadata for future commits
 - [x] Keep OpenClaw-era code and documents as explicitly historical evidence and contract coverage
 - [x] Pin every third-party GitHub Action to a reviewed full commit SHA and enforce the rule in CI
-
-## Blocking before repository visibility changes
-
 - [x] Confirm the full-history CI result over every reachable GitHub branch and tag; separately consider deleted/unreachable refs
-- [x] No credential requiring rotation was identified by the source/history scans; rotate immediately if the remaining manual artifact review finds one
-- [ ] Review GitHub Actions logs and downloadable artifacts for secrets/user data
+- [x] No credential requiring rotation was identified by the source/history scans
 - [x] Inventory dependency licenses and generate third-party notices for the source and Android artifact
 - [x] Review tracked assets, icons, sounds, fonts, sample media, and datasets for redistribution rights
 - [x] Record the decision to publish as `Atlas`, attributed to Seth Esquieu, and accept name collision for the open-source alpha
-- [ ] Enable GitHub private vulnerability reporting
-- [ ] Enable branch protection, required CI, dependency alerts, and secret scanning where available
+- [x] Repository is public as a pre-v0.1 open-source alpha
+- [x] Main branch rejects direct writes and requires the `source-boundary` status check through the current protected-branch configuration
+- [x] CodeQL is enabled and has completed successfully on `main`
+
+## Remaining public-repository hardening
+
+These items should be completed promptly, but they do not retroactively make the published source release private or imply that the Android alpha APK is ready for broad distribution.
+
+- [ ] Complete a manual review of historical GitHub Actions logs, caches, and downloadable artifacts for secrets/user data; the obsolete prerelease log already reviewed showed no high-confidence credential finding
+- [ ] Enable GitHub private vulnerability reporting if not already enabled
+- [ ] Verify dependency alerts and secret scanning are enabled where available
 - [ ] Configure issue/discussion moderation and a private maintainer contact path
+- [ ] Consider an independent specialist scan for deleted/unreachable refs and other objects outside reachable Git history
 - [ ] Have counsel review licensing, privacy disclosures, managed-inference terms, and trademark posture before paid beta
 
-## Blocking before closed alpha
+## Blocking before closed alpha APK distribution
 
 - [ ] Complete every runtime, privacy, quality, and operations gate in [`docs/closed-alpha.md`](./docs/closed-alpha.md)
-- [ ] Produce a signed, versioned release APK; do not distribute the CI debug APK
+- [ ] Produce a signed, versioned release APK; do not distribute a CI debug APK as the canonical alpha release
 - [ ] Publish alpha privacy notice, tester terms, known limitations, and reporting instructions
 - [ ] Activate per-user and global sponsored-inference caps and alerts
 - [ ] Verify delete/export and diagnostic-upload consent on a physical device
@@ -53,4 +59,4 @@ Repository licensing and governance can be prepared before visibility changes. D
 - [ ] Publish terms of service, privacy policy, subprocessors, and support expectations
 - [ ] Run external security review for auth, tenancy, billing, client secrets, and tool authorization
 
-The current repository remains alpha software until these gates are explicitly closed with evidence.
+The public repository remains alpha software. Public source availability is not a claim that Atlas is ready for unattended, emergency, safety-critical, production, or broad APK distribution.
