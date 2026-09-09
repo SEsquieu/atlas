@@ -27,6 +27,7 @@ Atlas is easiest to understand by following ownership from the persistent runtim
 - [Public name collision review](./name-review.md) — preliminary collision evidence and a qualified-name recommendation.
 - [Assets and redistribution](./assets-and-redistribution.md) — tracked media/font/audio inventory and website boundary.
 - [Proposed v0.1.0-alpha.5 notes](./releases/v0.1.0-alpha.5.md) — release scope without claiming unfinished gates are complete.
+- [v0.1 release decisions](./release-decisions.md) — naming, attribution, prototype-history, branch, and distribution choices.
 
 ## Principles and direction
 

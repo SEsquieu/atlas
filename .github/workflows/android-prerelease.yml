@@ -61,6 +61,6 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
-            --title "Atlas v0.1.0-alpha.5" \
+            --title "Atlas Alongside v0.1.0-alpha.5" \
             --notes-file ../../docs/releases/v0.1.0-alpha.5.md \
             atlas-android-*.apk atlas-android-0.1.0-alpha.5.zip SHA256SUMS.txt signing-certificate.txt provenance.json

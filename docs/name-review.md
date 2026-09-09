@@ -1,6 +1,6 @@
 # Public Name Collision Review
 
-Status: preliminary engineering/product search performed 2026-09-09. This is not a trademark clearance opinion.
+Status: preliminary engineering/product search performed 2026-09-09. **Atlas Alongside** is adopted as the qualified open-source project identity; the agent remains **Atlas**. This is not a trademark clearance opinion.
 
 ## Finding
 
@@ -19,15 +19,15 @@ The collision creates two separate risks:
 1. **Discovery:** searches, package names, app-store listings, and technical discussion cannot reliably identify this project.
 2. **Brand/legal:** existing marks and common-law uses may limit a bare software name even when implementations differ.
 
-## Recommended identity structure
+## Adopted identity structure
 
 - Agent/persona inside the product: **Atlas**
-- Distinct public project/product mark: **Atlas Alongside**
+- Distinct public open-source project name: **Atlas Alongside**
 - Descriptive subtitle: **Android-native physical agent runtime**
 - Existing source identifiers: keep `com.grinningfrog.atlas` and `@atlas/*` during alpha unless a package registry collision requires migration
 - Repository: it may remain `atlas`; the README, release title, website metadata, and app listing should use the qualified public mark
 
-“Atlas Alongside” expresses the central product distinction—Atlas lives alongside the user rather than inside a remote chat surface—and produced no direct software-product match in the preliminary exact-phrase search. It still requires a professional federal/state/common-law and app-store clearance search before commercial investment or a trademark filing.
+“Atlas Alongside” expresses the central product distinction—Atlas lives alongside the user rather than inside a remote chat surface—and produced no direct software-product match in the preliminary exact-phrase search. The repository may publish under this qualified name, but it still requires a professional federal/state/common-law and app-store clearance search before commercial investment or a trademark filing.
 
 ## Alternatives considered
 

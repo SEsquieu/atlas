@@ -2,7 +2,7 @@
   "name": "atlas",
   "private": true,
   "version": "0.0.0",
-  "description": "Atlas: provider-agnostic physical agent loop framework",
+  "description": "Atlas Alongside: Android-native, provider-independent physical agent runtime",
   "type": "module",
   "workspaces": [
     "packages/*"

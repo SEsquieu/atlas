@@ -14,6 +14,7 @@ const required = [
   'docs/build-and-test.md', 'docs/public-release-audit.md',
   'docs/name-review.md',
   'docs/assets-and-redistribution.md',
+  'docs/release-decisions.md',
   'scripts/audit-git-history.mjs',
   'evals/fixture.schema.json', 'evals/fixtures/unsupported_causal_bridge.json',
 ];

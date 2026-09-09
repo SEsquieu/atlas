@@ -1,4 +1,6 @@
-# Atlas
+# Atlas Alongside
+
+**Android-native physical agent runtime. The agent is Atlas. The open-source project is Atlas Alongside.**
 
 ## The Model Is Not the Agent
 

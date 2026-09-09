@@ -17,6 +17,8 @@ Repository licensing and governance can be prepared before visibility changes. D
 - [x] Tracked media, font, audio, sample-data, and model assets inventoried
 - [x] Preliminary public-name collision review documented
 - [x] Full reachable-history scan is automated in public-readiness CI
+- [x] Preserve existing author history and recommend no-reply metadata for future commits
+- [x] Keep OpenClaw-era code and documents as explicitly historical evidence and contract coverage
 
 ## Blocking before repository visibility changes
 
@@ -25,11 +27,10 @@ Repository licensing and governance can be prepared before visibility changes. D
 - [ ] Review GitHub Actions logs and downloadable artifacts for secrets/user data
 - [x] Inventory dependency licenses and generate third-party notices for the source and Android artifact
 - [x] Review tracked assets, icons, sounds, fonts, sample media, and datasets for redistribution rights
-- [ ] Adopt and clear a qualified public product name; bare `Atlas` is materially crowded
+- [x] Adopt `Atlas Alongside` as the qualified open-source project identity; retain professional clearance as a commercial-launch task
 - [ ] Enable GitHub private vulnerability reporting
 - [ ] Enable branch protection, required CI, dependency alerts, and secret scanning where available
 - [ ] Configure issue/discussion moderation and a private maintainer contact path
-- [ ] Decide whether legacy OpenClaw examples remain in the first public release or move to an archive branch
 - [ ] Have counsel review licensing, privacy disclosures, managed-inference terms, and trademark posture before paid beta
 
 ## Blocking before closed alpha
