@@ -19,6 +19,7 @@ Repository licensing and governance can be prepared before visibility changes. D
 - [x] Full reachable-history scan is automated in public-readiness CI
 - [x] Preserve existing author history and recommend no-reply metadata for future commits
 - [x] Keep OpenClaw-era code and documents as explicitly historical evidence and contract coverage
+- [x] Pin every third-party GitHub Action to a reviewed full commit SHA and enforce the rule in CI
 
 ## Blocking before repository visibility changes
 

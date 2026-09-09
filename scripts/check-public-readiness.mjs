@@ -74,6 +74,15 @@ for (const path of textCandidates) {
   }
 }
 
+for (const path of files.filter((path) => path.startsWith('.github/workflows/') && /\.ya?ml$/.test(path))) {
+  const content = readFileSync(path, 'utf8');
+  for (const match of content.matchAll(/\buses:\s*([^\s#]+)/g)) {
+    const action = match[1];
+    if (action.startsWith('./') || action.startsWith('docker://')) continue;
+    if (!/@[0-9a-f]{40}$/.test(action)) failures.push(`GitHub Action is not pinned to a full commit SHA in ${path}: ${action}`);
+  }
+}
+
 if (failures.length) {
   console.error('Public-readiness check failed:\n' + failures.map((failure) => `- ${failure}`).join('\n'));
   process.exit(1);

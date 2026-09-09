@@ -56,6 +56,8 @@ No photograph, generated marketing image, recorded audio, model weight, sample s
 
 Source workflows use read-only contents permissions and placeholder service values. Branches are currently unprotected. Private vulnerability reporting, dependency alerts, secret scanning settings, environment protection, and required checks were not verifiable through the available repository connection and remain maintainer actions.
 
+All third-party workflow actions are pinned to reviewed full commit SHAs, with human-readable version comments. The public-readiness source check rejects mutable action tags in future changes; Dependabot remains configured to propose action updates.
+
 ## Changes made by this pass
 
 - Expanded ignore and source scanning rules for common credentials, logs, databases, session exports, and model files.
