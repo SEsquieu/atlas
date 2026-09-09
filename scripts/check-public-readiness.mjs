@@ -4,9 +4,20 @@ import { spawnSync } from 'node:child_process';
 const failures = [];
 const required = [
   'LICENSE', 'NOTICE', 'CONTRIBUTING.md', 'SECURITY.md', 'CODE_OF_CONDUCT.md',
+  'THIRD_PARTY_NOTICES.md',
   'GOVERNANCE.md', 'TRADEMARKS.md', 'OPEN_SOURCE_CHECKLIST.md', 'SUPPORT.md', 'CHANGELOG.md',
   'docs/product-structure.md', 'docs/pricing-and-metering.md', 'docs/closed-alpha.md',
   'docs/alpha-data-handling.md',
+  'docs/README.md',
+  'docs/runtime-code-map.md', 'docs/runtime-failure-semantics.md',
+  'docs/design-principles.md', 'docs/endpoint-characterization.md',
+  'docs/build-and-test.md', 'docs/public-release-audit.md',
+  'docs/name-review.md',
+  'docs/assets-and-redistribution.md',
+  'docs/release-decisions.md',
+  'docs/public-release-runbook.md', 'docs/release-device-matrix.md',
+  'scripts/audit-git-history.mjs',
+  'evals/fixture.schema.json', 'evals/fixtures/unsupported_causal_bridge.json',
 ];
 
 const git = spawnSync('git', ['ls-files', '-z'], { encoding: 'utf8' });
@@ -23,6 +34,9 @@ const forbiddenFiles = [
   /(^|\/)\.env($|\.)/,
   /(^|\/)local\.properties$/,
   /\.(?:apk|aab|jks|keystore|p12|pfx|pem|key)$/i,
+  /\.(?:log|db|sqlite|sqlite3|gguf)$/i,
+  /(^|\/)(?:session-logs|session-exports)\//i,
+  /(^|\/)atlas-session-export-/i,
   /(^|\/)(?:build|dist|coverage|\.next)\//,
   /\.tsbuildinfo$/,
 ];
@@ -41,10 +55,15 @@ for (const path of packageFiles) {
 const textCandidates = files.filter((path) => /\.(?:kt|kts|java|js|mjs|cjs|ts|tsx|json|ya?ml|md|sql|properties|example)$/i.test(path));
 const secretPatterns = [
   ['OpenAI project key', /sk-proj-[A-Za-z0-9_-]{20,}/g],
+  ['OpenAI legacy key', /sk-[A-Za-z0-9]{32,}/g],
+  ['GitHub token', /(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,})/g],
+  ['Google API key', /AIza[0-9A-Za-z_-]{30,}/g],
+  ['AWS access key', /AKIA[0-9A-Z]{16}/g],
   ['Stripe live key', /sk_live_[A-Za-z0-9]{16,}/g],
   ['Stripe webhook secret', /whsec_[A-Za-z0-9]{20,}/g],
   ['Supabase secret key', /sb_secret_[A-Za-z0-9_-]{20,}/g],
   ['private key block', /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g],
+  ['JWT', /eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g],
 ];
 for (const path of textCandidates) {
   let content;
@@ -52,6 +71,15 @@ for (const path of textCandidates) {
   for (const [name, pattern] of secretPatterns) {
     pattern.lastIndex = 0;
     if (pattern.test(content)) failures.push(`possible ${name} in ${path}`);
+  }
+}
+
+for (const path of files.filter((path) => path.startsWith('.github/workflows/') && /\.ya?ml$/.test(path))) {
+  const content = readFileSync(path, 'utf8');
+  for (const match of content.matchAll(/\buses:\s*([^\s#]+)/g)) {
+    const action = match[1];
+    if (action.startsWith('./') || action.startsWith('docker://')) continue;
+    if (!/@[0-9a-f]{40}$/.test(action)) failures.push(`GitHub Action is not pinned to a full commit SHA in ${path}: ${action}`);
   }
 }
 

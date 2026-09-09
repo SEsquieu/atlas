@@ -1,9 +1,10 @@
 <resources>
-    <style name="Theme.Atlas" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.Atlas" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:statusBarColor">#09110D</item>
-        <item name="android:navigationBarColor">#09110D</item>
+        <item name="android:windowBackground">#010302</item>
+        <item name="android:statusBarColor">#010302</item>
+        <item name="android:navigationBarColor">#010302</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
 </resources>

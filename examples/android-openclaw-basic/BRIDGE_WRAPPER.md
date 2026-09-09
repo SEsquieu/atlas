@@ -1,6 +1,8 @@
 # Android Bridge Wrapper Plan
 
-Atlas MVP uses Seth's existing OpenClaw Android Camera Bridge as the first Android transport/capture path.
+> **Historical prototype plan.** Atlas's current MVP uses the native Android runtime and direct user-configured inference. This document preserves the earlier OpenClaw camera-bridge seam for history and legacy contract tests.
+
+The original Atlas prototype used an OpenClaw Android Camera Bridge as its first Android transport/capture path.
 
 Important boundary:
 

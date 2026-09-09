@@ -1,47 +1,66 @@
-name: Android prerelease
+name: Android signed alpha
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - codex/android-runtime-poc
-    paths:
-      - .github/workflows/android-prerelease.yml
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+        default: v0.1.0-alpha.5
 
 permissions:
   contents: write
 
 jobs:
   publish:
-    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Publish Android speech alpha prerelease'
     runs-on: ubuntu-latest
+    environment: closed-alpha
     defaults:
       run:
         working-directory: apps/atlas-android
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: "17"
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Verify and build
-        run: ./gradlew testDebugUnitTest assembleDebug
-      - name: Package prerelease
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+      - name: Materialize signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ATLAS_ANDROID_KEYSTORE_BASE64 }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk atlas-android-0.1.0-alpha.1-debug.apk
-          zip -9 atlas-android-0.1.0-alpha.1-debug.zip atlas-android-0.1.0-alpha.1-debug.apk
-          sha256sum atlas-android-0.1.0-alpha.1-debug.apk atlas-android-0.1.0-alpha.1-debug.zip > SHA256SUMS.txt
-      - name: Publish GitHub prerelease
+          test -n "$KEYSTORE_BASE64"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/atlas-alpha.jks"
+          chmod 600 "$RUNNER_TEMP/atlas-alpha.jks"
+      - name: Verify and build signed variants
+        env:
+          ATLAS_ANDROID_KEYSTORE: ${{ runner.temp }}/atlas-alpha.jks
+          ATLAS_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ATLAS_ANDROID_KEYSTORE_PASSWORD }}
+          ATLAS_ANDROID_KEY_ALIAS: ${{ secrets.ATLAS_ANDROID_KEY_ALIAS }}
+          ATLAS_ANDROID_KEY_PASSWORD: ${{ secrets.ATLAS_ANDROID_KEY_PASSWORD }}
+        run: ./gradlew testSecureDebugUnitTest testLanDebugUnitTest lintSecureRelease lintLanRelease assembleSecureRelease assembleLanRelease
+      - name: Verify signatures and package
+        env:
+          RELEASE_VERSION: 0.1.0-alpha.5
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          test "$RELEASE_TAG" = "v$RELEASE_VERSION"
+          SECURE_APK=app/build/outputs/apk/secure/release/app-secure-release.apk
+          LAN_APK=app/build/outputs/apk/lan/release/app-lan-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$SECURE_APK" > signing-certificate.txt
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$LAN_APK"
+          cp "$SECURE_APK" "atlas-android-$RELEASE_VERSION-secure.apk"
+          cp "$LAN_APK" "atlas-android-$RELEASE_VERSION-trusted-lan.apk"
+          sha256sum atlas-android-*.apk > SHA256SUMS.txt
+          printf '{"version":"%s","tag":"%s","commit":"%s","variants":["secure","trusted-lan"],"minSdk":28,"targetSdk":35}\n' \
+            "$RELEASE_VERSION" "$RELEASE_TAG" "$GITHUB_SHA" > provenance.json
+          zip -9 "atlas-android-$RELEASE_VERSION.zip" atlas-android-*.apk SHA256SUMS.txt signing-certificate.txt provenance.json
+      - name: Publish controlled prerelease
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          gh release create android-v0.1.0-alpha.1 \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --prerelease \
-            --title "Atlas Android 0.1.0 alpha 1" \
-            --notes "Unsigned debug build for physical-device testing. Includes provider-neutral streaming, sentence-aware TTS, speak-ready cues, and delivery-aware barge-in. This is not the public v0.1 release." \
-            atlas-android-0.1.0-alpha.1-debug.apk \
-            atlas-android-0.1.0-alpha.1-debug.zip \
-            SHA256SUMS.txt
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "Atlas Alongside v0.1.0-alpha.5" \
+            --notes-file ../../docs/releases/v0.1.0-alpha.5.md \
+            atlas-android-*.apk atlas-android-0.1.0-alpha.5.zip SHA256SUMS.txt signing-certificate.txt provenance.json

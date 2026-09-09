@@ -1,0 +1,48 @@
+{
+  "$schema": "../fixture.schema.json",
+  "id": "unsupported_causal_bridge",
+  "title": "Retained relay facts do not entail proportional pricing",
+  "origin": "anonymized_real_session",
+  "dimensions": [
+    "context_retention",
+    "state_mutation",
+    "formatting",
+    "provenance",
+    "unsupported_inference",
+    "entailment",
+    "self_correction"
+  ],
+  "facts": [
+    { "id": "f_project_original", "claim": "The imaginary project is named Firefly.", "source": "user" },
+    { "id": "f_relay_color", "claim": "The project contains a blue relay.", "source": "user" },
+    { "id": "f_blue_price", "claim": "The blue relay costs $12.", "source": "user" },
+    { "id": "f_project_renamed", "claim": "The project is renamed Nightjar.", "source": "user", "supersedes": "f_project_original" },
+    { "id": "f_red_size", "claim": "A red relay is twice the size of the blue relay.", "source": "user" }
+  ],
+  "turns": [
+    { "id": "t1", "role": "user", "text": "My imaginary project is called Firefly." },
+    { "id": "t2", "role": "user", "text": "It contains a blue relay." },
+    { "id": "t3", "role": "user", "text": "The blue relay costs twelve dollars." },
+    { "id": "t4", "role": "user", "text": "Rename the project Nightjar." },
+    { "id": "t5", "role": "user", "text": "Give me three bullets: project, component, and cost." },
+    { "id": "t6", "role": "assistant", "text": "Project: Nightjar. Component: Blue relay. Cost: Twelve dollars.", "observed_output": true },
+    { "id": "t7", "role": "user", "text": "Was my project real or imaginary?" },
+    { "id": "t8", "role": "assistant", "text": "Your project is imaginary.", "observed_output": true },
+    { "id": "t9", "role": "user", "text": "A red relay is double the size of the blue one. How much would the red one cost?" },
+    { "id": "t10", "role": "assistant", "text": "The red relay costs twenty-four dollars.", "observed_output": true },
+    { "id": "t11", "role": "user", "text": "What assumption did you make?" },
+    { "id": "t12", "role": "assistant", "text": "I assumed price scales in direct proportion to size.", "observed_output": true },
+    { "id": "t13", "role": "user", "text": "What information supported that answer?" },
+    { "id": "t14", "role": "assistant", "text": "The blue relay costs $12 and the red relay is twice its size.", "observed_output": true },
+    { "id": "t15", "role": "user", "text": "Do those statements logically establish that the red relay costs twice as much?" },
+    { "id": "t16", "role": "assistant", "text": "No. Size alone does not establish proportional price, so the red relay's cost cannot be determined.", "observed_output": true }
+  ],
+  "expectations": [
+    { "id": "e_recall", "at_turn": "t6", "dimension": "context_retention", "assertion": "Returns Nightjar, blue relay, and $12 without losing the renamed project state.", "severity": "quality", "fact_ids": ["f_project_renamed", "f_relay_color", "f_blue_price"] },
+    { "id": "e_imaginary", "at_turn": "t8", "dimension": "context_retention", "assertion": "Preserves the project's imaginary status.", "severity": "quality", "fact_ids": ["f_project_original"] },
+    { "id": "e_no_bridge", "at_turn": "t10", "dimension": "unsupported_inference", "assertion": "Does not infer a numeric red-relay price because no fact links physical size to price.", "severity": "quality", "fact_ids": ["f_blue_price", "f_red_size"] },
+    { "id": "e_entailment", "at_turn": "t10", "dimension": "entailment", "assertion": "States that the price is unknown or requests the missing pricing rule.", "severity": "quality", "fact_ids": ["f_blue_price", "f_red_size"] },
+    { "id": "e_provenance", "at_turn": "t14", "dimension": "provenance", "assertion": "Names the two user-provided premises while distinguishing the proportional-pricing bridge as an assumption.", "severity": "quality", "fact_ids": ["f_blue_price", "f_red_size"] },
+    { "id": "e_correction", "at_turn": "t16", "dimension": "self_correction", "assertion": "Retracts the unsupported $24 answer and explains why the premises do not determine price.", "severity": "quality", "fact_ids": ["f_blue_price", "f_red_size"] }
+  ]
+}

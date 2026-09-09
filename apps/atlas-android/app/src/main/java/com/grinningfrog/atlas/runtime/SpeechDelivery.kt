@@ -7,6 +7,10 @@ import java.util.Locale
 
 /** Core-owned response policy. Providers receive limits; they do not decide Atlas's interaction style. */
 object ResponsePolicy {
+    private val exactResponse = Regex(
+        "\\b(reply|respond|answer|say|output|return)\\b.{0,24}\\b(exactly|only)\\b|\\b(exactly|only)\\b.{0,24}\\b(reply|respond|answer|say|output|return)\\b",
+        RegexOption.IGNORE_CASE,
+    )
     private val explicitDetail = Regex(
         "(explain|detail|walk me through|deep dive|why|compare|break down|step by step|tell me more)",
         RegexOption.IGNORE_CASE,
@@ -18,6 +22,7 @@ object ResponsePolicy {
     private val immediate = Regex("^(yes|no|where|which|when|who|is it|can i|did it)\\b", RegexOption.IGNORE_CASE)
 
     fun contract(text: String, spoken: Boolean, risk: InferenceRisk): ResponseContract {
+        if (exactResponse.containsMatchIn(text)) return ResponseContract(ResponseMode.IMMEDIATE, 1, 8, 1, 16)
         if (!spoken) return ResponseContract(ResponseMode.DEFAULT, 100, 220, 10, 320)
         if (risk == InferenceRisk.SAFETY_CRITICAL) return ResponseContract(ResponseMode.SAFETY, 35, 60, 4, 110, actionFirst = true)
         if (physicalGuidance.containsMatchIn(text)) return ResponseContract(ResponseMode.PHYSICAL_GUIDANCE, 30, 55, 3, 100, actionFirst = true)
@@ -35,7 +40,6 @@ object ResponsePolicy {
         append("Give only what this moment requires. For physical guidance, give one safe actionable step and let the user continue the conversation.")
     }
 }
-
 /** Incremental sentence boundary detector designed for streamed spoken text. */
 class SentenceSegmenter(private val maxBufferedCharacters: Int = 180) {
     private val buffer = StringBuilder()

@@ -61,15 +61,20 @@ class AtlasSessionService : LifecycleService() {
                     app.database.appendEvent(session.id, "provider.route_attempted", JSONObject().apply {
                         put("endpointId", endpoint.id)
                         put("endpointName", endpoint.name)
+                        put("model", endpoint.model)
+                        put("endpointLocation", runCatching { com.grinningfrog.atlas.provider.EndpointSecurity.assess(endpoint.baseUrl).location.name }.getOrNull())
+                        put("reasoningEnabled", endpoint.reasoningEnabled)
+                        put("supportsVision", endpoint.supportsVision)
+                        put("supportsTools", endpoint.supportsTools)
+                        put("supportsStreaming", endpoint.supportsStreaming)
+                        put("configuredTimeoutMs", endpoint.timeoutMs)
                         put("success", success)
                         error?.let { put("error", it) }
                     })
                 }
             },
         )
-        runtime = AtlasMobileRuntime(app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope) { live ->
-            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(live))
-        }
+        runtime = AtlasMobileRuntime(app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope)
         serviceScope.launch {
             runCatching { runtime.initialize() }.onFailure { error ->
                 app.database.loadLatestSession()?.let { session ->
@@ -103,10 +108,10 @@ class AtlasSessionService : LifecycleService() {
         val service: AtlasSessionService get() = this@AtlasSessionService
     }
 
-    private fun notification(live: Boolean = false) = NotificationCompat.Builder(this, CHANNEL_ID)
+    private fun notification() = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(R.drawable.ic_atlas)
-        .setContentTitle(if (live) "Atlas Live Context" else "Atlas physical session")
-        .setContentText(if (live) "Rolling physical context is active" else "Background context inference is off")
+        .setContentTitle("Atlas physical session")
+        .setContentText("Device resources are used only while a session is active")
         .setContentIntent(
             PendingIntent.getActivity(
                 this,

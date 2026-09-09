@@ -1,6 +1,6 @@
 # Atlas Latency Notes
 
-Status: first live Android/OpenClaw measurements, 2026-05-05.
+Status: historical first live Android/OpenClaw measurements, 2026-05-05. These measurements explain early design pressure; they do not describe the current native Android inference path.
 
 ## Why this matters
 

@@ -17,31 +17,26 @@ class CapabilityRouter(
     private val apiKey: suspend (ProviderEndpoint) -> String?,
     private val onAttempt: suspend (endpoint: ProviderEndpoint, success: Boolean, error: String?) -> Unit = { _, _, _ -> },
 ) {
-    fun hasToolCapableRoute(request: InferenceRequest): Boolean {
-        return hasToolCapableRoute(request.capability, request.image != null)
-    }
+    fun hasToolCapableRoute(request: InferenceRequest): Boolean = hasToolCapableRoute(request.capability, request.image != null)
 
     fun hasToolCapableRoute(capability: com.grinningfrog.atlas.model.RouteCapability, requiresVision: Boolean): Boolean {
         val configured = endpoints().associateBy { it.id }
         return routes().candidates(capability).mapNotNull(configured::get).any {
-            it.supportsTools && (!requiresVision || it.supportsVision)
+            it.supportsTools && (!requiresVision || it.supportsVision) && runCatching { EndpointSecurity.assess(it.baseUrl) }.isSuccess
         }
     }
 
     suspend fun route(request: InferenceRequest): InferenceResponse {
-        val configured = endpoints().associateBy { it.id }
-        val candidates = routes().candidates(request.capability)
-            .mapNotNull(configured::get)
-            .filter { request.image == null || it.supportsVision }
-            .filter { request.tools.isEmpty() || it.supportsTools }
-        if (candidates.isEmpty()) throw InferenceUnavailableException("No endpoint is configured for ${request.capability.name.lowercase()}")
+        val routeIds = routes().candidates(request.capability)
+        val candidates = candidates(request, routeIds)
+        if (candidates.isEmpty()) throw InferenceUnavailableException("No valid endpoint is configured for ${request.capability.name.lowercase()}")
 
         val failures = mutableListOf<String>()
         for (endpoint in candidates) {
             try {
                 val result = backend.infer(endpoint, apiKey(endpoint), request)
                 onAttempt(endpoint, true, null)
-                return result.copy(degraded = endpoint.id !in routes().candidates(request.capability).take(1))
+                return result.copy(degraded = endpoint.id !in routeIds.take(1))
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -55,12 +50,9 @@ class CapabilityRouter(
     }
 
     fun stream(request: InferenceRequest): Flow<InferenceStreamEvent> = flow {
-        val configured = endpoints().associateBy { it.id }
         val routeIds = routes().candidates(request.capability)
-        val candidates = routeIds.mapNotNull(configured::get)
-            .filter { request.image == null || it.supportsVision }
-            .filter { request.tools.isEmpty() || it.supportsTools }
-        if (candidates.isEmpty()) throw InferenceUnavailableException("No endpoint is configured for ${request.capability.name.lowercase()}")
+        val candidates = candidates(request, routeIds)
+        if (candidates.isEmpty()) throw InferenceUnavailableException("No valid endpoint is configured for ${request.capability.name.lowercase()}")
 
         val failures = mutableListOf<String>()
         for (endpoint in candidates) {
@@ -93,5 +85,15 @@ class CapabilityRouter(
             }
         }
         throw InferenceUnavailableException("All ${request.capability.name.lowercase()} routes failed: ${failures.joinToString("; ")}")
+    }
+
+    private fun candidates(request: InferenceRequest, routeIds: List<String>): List<ProviderEndpoint> {
+        val configured = endpoints().associateBy { it.id }
+        return routeIds.mapNotNull(configured::get)
+            .filter { request.image == null || it.supportsVision }
+            .filter { request.tools.isEmpty() || it.supportsTools }
+            .mapNotNull { endpoint ->
+                runCatching { endpoint.copy(baseUrl = EndpointSecurity.assess(endpoint.baseUrl).normalizedBaseUrl) }.getOrNull()
+            }
     }
 }

@@ -12,8 +12,8 @@ android {
         applicationId = "com.grinningfrog.atlas"
         minSdk = 28
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.1.0-alpha.1"
+        versionCode = 7
+        versionName = "0.1.0-alpha.5"
 
         vectorDrawables.useSupportLibrary = true
         buildConfigField("String", "ATLAS_GATEWAY_URL", "\"${providers.gradleProperty("ATLAS_GATEWAY_URL").orElse("").get()}\"")
@@ -21,9 +21,36 @@ android {
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"${providers.gradleProperty("SUPABASE_PUBLISHABLE_KEY").orElse("").get()}\"")
     }
 
+    flavorDimensions += "transport"
+    productFlavors {
+        create("secure") {
+            dimension = "transport"
+            manifestPlaceholders["atlasCleartext"] = "false"
+            manifestPlaceholders["atlasAppLabel"] = "Atlas"
+        }
+        create("lan") {
+            dimension = "transport"
+            applicationIdSuffix = ".lan"
+            versionNameSuffix = "-lan"
+            manifestPlaceholders["atlasCleartext"] = "true"
+            manifestPlaceholders["atlasAppLabel"] = "Atlas LAN"
+        }
+    }
+
+    signingConfigs {
+        val keystorePath = providers.environmentVariable("ATLAS_ANDROID_KEYSTORE").orNull
+        if (!keystorePath.isNullOrBlank()) create("alpha") {
+            storeFile = file(keystorePath)
+            storePassword = providers.environmentVariable("ATLAS_ANDROID_KEYSTORE_PASSWORD").orNull
+            keyAlias = providers.environmentVariable("ATLAS_ANDROID_KEY_ALIAS").orNull
+            keyPassword = providers.environmentVariable("ATLAS_ANDROID_KEY_PASSWORD").orNull
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("alpha")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
@@ -40,7 +67,6 @@ android {
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.04.01")
     implementation(composeBom)
-
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")

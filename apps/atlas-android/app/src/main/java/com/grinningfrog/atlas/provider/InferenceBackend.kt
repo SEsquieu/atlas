@@ -20,6 +20,5 @@ interface InferenceBackend {
 class InferenceUnavailableException(
     message: String,
     cause: Throwable? = null,
-    /** True means a retry could duplicate inference cost or an opaque provider-side operation. */
     val outcomeAmbiguous: Boolean = false,
 ) : Exception(message, cause)

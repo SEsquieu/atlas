@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import com.grinningfrog.atlas.model.ProviderEndpoint
+import com.grinningfrog.atlas.model.PromptProfile
 import com.grinningfrog.atlas.model.RouteTable
 import org.json.JSONArray
 import org.json.JSONObject
@@ -26,7 +27,8 @@ class SecureSettings(context: Context) {
 
     fun deleteProvider(id: String) {
         val endpoint = loadProviders().firstOrNull { it.id == id }
-        prefs.edit().putString("providers", JSONArray(loadProviders().filterNot { it.id == id }.map(::endpointJson)).toString()).apply()
+        prefs.edit().putString("providers", JSONArray(loadProviders().filterNot { it.id == id }.map(::endpointJson)).toString())
+            .remove("provider.verified.$id").apply()
         SecretStore.remove(endpoint?.apiKeyAlias ?: id, prefs)
     }
 
@@ -37,6 +39,29 @@ class SecureSettings(context: Context) {
         prefs.edit().putString("providers", JSONArray(providers.map(::endpointJson)).toString()).apply()
     }
 
+    fun updateProviderReasoning(id: String, enabled: Boolean) {
+        val providers = loadProviders().map { if (it.id == id) it.copy(reasoningEnabled = enabled) else it }
+        prefs.edit().putString("providers", JSONArray(providers.map(::endpointJson)).toString()).apply()
+    }
+
+    fun updateProviderPromptProfile(id: String, profile: PromptProfile) {
+        val providers = loadProviders().map { if (it.id == id) it.copy(promptProfile = profile) else it }
+        prefs.edit().putString("providers", JSONArray(providers.map(::endpointJson)).toString()).apply()
+    }
+
+    var onboardingComplete: Boolean
+        get() = prefs.getBoolean("onboarding.complete.v1", false)
+        set(value) { prefs.edit().putBoolean("onboarding.complete.v1", value).apply() }
+
+    var mediaRetentionDays: Int
+        get() = prefs.getInt("privacy.mediaRetentionDays", 7).coerceIn(1, 30)
+        set(value) { prefs.edit().putInt("privacy.mediaRetentionDays", value.coerceIn(1, 30)).apply() }
+
+    fun markProviderVerified(id: String, atMs: Long = System.currentTimeMillis()) =
+        prefs.edit().putLong("provider.verified.$id", atMs).apply()
+
+    fun providerVerifiedAt(id: String): Long? = prefs.getLong("provider.verified.$id", 0L).takeIf { it > 0L }
+
     fun loadProviders(): List<ProviderEndpoint> = runCatching {
         val array = JSONArray(prefs.getString("providers", "[]"))
         buildList {
@@ -45,7 +70,9 @@ class SecureSettings(context: Context) {
                 add(ProviderEndpoint(
                     id = json.getString("id"), name = json.getString("name"), baseUrl = json.getString("baseUrl"), model = json.getString("model"),
                     apiKeyAlias = json.optString("apiKeyAlias").ifBlank { null }, supportsVision = json.optBoolean("supportsVision"),
-                    supportsTools = json.optBoolean("supportsTools"), supportsStreaming = json.optBoolean("supportsStreaming"), timeoutMs = json.optLong("timeoutMs", 60_000),
+                    supportsTools = json.optBoolean("supportsTools"), supportsStreaming = json.optBoolean("supportsStreaming"),
+                    timeoutMs = json.optLong("timeoutMs", 60_000), reasoningEnabled = json.optBoolean("reasoningEnabled", false),
+                    promptProfile = runCatching { PromptProfile.valueOf(json.optString("promptProfile", PromptProfile.AUTO.name)) }.getOrDefault(PromptProfile.AUTO),
                 ))
             }
         }
@@ -70,6 +97,8 @@ class SecureSettings(context: Context) {
         put("id", endpoint.id); put("name", endpoint.name); put("baseUrl", endpoint.baseUrl); put("model", endpoint.model)
         put("apiKeyAlias", endpoint.apiKeyAlias); put("supportsVision", endpoint.supportsVision); put("supportsTools", endpoint.supportsTools)
         put("supportsStreaming", endpoint.supportsStreaming); put("timeoutMs", endpoint.timeoutMs)
+        put("reasoningEnabled", endpoint.reasoningEnabled)
+        put("promptProfile", endpoint.promptProfile.name)
     }
 }
 

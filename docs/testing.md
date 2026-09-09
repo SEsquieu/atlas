@@ -1,9 +1,6 @@
 # Atlas Testing Strategy
 
-Initial testing target:
-
-- upstream: OpenClaw
-- downstream: Android phone
+Primary release target: the native Android runtime with direct local, LAN, or cloud OpenAI-compatible inference. The TypeScript scenario harness and older Android/OpenClaw wrapper tests remain useful deterministic contract coverage; they are not the shipping mobile architecture.
 
 ## Fake-safe scenario harness
 

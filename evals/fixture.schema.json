@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.example/evals/fixture.schema.json",
+  "title": "Atlas behavioral regression fixture",
+  "type": "object",
+  "required": ["id", "title", "origin", "dimensions", "facts", "turns", "expectations"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "title": { "type": "string", "minLength": 1 },
+    "origin": { "enum": ["synthetic", "anonymized_real_session"] },
+    "dimensions": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "claim", "source"],
+        "properties": {
+          "id": { "type": "string" },
+          "claim": { "type": "string" },
+          "source": { "enum": ["user", "observation", "tool", "core_state"] },
+          "supersedes": { "type": "string" }
+        }
+      }
+    },
+    "turns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "role", "text"],
+        "properties": {
+          "id": { "type": "string" },
+          "role": { "enum": ["user", "assistant"] },
+          "text": { "type": "string" },
+          "observed_output": { "type": "boolean" }
+        }
+      }
+    },
+    "expectations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "at_turn", "dimension", "assertion", "severity"],
+        "properties": {
+          "id": { "type": "string" },
+          "at_turn": { "type": "string" },
+          "dimension": { "type": "string" },
+          "assertion": { "type": "string" },
+          "severity": { "enum": ["info", "quality", "safety"] },
+          "fact_ids": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+        }
+      }
+    }
+  }
+}
