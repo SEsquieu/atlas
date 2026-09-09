@@ -28,6 +28,8 @@ Atlas is easiest to understand by following ownership from the persistent runtim
 - [Assets and redistribution](./assets-and-redistribution.md) — tracked media/font/audio inventory and website boundary.
 - [Proposed v0.1.0-alpha.5 notes](./releases/v0.1.0-alpha.5.md) — release scope without claiming unfinished gates are complete.
 - [v0.1 release decisions](./release-decisions.md) — naming, attribution, prototype-history, branch, and distribution choices.
+- [Public release runbook](./public-release-runbook.md) — source freeze, GitHub controls, signing, acceptance, and visibility sequence.
+- [Android release matrix](./release-device-matrix.md) — concrete signed-build acceptance cases and evidence fields.
 
 ## Principles and direction
 

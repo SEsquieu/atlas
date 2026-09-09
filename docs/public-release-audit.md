@@ -22,15 +22,21 @@ This report records checks performed during the release-preparation pass. It avo
 
 No high-confidence credential pattern was found in the current source or scanned reachable historical text. No keystore, private key, model file, session log/export, database, APK, or AAB is tracked in reachable trees. `.env.example` contains placeholders only.
 
+The automated remote CI pass subsequently scanned 121 reachable commits, 9 refs, 1,858 path-bearing objects, and 880 text blobs without a finding. The check now runs on every push and pull request with full checkout history. It intentionally redacts matching values.
+
 This is strong evidence, not a guarantee. GitHub secret scanning or a specialist history scanner should be run independently before visibility changes, especially over deleted refs, forks, Actions logs, caches, and artifacts not represented by reachable Git objects.
 
 ### Personal metadata
 
 Commit author/committer metadata contains a personal email address across history. This is not an application secret, but it becomes public repository metadata. The maintainer must decide whether that exposure is intentional; otherwise rewrite history before publishing and configure a GitHub no-reply address for future commits.
 
+Release decision: preserve the existing authorship and chronology rather than rewrite shared history. Configure a no-reply identity for future commits if future exposure is unwanted.
+
 ### Build and binary artifacts
 
 The repository has one existing Android prerelease with unsigned debug APK/ZIP assets and checksums. These assets are not tracked source, but they and their workflow logs must be reviewed for embedded configuration, debug-only behavior, signing expectations, and accidental user data. Do not present that prerelease as the first public production artifact.
+
+The associated prerelease job log was retrieved and scanned without a high-confidence credential, private-key, JWT, or signing-material finding. Release metadata confirms that its APK is an explicitly unsigned debug artifact. Delete the prerelease and its tag before visibility changes because it is obsolete and misleading, not because a secret was found.
 
 ### Configuration and signing
 
