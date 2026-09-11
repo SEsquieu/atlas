@@ -27,8 +27,18 @@ class CapabilityRouter(
     }
 
     suspend fun route(request: InferenceRequest): InferenceResponse {
+        return routeInternal(request, scope = EndpointScope.ANY)
+    }
+
+    suspend fun routeLocal(request: InferenceRequest): InferenceResponse {
+        return routeInternal(request, scope = EndpointScope.LOCAL)
+    }
+
+    suspend fun routeRemote(request: InferenceRequest): InferenceResponse = routeInternal(request, scope = EndpointScope.REMOTE)
+
+    private suspend fun routeInternal(request: InferenceRequest, scope: EndpointScope): InferenceResponse {
         val routeIds = routes().candidates(request.capability)
-        val candidates = candidates(request, routeIds)
+        val candidates = candidates(request, routeIds, scope)
         if (candidates.isEmpty()) throw InferenceUnavailableException("No valid endpoint is configured for ${request.capability.name.lowercase()}")
 
         val failures = mutableListOf<String>()
@@ -87,13 +97,23 @@ class CapabilityRouter(
         throw InferenceUnavailableException("All ${request.capability.name.lowercase()} routes failed: ${failures.joinToString("; ")}")
     }
 
-    private fun candidates(request: InferenceRequest, routeIds: List<String>): List<ProviderEndpoint> {
+    private fun candidates(request: InferenceRequest, routeIds: List<String>, scope: EndpointScope = EndpointScope.ANY): List<ProviderEndpoint> {
         val configured = endpoints().associateBy { it.id }
         return routeIds.mapNotNull(configured::get)
             .filter { request.image == null || it.supportsVision }
             .filter { request.tools.isEmpty() || it.supportsTools }
             .mapNotNull { endpoint ->
-                runCatching { endpoint.copy(baseUrl = EndpointSecurity.assess(endpoint.baseUrl).normalizedBaseUrl) }.getOrNull()
+                runCatching {
+                    val assessment = EndpointSecurity.assess(endpoint.baseUrl)
+                    val allowed = when (scope) {
+                        EndpointScope.ANY -> true
+                        EndpointScope.LOCAL -> assessment.location != EndpointLocation.REMOTE
+                        EndpointScope.REMOTE -> assessment.location == EndpointLocation.REMOTE
+                    }
+                    if (allowed) endpoint.copy(baseUrl = assessment.normalizedBaseUrl) else null
+                }.getOrNull()
             }
     }
+
+    private enum class EndpointScope { ANY, LOCAL, REMOTE }
 }

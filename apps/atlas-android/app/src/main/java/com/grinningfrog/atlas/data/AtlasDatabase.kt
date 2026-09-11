@@ -44,7 +44,7 @@ import org.json.JSONObject
 import org.json.JSONArray
 import java.util.UUID
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 8) {
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 9) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         db.setForeignKeyConstraintsEnabled(true)
@@ -203,6 +203,49 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         db.execSQL("CREATE INDEX IF NOT EXISTS clarifications_session_status ON clarifications(session_id,status,updated_at DESC)")
     }
 
+    private fun createIntentRuntimeTables(db: SQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS intents (
+            intent_id TEXT PRIMARY KEY, type TEXT NOT NULL, subject TEXT NOT NULL, description TEXT,
+            origin TEXT NOT NULL, created_at INTEGER NOT NULL, last_updated_at INTEGER NOT NULL,
+            last_evaluated_at INTEGER, last_worked_at INTEGER, state TEXT NOT NULL,
+            importance REAL NOT NULL, user_relevance REAL NOT NULL, confidence REAL NOT NULL,
+            environmental_affinity_json TEXT, required_capabilities_json TEXT NOT NULL DEFAULT '[]',
+            required_authorities_json TEXT NOT NULL DEFAULT '[]', estimated_cost REAL, estimated_risk REAL,
+            attempt_count INTEGER NOT NULL DEFAULT 0, identical_failure_count INTEGER NOT NULL DEFAULT 0,
+            successful_step_count INTEGER NOT NULL DEFAULT 0, information_gain REAL, progress_rate REAL,
+            blocked_reason TEXT, next_action TEXT, parent_intent_id TEXT, supersedes_intent_id TEXT,
+            cooldown_until INTEGER, metadata_json TEXT NOT NULL DEFAULT '{}'
+        )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS intents_state_pressure_inputs ON intents(state, importance DESC, user_relevance DESC, last_updated_at DESC)")
+        db.execSQL("""CREATE TABLE IF NOT EXISTS intent_transitions (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT, intent_id TEXT NOT NULL, from_state TEXT NOT NULL,
+            to_state TEXT NOT NULL, reason TEXT, at_ms INTEGER NOT NULL,
+            FOREIGN KEY(intent_id) REFERENCES intents(intent_id)
+        )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS intent_transitions_intent_time ON intent_transitions(intent_id, at_ms DESC)")
+        db.execSQL("""CREATE TABLE IF NOT EXISTS idle_evaluations (
+            evaluation_id TEXT PRIMARY KEY, at_ms INTEGER NOT NULL, autonomy_mode TEXT NOT NULL,
+            environment_json TEXT NOT NULL, candidate_count INTEGER NOT NULL, eligible_count INTEGER NOT NULL,
+            ranked_json TEXT NOT NULL, decision TEXT NOT NULL, selected_intent_id TEXT, reason TEXT NOT NULL,
+            next_evaluation_at INTEGER, budget_usage_json TEXT NOT NULL
+        )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS idle_evaluations_time ON idle_evaluations(at_ms DESC)")
+        db.execSQL("""CREATE TABLE IF NOT EXISTS idle_work_attempts (
+            attempt_id TEXT PRIMARY KEY, intent_id TEXT NOT NULL, started_at INTEGER NOT NULL,
+            completed_at INTEGER NOT NULL, autonomy_mode TEXT NOT NULL, inference_location TEXT NOT NULL,
+            contract_json TEXT NOT NULL, result_json TEXT NOT NULL,
+            FOREIGN KEY(intent_id) REFERENCES intents(intent_id)
+        )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS idle_work_attempts_intent_time ON idle_work_attempts(intent_id, started_at DESC)")
+        db.execSQL("""CREATE TABLE IF NOT EXISTS intent_quarantine (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT, intent_id TEXT, raw_json TEXT NOT NULL,
+            error TEXT NOT NULL, quarantined_at INTEGER NOT NULL
+        )""".trimIndent())
+        db.execSQL("""CREATE TABLE IF NOT EXISTS idle_runtime_state (
+            state_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL
+        )""".trimIndent())
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         createOwnershipTables(db)
         db.execSQL(
@@ -276,6 +319,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         )
         db.execSQL("CREATE INDEX observations_session_time ON observations(session_id, observed_at DESC)")
         createAgentRuntimeTables(db)
+        createIntentRuntimeTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -347,6 +391,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             db.execSQL("CREATE INDEX IF NOT EXISTS memory_scope_status ON memory_items(workspace_id,scope,scope_id,status,updated_at DESC)")
         }
         if (oldVersion < 8) createAgentRuntimeTables(db)
+        if (oldVersion < 9) createIntentRuntimeTables(db)
     }
 
     @Synchronized

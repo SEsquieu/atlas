@@ -1,5 +1,7 @@
 # Runtime code map
 
+Persistent unresolved work and idle autonomy are documented in [persistent-intent-runtime.md](persistent-intent-runtime.md). The Android implementation lives under `apps/atlas-android/app/src/main/java/com/grinningfrog/atlas/intent/` and extends the existing SQLite database and foreground runtime service.
+
 This document maps Atlas concepts to code. It is deliberately explicit about a current repository boundary: the Android app contains the shipping native alpha runtime, while `packages/atlas-core` is a provider-independent reference Core and testable contract surface. They share principles and event vocabulary, but the Kotlin app does not import or execute the TypeScript package.
 
 ## Native Android composition

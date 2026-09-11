@@ -92,6 +92,7 @@ class OpenAiCompatibleBackendTest {
         capability = RouteCapability.FAST,
         systemPrompt = "Reply briefly",
         userText = "Hello",
+        provenance = com.grinningfrog.atlas.model.InferenceProvenance(com.grinningfrog.atlas.model.InferenceDomain.DIAGNOSTIC, com.grinningfrog.atlas.model.InferencePurpose.CONNECTION_TEST, userInitiated = true),
     )
 
     private companion object {

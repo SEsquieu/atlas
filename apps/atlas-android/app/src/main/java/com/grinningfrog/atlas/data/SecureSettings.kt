@@ -6,6 +6,8 @@ import android.security.keystore.KeyProperties
 import com.grinningfrog.atlas.model.ProviderEndpoint
 import com.grinningfrog.atlas.model.PromptProfile
 import com.grinningfrog.atlas.model.RouteTable
+import com.grinningfrog.atlas.intent.IntentAutonomyMode
+import com.grinningfrog.atlas.intent.WorkBudget
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.KeyStore
@@ -56,6 +58,25 @@ class SecureSettings(context: Context) {
     var mediaRetentionDays: Int
         get() = prefs.getInt("privacy.mediaRetentionDays", 7).coerceIn(1, 30)
         set(value) { prefs.edit().putInt("privacy.mediaRetentionDays", value.coerceIn(1, 30)).apply() }
+
+    var intentAutonomyMode: IntentAutonomyMode
+        get() = runCatching { IntentAutonomyMode.valueOf(prefs.getString("intent.autonomyMode", IntentAutonomyMode.PERSIST_ONLY.name)!!) }
+            .getOrDefault(IntentAutonomyMode.PERSIST_ONLY)
+        set(value) { prefs.edit().putString("intent.autonomyMode", value.name).commit() }
+
+    var idleRuntimePaused: Boolean
+        get() = prefs.getBoolean("intent.paused", false)
+        set(value) { prefs.edit().putBoolean("intent.paused", value).commit() }
+
+    fun idleWorkBudget() = WorkBudget(
+        dailyInputTokens = prefs.getLong("intent.budget.inputTokens", 10_000L).coerceAtLeast(0),
+        dailyOutputTokens = prefs.getLong("intent.budget.outputTokens", 5_000L).coerceAtLeast(0),
+        dailyCloudCostUsd = java.lang.Double.longBitsToDouble(prefs.getLong("intent.budget.cloudCostBits", java.lang.Double.doubleToRawLongBits(.05))).coerceAtLeast(0.0),
+        maxModelTokensPerSlice = prefs.getLong("intent.budget.maxModelTokensPerSlice", 2_000L).coerceIn(0L, 32_000L),
+        maxDurationMs = prefs.getLong("intent.budget.maxDurationMs", 90_000L).coerceIn(1_000L, 10 * 60_000L),
+        maxToolCalls = prefs.getInt("intent.budget.maxToolCalls", 6).coerceIn(0, 100),
+        maxConsecutiveSlices = prefs.getInt("intent.budget.maxConsecutiveSlices", 3).coerceIn(1, 20),
+    )
 
     fun markProviderVerified(id: String, atMs: Long = System.currentTimeMillis()) =
         prefs.edit().putLong("provider.verified.$id", atMs).apply()

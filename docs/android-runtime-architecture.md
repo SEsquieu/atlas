@@ -1,5 +1,7 @@
 # Android runtime architecture and v0.1 boundary
 
+Atlas also owns a durable, mode-gated intent ledger and deterministic idle coordinator. See [Persistent Intent and Idle Runtime](persistent-intent-runtime.md). This coordinator consumes lifecycle, user, device-health, heartbeat, and failure signals but remains subordinate to the foreground runtime; direct interaction always preempts idle work.
+
 ## Decision
 
 Atlas v0.1 is an Android-first, device-owned physical-agent runtime with bring-your-own inference. The phone is not an OpenClaw node and no upstream provider owns the physical session.

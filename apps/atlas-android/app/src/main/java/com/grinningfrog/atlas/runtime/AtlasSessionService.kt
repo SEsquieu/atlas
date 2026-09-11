@@ -21,6 +21,11 @@ import com.grinningfrog.atlas.device.MotionMonitor
 import com.grinningfrog.atlas.device.SpeechController
 import com.grinningfrog.atlas.provider.CapabilityRouter
 import com.grinningfrog.atlas.provider.OpenAiCompatibleBackend
+import com.grinningfrog.atlas.intent.AndroidIdleRuntime
+import com.grinningfrog.atlas.intent.SqliteIntentStore
+import com.grinningfrog.atlas.intent.IntentInferenceWorkHandler
+import com.grinningfrog.atlas.intent.IntentMetadataMaintenanceHandler
+import com.grinningfrog.atlas.intent.InferenceLocation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -74,7 +79,15 @@ class AtlasSessionService : LifecycleService() {
                 }
             },
         )
-        runtime = AtlasMobileRuntime(app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope)
+        val idleRuntime = AndroidIdleRuntime(
+            SqliteIntentStore(app.database), app.settings, health, serviceScope,
+            handlers = listOf(
+                IntentMetadataMaintenanceHandler(),
+                IntentInferenceWorkHandler(InferenceLocation.LOCAL, app.database, router),
+                IntentInferenceWorkHandler(InferenceLocation.CLOUD, app.database, router),
+            ),
+        )
+        runtime = AtlasMobileRuntime(app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope, idleRuntime)
         serviceScope.launch {
             runCatching { runtime.initialize() }.onFailure { error ->
                 app.database.loadLatestSession()?.let { session ->

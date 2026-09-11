@@ -9,6 +9,8 @@ enum class ContextMode { MANUAL, LIVE }
 enum class RouteCapability { FAST, VISION, REASONING, FALLBACK }
 enum class InferenceRisk { NORMAL, ELEVATED, SAFETY_CRITICAL }
 enum class LatencyClass { LATENCY_CRITICAL, INTERACTIVE, BACKGROUND }
+enum class InferenceDomain { INTERACTIVE, PERCEPTION, MEMORY, INTENT, DIAGNOSTIC }
+enum class InferencePurpose { USER_RESPONSE, HEARTBEAT_SCENE_REVIEW, MEMORY_COMPACTION, INTENT_ASSESSMENT, INTENT_WORK_SLICE, CONNECTION_TEST }
 enum class ContextStability { STABLE, TRANSITIONING, UNKNOWN }
 enum class MotionState { STATIONARY, HANDHELD_STABLE, TURNING, WALKING, VEHICLE, UNKNOWN }
 enum class PermissionPolicy { NEVER, USER_REQUEST, ACTIVE_SESSION }
@@ -290,6 +292,7 @@ data class InferenceRequest(
     val capability: RouteCapability,
     val systemPrompt: String,
     val userText: String,
+    val provenance: InferenceProvenance,
     val turnId: String? = null,
     val step: Int = 0,
     val messages: List<InferenceMessage> = emptyList(),
@@ -302,6 +305,16 @@ data class InferenceRequest(
     val responseContract: ResponseContract? = null,
     val workspaceId: String = DEFAULT_PERSONAL_WORKSPACE_ID,
     val taskRunId: String? = null,
+)
+
+data class InferenceProvenance(
+    val domain: InferenceDomain,
+    val purpose: InferencePurpose,
+    val triggerEventId: String? = null,
+    val intentId: String? = null,
+    val workAttemptId: String? = null,
+    val autonomyMode: String? = null,
+    val userInitiated: Boolean,
 )
 
 data class InferenceResponse(

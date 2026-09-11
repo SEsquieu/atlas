@@ -116,6 +116,9 @@ import com.grinningfrog.atlas.runtime.AtlasSessionService
 import com.grinningfrog.atlas.ui.AtlasUiPresentation
 import com.grinningfrog.atlas.provider.EndpointSecurity
 import com.grinningfrog.atlas.provider.ProviderConnectionTester
+import com.grinningfrog.atlas.intent.IdleRuntimeStatus
+import com.grinningfrog.atlas.intent.IntentAutonomyMode
+import com.grinningfrog.atlas.intent.IntentState
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.DateFormat
@@ -598,18 +601,128 @@ private fun SystemPage(
     onProvidersChanged: () -> Unit,
 ) {
     var section by remember { mutableStateOf("Inference") }
+    val idleStatus by runtime.idleStatus?.collectAsState() ?: remember { mutableStateOf(IdleRuntimeStatus()) }
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (section == "Inference") Button({ section = "Inference" }, Modifier.weight(1f)) { Text("Inference") }
             else OutlinedButton({ section = "Inference" }, Modifier.weight(1f)) { Text("Inference") }
             if (section == "Data") Button({ section = "Data" }, Modifier.weight(1f)) { Text("Data & logs") }
             else OutlinedButton({ section = "Data" }, Modifier.weight(1f)) { Text("Data & logs") }
+            if (section == "Intent") Button({ section = "Intent" }, Modifier.weight(1f)) { Text("Intent") }
+            else OutlinedButton({ section = "Intent" }, Modifier.weight(1f)) { Text("Intent") }
         }
         Box(Modifier.weight(1f)) {
-            if (section == "Inference") ProviderPage(settings, providers, managedAccount, Modifier.fillMaxSize(), onProvidersChanged)
-            else EventsPage(runtime, snapshot, settings, archive, Modifier.fillMaxSize())
+            when (section) {
+                "Inference" -> ProviderPage(settings, providers, managedAccount, Modifier.fillMaxSize(), onProvidersChanged)
+                "Intent" -> IntentRuntimePage(runtime, idleStatus, snapshot, Modifier.fillMaxSize())
+                else -> EventsPage(runtime, snapshot, settings, archive, Modifier.fillMaxSize())
+            }
         }
     }
+}
+
+@Composable
+private fun IntentRuntimePage(runtime: AtlasMobileRuntime, status: IdleRuntimeStatus, snapshot: RuntimeSnapshot, modifier: Modifier) {
+    LazyColumn(modifier, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            AtlasBrandHeader("IDLE RUNTIME", status.lastDecision.name)
+            Spacer(Modifier.height(14.dp))
+            Text("Persistent intent", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+            Text("Core keeps unfinished work durable. Models are optional, bounded capabilities.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Autonomy mode", fontWeight = FontWeight.Bold)
+                    IntentAutonomyMode.entries.forEach { mode ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(mode.name, fontWeight = if (status.mode == mode) FontWeight.Bold else FontWeight.Normal)
+                                Text(modeDescription(mode), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (status.mode != mode) TextButton(onClick = { runtime.setIntentAutonomyMode(mode) }) { Text("Select") }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text("Runtime status", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("${status.cognitionMode.name} · pressure ${(status.runtimePressure * 100).toInt()}%")
+                    Text(status.lastReason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    status.nextEvaluationAtMs?.let { Text("Next evaluation ${DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(it))}", style = MaterialTheme.typography.bodySmall) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (status.paused) Button({ runtime.resumeIdleRuntime() }) { Text("Resume") }
+                        else OutlinedButton({ runtime.pauseIdleRuntime() }) { Text("Pause") }
+                        OutlinedButton({ runtime.forceIdleEvaluation() }) { Text("Evaluate now") }
+                    }
+                }
+            }
+        }
+        item {
+            val t = status.telemetry
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Activity telemetry", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Runtime evaluations ${t.runtimeEvaluations} · deterministic work ${t.deterministicWorkUnits}")
+                    Text("Local calls ${t.localModelCalls} · cloud calls ${t.cloudModelCalls}")
+                    Text("Idle tokens ${t.idleInputTokens + t.idleOutputTokens} · cloud cost \$${"%.4f".format(t.idleCloudCostUsd)}")
+                    val remaining = status.budgetRemaining
+                    Text("Today remaining: ${remaining.inputTokens + remaining.outputTokens} tokens · \$${"%.4f".format(remaining.cloudCostUsd)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        item {
+            val domains = remember(snapshot.recentEvents) { inferenceDomains(snapshot.recentEvents) }
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Inference by runtime domain", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Interactive ${domains["INTERACTIVE"] ?: 0} · perception ${domains["PERCEPTION"] ?: 0}")
+                    Text("Memory ${domains["MEMORY"] ?: 0} · persistent intent ${domains["INTENT"] ?: 0} · diagnostics ${domains["DIAGNOSTIC"] ?: 0}")
+                    Text("Current session event window. Intent autonomy controls only INTENT.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        if (status.topIntents.isEmpty()) item { NoticeCard("No active intents", "Nothing is valid idle work. Zero model calls is correct behavior.") }
+        else {
+            item { Text("Top intents", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            items(status.topIntents, key = { it.intent.id }) { ranked ->
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(ranked.intent.subject, fontWeight = FontWeight.SemiBold)
+                        Text("${ranked.intent.state.name} · score ${(ranked.score.pressure * 100).toInt()}%", color = MaterialTheme.colorScheme.primary)
+                        ranked.eligibility.reason?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        ranked.intent.nextAction?.let { Text("Next: $it", style = MaterialTheme.typography.bodySmall) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (IntentStateMachineUi.canDormant(ranked.intent.state)) TextButton({ runtime.changeIntentState(ranked.intent.id, IntentState.DORMANT) }) { Text("Dormant") }
+                            if (ranked.intent.state in setOf(IntentState.DORMANT, IntentState.WAITING_EVENT, IntentState.WAITING_USER, IntentState.FAILED, IntentState.BLOCKED)) TextButton({ runtime.changeIntentState(ranked.intent.id, IntentState.ELIGIBLE) }) { Text("Reactivate") }
+                            TextButton({ runtime.changeIntentState(ranked.intent.id, IntentState.ABANDONED) }) { Text("Abandon") }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private object IntentStateMachineUi {
+    fun canDormant(state: IntentState) = state in setOf(IntentState.NEW, IntentState.ELIGIBLE, IntentState.BLOCKED)
+}
+
+private fun inferenceDomains(events: List<AtlasEvent>): Map<String, Int> = events.asSequence()
+    .filter { it.type == "provider.requested" }
+    .mapNotNull { event -> runCatching { org.json.JSONObject(event.dataJson).optString("inferenceDomain").takeIf(String::isNotBlank) }.getOrNull() }
+    .groupingBy { it }
+    .eachCount()
+
+private fun modeDescription(mode: IntentAutonomyMode) = when (mode) {
+    IntentAutonomyMode.OFF -> "No persistent idle intent processing"
+    IntentAutonomyMode.PERSIST_ONLY -> "Continuity only; no autonomous work or model calls"
+    IntentAutonomyMode.DETERMINISTIC -> "Approved non-inference work; hard zero model calls"
+    IntentAutonomyMode.LOCAL -> "Local/private inference allowed; cloud forbidden"
+    IntentAutonomyMode.BUDGETED -> "Local and cloud inference within hard budgets"
 }
 
 @Composable

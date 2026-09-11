@@ -19,6 +19,9 @@ import com.grinningfrog.atlas.model.InferenceRequest
 import com.grinningfrog.atlas.model.InferenceResponse
 import com.grinningfrog.atlas.model.InferenceStreamEvent
 import com.grinningfrog.atlas.model.InferenceMessage
+import com.grinningfrog.atlas.model.InferenceDomain
+import com.grinningfrog.atlas.model.InferencePurpose
+import com.grinningfrog.atlas.model.InferenceProvenance
 import com.grinningfrog.atlas.model.MediaPurpose
 import com.grinningfrog.atlas.model.PendingClarification
 import com.grinningfrog.atlas.model.ListeningState
@@ -36,6 +39,10 @@ import com.grinningfrog.atlas.model.ToolCallProposal
 import com.grinningfrog.atlas.model.TurnStatus
 import com.grinningfrog.atlas.model.VisualObservation
 import com.grinningfrog.atlas.provider.CapabilityRouter
+import com.grinningfrog.atlas.intent.AndroidIdleRuntime
+import com.grinningfrog.atlas.intent.IdleRuntimeStatus
+import com.grinningfrog.atlas.intent.IntentAutonomyMode
+import com.grinningfrog.atlas.intent.IntentState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -68,12 +75,14 @@ class AtlasMobileRuntime(
     private val health: DeviceHealthMonitor,
     private val router: CapabilityRouter,
     private val scope: CoroutineScope,
+    private val idleRuntime: AndroidIdleRuntime? = null,
     private val onLiveContextChanged: (Boolean) -> Unit = {},
 ) {
     private val operations = Mutex()
     private val generation = AtomicLong(0)
     private val mutableState = MutableStateFlow(RuntimeSnapshot())
     val state: StateFlow<RuntimeSnapshot> = mutableState.asStateFlow()
+    val idleStatus: StateFlow<IdleRuntimeStatus>? get() = idleRuntime?.status
     private var heartbeatJob: Job? = null
     private var compactionJob: Job? = null
     private var activeTurnJob: Job? = null
@@ -101,6 +110,7 @@ class AtlasMobileRuntime(
         val live = session?.let { it.status == SessionStatus.ACTIVE && it.contextMode == ContextMode.LIVE } == true
         onLiveContextChanged(live)
         if (live) startHeartbeat()
+        idleRuntime?.start()
     }
 
     suspend fun createAndStartSession(name: String, goal: String): AtlasSession = operations.withLock {
@@ -169,6 +179,7 @@ class AtlasMobileRuntime(
     }
 
     suspend fun captureNow(reason: String = "user-request"): VisualObservation = operations.withLock {
+        idleRuntime?.onUserInteraction()
         val session = requireActiveSession()
         captureLocked(session, reason)
     }
@@ -194,6 +205,7 @@ class AtlasMobileRuntime(
     }
 
     suspend fun listenAndAsk() {
+        idleRuntime?.onUserInteraction()
         val session = requireActiveSession()
         val priorTurn = activeTurnJob
         if (speech.isSpeaking || priorTurn?.isActive == true) {
@@ -227,7 +239,9 @@ class AtlasMobileRuntime(
     }
 
     suspend fun ask(text: String, voice: Boolean = false) {
+        idleRuntime?.onUserInteraction()
         require(text.isNotBlank()) { "Ask Atlas something first" }
+        idleRuntime?.observeUserText(text)
         cancelLateTurn("superseded by a new user turn")
         compactionJob?.cancel(); compactionJob = null
         val job = currentCoroutineContext()[Job]
@@ -253,6 +267,7 @@ class AtlasMobileRuntime(
     }
 
     fun cancelActiveTurn(reason: String = "user cancelled") {
+        idleRuntime?.onUserInteraction()
         generation.incrementAndGet()
         speech.stopSpeaking()
         (activeTurnId ?: mutableState.value.activeTurn?.id)?.let { turnId -> runCatching {
@@ -280,6 +295,7 @@ class AtlasMobileRuntime(
     }
 
     suspend fun resolveToolCall(toolCallId: String, approved: Boolean) {
+        idleRuntime?.onUserInteraction()
         val job = currentCoroutineContext()[Job]
         activeTurnJob = job
         try {
@@ -392,6 +408,12 @@ class AtlasMobileRuntime(
                 contextNote = observation?.let(::observationContext),
                 risk = risk,
                 responseContract = responseContract,
+                provenance = InferenceProvenance(
+                    domain = InferenceDomain.INTERACTIVE,
+                    purpose = InferencePurpose.USER_RESPONSE,
+                    triggerEventId = turnId,
+                    userInitiated = true,
+                ),
             )
             val request = baseRequest.copy(tools = if (toolsAvailable) toolHarness.definitions else emptyList())
             database.appendEvent(session.id, "context.assembled", JSONObject().apply {
@@ -404,7 +426,8 @@ class AtlasMobileRuntime(
             database.appendEvent(session.id, "provider.requested", JSONObject().put("turnId", turnId).put("step", step).put("requestId", request.requestId)
                 .put("capability", capability.name).put("risk", request.risk.name).put("latencyClass", request.latencyClass.name)
                 .put("toolCount", request.tools.size).put("visionAttached", request.image != null)
-                .put("maxOutputTokens", request.responseContract?.maxOutputTokens).put("softTimeoutMs", MODEL_SOFT_TIMEOUT_MS))
+                .put("maxOutputTokens", request.responseContract?.maxOutputTokens).put("softTimeoutMs", MODEL_SOFT_TIMEOUT_MS)
+                .putProvenance(request.provenance))
             val operationGeneration = generation.get()
             val response = try {
                 streamModelStep(session, turnId, request, spoken)
@@ -786,6 +809,11 @@ class AtlasMobileRuntime(
         } catch (error: Exception) {
             val result = JSONObject().put("ok", false).put("error", error.safeMessage()).toString()
             database.updateToolCall(call.id, ToolCallStatus.FAILED, resultJson = result, error = error.safeMessage())
+            database.appendEvent(call.sessionId, "tool.failed", JSONObject().put("tool", call.name).put("error", error.safeMessage()))
+            val count = database.loadRecentEvents(call.sessionId, 100).count { event ->
+                event.type == "tool.failed" && runCatching { JSONObject(event.dataJson).optString("tool") == call.name }.getOrDefault(false)
+            }
+            idleRuntime?.observeRepeatedFailure("${call.name} repeatedly failed", error.safeMessage(), count)
             recordToolResult(call, result)
         }
     }
@@ -854,8 +882,14 @@ class AtlasMobileRuntime(
             systemPrompt = "You produce loss-minimizing conversation checkpoints for Atlas Core.",
             userText = prompt,
             latencyClass = com.grinningfrog.atlas.model.LatencyClass.BACKGROUND,
+            provenance = InferenceProvenance(
+                domain = InferenceDomain.MEMORY,
+                purpose = InferencePurpose.MEMORY_COMPACTION,
+                triggerEventId = candidates.last().id,
+                userInitiated = false,
+            ),
         )
-        database.appendEvent(session.id, "provider.requested", JSONObject().put("source", "memory_compaction").put("requestId", request.requestId))
+        database.appendEvent(session.id, "provider.requested", JSONObject().put("source", "memory_compaction").put("requestId", request.requestId).putProvenance(request.provenance))
         try {
             val response = router.route(request)
             val through = candidates.last().sequence
@@ -880,6 +914,7 @@ class AtlasMobileRuntime(
     }
 
     fun stopSpeaking() {
+        idleRuntime?.onUserInteraction()
         val turnStatus = activeTurnId?.let(database::loadTurn)?.status
         val turnStillGenerating = activeTurnJob?.isActive == true && turnStatus !in setOf(
             TurnStatus.COMPLETED, TurnStatus.COMPLETED_LATE, TurnStatus.FAILED, TurnStatus.CANCELLED,
@@ -891,12 +926,19 @@ class AtlasMobileRuntime(
     }
 
     fun close() {
+        idleRuntime?.close()
         heartbeatJob?.cancel()
         compactionJob?.cancel()
         lateTurnJob?.cancel()
         onLiveContextChanged(false)
         stopDevices()
     }
+
+    fun setIntentAutonomyMode(mode: IntentAutonomyMode) = idleRuntime?.setMode(mode)
+    fun pauseIdleRuntime() = idleRuntime?.pause()
+    fun resumeIdleRuntime() = idleRuntime?.resume()
+    fun forceIdleEvaluation() = idleRuntime?.forceEvaluation()
+    fun changeIntentState(intentId: String, state: IntentState) = idleRuntime?.changeIntentState(intentId, state)
 
     private suspend fun startDevices() {
         if (devicesStarted) return
@@ -934,6 +976,7 @@ class AtlasMobileRuntime(
     private suspend fun heartbeatOnce() = operations.withLock {
         val session = requireActiveSession()
         val deviceHealth = health.snapshot()
+        idleRuntime?.observeEnvironment(deviceHealth)
         val latest = database.loadLatestObservation(session.id)
         val staleWindow = FreshnessPolicy.heartbeatWindow(deviceHealth.motion, batteryConstrained(deviceHealth))
         val expectedLatency = latest?.timing?.totalMs ?: 4_000
@@ -969,9 +1012,19 @@ class AtlasMobileRuntime(
             image = mediaRepository.inferenceImage(observation.media),
             risk = com.grinningfrog.atlas.model.InferenceRisk.ELEVATED,
             latencyClass = com.grinningfrog.atlas.model.LatencyClass.BACKGROUND,
+            responseContract = com.grinningfrog.atlas.model.ResponseContract(
+                mode = com.grinningfrog.atlas.model.ResponseMode.DEFAULT, targetWords = 60, hardMaxWords = 80,
+                maxSentences = 4, maxOutputTokens = 200,
+            ),
+            provenance = InferenceProvenance(
+                domain = InferenceDomain.PERCEPTION,
+                purpose = InferencePurpose.HEARTBEAT_SCENE_REVIEW,
+                triggerEventId = observation.id,
+                userInitiated = false,
+            ),
         )
         database.appendEvent(session.id, "provider.requested", JSONObject().put("source", "heartbeat").put("requestId", request.requestId)
-            .put("capability", "FAST").put("risk", request.risk.name).put("latencyClass", request.latencyClass.name))
+            .put("capability", "FAST").put("risk", request.risk.name).put("latencyClass", request.latencyClass.name).putProvenance(request.provenance))
         try {
             val response = router.route(request)
             val interpretedAt = System.currentTimeMillis()
@@ -1009,6 +1062,10 @@ class AtlasMobileRuntime(
             observation
         } catch (error: Exception) {
             database.appendEvent(session.id, "tool.failed", JSONObject().put("tool", "capture_current_view").put("error", error.safeMessage()))
+            val count = database.loadRecentEvents(session.id, 100).count { event ->
+                event.type == "tool.failed" && runCatching { JSONObject(event.dataJson).optString("tool") == "capture_current_view" }.getOrDefault(false)
+            }
+            idleRuntime?.observeRepeatedFailure("Camera capture repeatedly failed", error.safeMessage(), count)
             throw error
         }
     }
@@ -1121,6 +1178,16 @@ class AtlasMobileRuntime(
 }
 
 private fun Throwable.safeMessage(): String = message?.take(500) ?: javaClass.simpleName
+
+private fun JSONObject.putProvenance(provenance: InferenceProvenance): JSONObject = apply {
+    put("inferenceDomain", provenance.domain.name)
+    put("inferencePurpose", provenance.purpose.name)
+    put("userInitiated", provenance.userInitiated)
+    provenance.triggerEventId?.let { put("triggerEventId", it) }
+    provenance.intentId?.let { put("intentId", it) }
+    provenance.workAttemptId?.let { put("workAttemptId", it) }
+    provenance.autonomyMode?.let { put("autonomyMode", it) }
+}
 
 object AgentLoopPolicy {
     const val MAX_STEPS = 8

@@ -5,6 +5,7 @@ Atlas is easiest to understand by following ownership from the persistent runtim
 ## Runtime and ownership
 
 - [Runtime code map](./runtime-code-map.md) — end-to-end path through the shipping Android implementation, with direct source links.
+- [Persistent intent and idle runtime](./persistent-intent-runtime.md) — durable unresolved intent, autonomy modes, scoring, budgets, preemption, and idle telemetry.
 - [Architecture](./architecture.md) — repository-level components and ownership boundaries.
 - [Android runtime architecture](./android-runtime-architecture.md) — native service, runtime, persistence, provider, camera, and speech composition.
 - [Atlas Core](./agent-runtime.md) — turn persistence, context assembly, memory admission, tools, recovery, and loop budgets.
