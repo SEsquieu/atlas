@@ -2,6 +2,8 @@ package com.grinningfrog.atlas.intent
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.supervisorScope
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 import kotlin.random.Random
@@ -133,11 +135,15 @@ class IdleRuntimeCoordinator(
         val consumed = store.loadBudgetUsage(day)
         if (!IdleBudgetLedger(budget, consumed).permits(reservation)) return null
         val startedGeneration = generation.get()
-        val current = kotlinx.coroutines.currentCoroutineContext()[Job]
-        activeJob = current
+        var sliceJob: Job? = null
         transition(selected.intent, IntentState.ACTIVE, environment.nowMs, "work slice granted")
         return try {
-            val result = handler.execute(selected.intent, contract)
+            val result = supervisorScope {
+                val worker = async { handler.execute(selected.intent, contract) }
+                sliceJob = worker
+                activeJob = worker
+                worker.await()
+            }
             if (generation.get() != startedGeneration || modeProvider() != modeAtStart) throw CancellationException("idle work invalidated")
             applyResult(selected.intent.copy(state = IntentState.ACTIVE), result, environment.nowMs)
             store.updateBudgetUsage(day) { it + result.usage }
@@ -156,7 +162,7 @@ class IdleRuntimeCoordinator(
             ))
             result
         } finally {
-            if (activeJob === current) activeJob = null
+            if (activeJob === sliceJob) activeJob = null
         }
     }
 
