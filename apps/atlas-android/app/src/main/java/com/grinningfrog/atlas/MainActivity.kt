@@ -664,7 +664,7 @@ private fun CapabilityToolsPage(settings: SecureSettings, modifier: Modifier) {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Location", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text(if (locationGranted) "● Android permission granted" else "Permission not granted", color = if (locationGranted) AtlasGreen else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (locationGranted) "● Android permission granted" else "Permission not granted", color = if (locationGranted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Enables foreground current-location and reverse-geocoding tools. Atlas asks before sharing a fresh location with a model.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (!locationGranted) Button(onClick = {
                         locationLauncher.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
@@ -676,7 +676,7 @@ private fun CapabilityToolsPage(settings: SecureSettings, modifier: Modifier) {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Structured findings", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("Available", color = AtlasGreen)
+                    Text("Available", color = MaterialTheme.colorScheme.primary)
                     Text("Atlas can preserve capability ideas, bugs, UX issues, policy gaps, and proposed improvements as structured session events included in exports.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -685,7 +685,7 @@ private fun CapabilityToolsPage(settings: SecureSettings, modifier: Modifier) {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Bounded web search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text(if (searchConfigured) "● Brave Search configured" else "Not configured", color = if (searchConfigured) AtlasGreen else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (searchConfigured) "● Brave Search configured" else "Not configured", color = if (searchConfigured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Returns at most five public results per call with strict safe search. The key is protected by Android Keystore and never sent to the inference provider.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     OutlinedTextField(braveKey, { braveKey = it }, label = { Text(if (searchConfigured) "Replace Brave Search API key" else "Brave Search API key") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
