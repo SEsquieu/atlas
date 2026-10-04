@@ -35,7 +35,7 @@ object FreshnessPolicy {
     private val highRisk = Regex("(wire.*cut|safe|danger|hazard|drive|energized|live circuit)", RegexOption.IGNORE_CASE)
     private val navigation = Regex("(where should|which way|right place|right aisle|navigate|direction)", RegexOption.IGNORE_CASE)
     private val detail = Regex("(read this|what does this say|label|small text|serial|part number|model number)", RegexOption.IGNORE_CASE)
-    private val confirmation = Regex("(^|\\s)(is|are|am|do|does|confirm|right one)", RegexOption.IGNORE_CASE)
+    private val confirmation = Regex("^\\s*(is|are|am|do|does|can|confirm)\\b|\\b(right one|correct one)\\b", RegexOption.IGNORE_CASE)
 
     fun classify(text: String): VisualUseCase {
         if (highRisk.containsMatchIn(text)) return VisualUseCase.HIGH_RISK
