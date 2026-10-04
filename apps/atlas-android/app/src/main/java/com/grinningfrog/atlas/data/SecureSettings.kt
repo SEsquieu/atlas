@@ -5,6 +5,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import com.grinningfrog.atlas.model.ProviderEndpoint
 import com.grinningfrog.atlas.model.PromptProfile
+import com.grinningfrog.atlas.model.ProviderKind
 import com.grinningfrog.atlas.model.RouteTable
 import com.grinningfrog.atlas.intent.IntentAutonomyMode
 import com.grinningfrog.atlas.intent.WorkBudget
@@ -94,6 +95,7 @@ class SecureSettings(context: Context) {
                     supportsTools = json.optBoolean("supportsTools"), supportsStreaming = json.optBoolean("supportsStreaming"),
                     timeoutMs = json.optLong("timeoutMs", 60_000), reasoningEnabled = json.optBoolean("reasoningEnabled", false),
                     promptProfile = runCatching { PromptProfile.valueOf(json.optString("promptProfile", PromptProfile.AUTO.name)) }.getOrDefault(PromptProfile.AUTO),
+                    kind = runCatching { ProviderKind.valueOf(json.optString("kind", ProviderKind.OPENAI_COMPATIBLE.name)) }.getOrDefault(ProviderKind.OPENAI_COMPATIBLE),
                 ))
             }
         }
@@ -104,6 +106,7 @@ class SecureSettings(context: Context) {
     fun putSecret(alias: String, value: String) = SecretStore.put(alias, value, prefs)
     fun secret(alias: String): String? = SecretStore.get(alias, prefs)
     fun removeSecret(alias: String) = SecretStore.remove(alias, prefs)
+    fun putSecretAtomically(alias: String, value: String): Boolean = SecretStore.put(alias, value, prefs, synchronous = true)
 
     fun saveRoutes(routes: RouteTable) = prefs.edit().putString("routes", JSONObject().apply {
         put("fast", JSONArray(routes.fast)); put("vision", JSONArray(routes.vision)); put("reasoning", JSONArray(routes.reasoning)); put("fallback", JSONArray(routes.fallback))
@@ -120,6 +123,7 @@ class SecureSettings(context: Context) {
         put("supportsStreaming", endpoint.supportsStreaming); put("timeoutMs", endpoint.timeoutMs)
         put("reasoningEnabled", endpoint.reasoningEnabled)
         put("promptProfile", endpoint.promptProfile.name)
+        put("kind", endpoint.kind.name)
     }
 }
 
@@ -133,10 +137,11 @@ private object SecretStore {
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
 
     @OptIn(ExperimentalEncodingApi::class)
-    fun put(alias: String, value: String, prefs: android.content.SharedPreferences) {
+    fun put(alias: String, value: String, prefs: android.content.SharedPreferences, synchronous: Boolean = false): Boolean {
         val cipher = Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, key()) }
         val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
-        prefs.edit().putString("secret.$alias", Base64.encode(cipher.iv) + ":" + Base64.encode(encrypted)).apply()
+        val editor = prefs.edit().putString("secret.$alias", Base64.encode(cipher.iv) + ":" + Base64.encode(encrypted))
+        return if (synchronous) editor.commit() else { editor.apply(); true }
     }
 
     @OptIn(ExperimentalEncodingApi::class)

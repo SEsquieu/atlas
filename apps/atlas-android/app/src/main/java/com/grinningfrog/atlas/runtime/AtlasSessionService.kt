@@ -21,6 +21,8 @@ import com.grinningfrog.atlas.device.MotionMonitor
 import com.grinningfrog.atlas.device.SpeechController
 import com.grinningfrog.atlas.provider.CapabilityRouter
 import com.grinningfrog.atlas.provider.OpenAiCompatibleBackend
+import com.grinningfrog.atlas.provider.ChatGptPlanBackend
+import com.grinningfrog.atlas.provider.ProviderBackendRegistry
 import com.grinningfrog.atlas.intent.AndroidIdleRuntime
 import com.grinningfrog.atlas.intent.SqliteIntentStore
 import com.grinningfrog.atlas.intent.IntentInferenceWorkHandler
@@ -57,10 +59,14 @@ class AtlasSessionService : LifecycleService() {
         val speech = SpeechController(this)
         val health = DeviceHealthMonitor(this, motion)
         val router = CapabilityRouter(
-            backend = OpenAiCompatibleBackend(),
-            endpoints = app.settings::loadProviders,
+            backend = ProviderBackendRegistry(OpenAiCompatibleBackend(), ChatGptPlanBackend(app.chatGptAuth)),
+            endpoints = app::inferenceProviders,
             routes = app.settings::loadRoutes,
-            apiKey = { endpoint -> if (endpoint.id == com.grinningfrog.atlas.cloud.ManagedAccountClient.ENDPOINT_ID) app.managedAccount.accessToken() else app.settings.apiKey(endpoint) },
+            apiKey = { endpoint -> when {
+                endpoint.id == com.grinningfrog.atlas.cloud.ManagedAccountClient.ENDPOINT_ID -> app.managedAccount.accessToken()
+                endpoint.id == com.grinningfrog.atlas.provider.ChatGptAuthManager.ENDPOINT_ID -> null
+                else -> app.settings.apiKey(endpoint)
+            } },
             onAttempt = { endpoint, success, error ->
                 app.database.loadLatestSession()?.let { session ->
                     app.database.appendEvent(session.id, "provider.route_attempted", JSONObject().apply {

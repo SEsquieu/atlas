@@ -66,6 +66,20 @@ class CapabilityRouterTest {
         assertEquals("cloud", router.routeRemote(request(RouteCapability.REASONING)).endpointId)
     }
 
+    @Test fun backendRegistryKeepsChatGptSeparateFromChatCompletions() = runTest {
+        val attempts = mutableListOf<String>()
+        fun backend(label: String) = object : InferenceBackend {
+            override suspend fun infer(endpoint: ProviderEndpoint, apiKey: String?, request: InferenceRequest): InferenceResponse {
+                attempts += label
+                return InferenceResponse(request.requestId, endpoint.id, label, 1)
+            }
+        }
+        val registry = ProviderBackendRegistry(backend("compatible"), backend("chatgpt"))
+        registry.infer(ProviderEndpoint("cg", "ChatGPT", "https://api.openai.com/v1", "model", kind = com.grinningfrog.atlas.model.ProviderKind.CHATGPT_PLAN), null, request(RouteCapability.FAST))
+        registry.infer(ProviderEndpoint("lan", "LAN", "http://localhost:11434", "model"), null, request(RouteCapability.FAST))
+        assertEquals(listOf("chatgpt", "compatible"), attempts)
+    }
+
     private fun endpoint(id: String) = ProviderEndpoint(id, id, "http://localhost:11434", "test", supportsVision = true)
     private fun request(capability: RouteCapability) = InferenceRequest(
         sessionId = "session", capability = capability, systemPrompt = "system", userText = "hello",

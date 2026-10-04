@@ -30,6 +30,7 @@ enum class DeliveryStatus { NOT_APPLICABLE, PENDING, DELIVERED, INTERRUPTED, TEX
 enum class SpeechSegmentStatus { QUEUED, STARTED, COMPLETED, INTERRUPTED, SKIPPED, FAILED }
 enum class ResponseMode { IMMEDIATE, DEFAULT, PHYSICAL_GUIDANCE, SAFETY, EXPLANATION }
 enum class PromptProfile { AUTO, FULL, COMPACT }
+enum class ProviderKind { OPENAI_COMPATIBLE, CHATGPT_PLAN, MANAGED }
 enum class WorkspaceKind { PERSONAL, ORGANIZATION }
 enum class PrincipalKind { USER, SERVICE, DEVICE }
 enum class TaskRunStatus { PENDING, ACTIVE, BLOCKED, COMPLETED, CANCELLED }
@@ -270,6 +271,7 @@ data class ProviderEndpoint(
     val timeoutMs: Long = 60_000,
     val reasoningEnabled: Boolean = false,
     val promptProfile: PromptProfile = PromptProfile.AUTO,
+    val kind: ProviderKind = ProviderKind.OPENAI_COMPATIBLE,
 )
 
 data class RouteTable(

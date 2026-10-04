@@ -116,6 +116,8 @@ import com.grinningfrog.atlas.runtime.AtlasSessionService
 import com.grinningfrog.atlas.ui.AtlasUiPresentation
 import com.grinningfrog.atlas.provider.EndpointSecurity
 import com.grinningfrog.atlas.provider.ProviderConnectionTester
+import com.grinningfrog.atlas.provider.ChatGptAuthManager
+import com.grinningfrog.atlas.provider.ChatGptAuthState
 import com.grinningfrog.atlas.intent.IdleRuntimeStatus
 import com.grinningfrog.atlas.intent.IntentAutonomyMode
 import com.grinningfrog.atlas.intent.IntentState
@@ -158,6 +160,7 @@ class MainActivity : ComponentActivity() {
                     settings = app.settings,
                     mediaRepository = app.mediaRepository,
                     managedAccount = app.managedAccount,
+                    chatGptAuth = app.chatGptAuth,
                     sessionArchive = app.sessionArchive,
                     onboardingComplete = onboardingComplete,
                     permissionsGranted = permissionsGranted,
@@ -212,6 +215,7 @@ private fun AtlasApp(
     settings: SecureSettings,
     mediaRepository: MediaRepository,
     managedAccount: ManagedAccountClient,
+    chatGptAuth: ChatGptAuthManager,
     sessionArchive: SessionArchive,
     onboardingComplete: Boolean,
     permissionsGranted: Boolean,
@@ -222,7 +226,10 @@ private fun AtlasApp(
     var page by remember { mutableStateOf(AppPage.ATLAS) }
     val sessionActionScope = rememberCoroutineScope()
     var providerRevision by remember { mutableIntStateOf(0) }
-    val providers = remember(providerRevision) { settings.loadProviders() }
+    val chatGptState by chatGptAuth.state.collectAsState()
+    val providers = remember(providerRevision, chatGptState) { buildList {
+        addAll(settings.loadProviders()); chatGptAuth.endpointOrNull()?.let(::add)
+    } }
     val snapshot by runtime?.state?.collectAsState() ?: remember { mutableStateOf(RuntimeSnapshot()) }
 
     if (!onboardingComplete) {
@@ -248,7 +255,7 @@ private fun AtlasApp(
             runtime == null -> LoadingRuntime(Modifier.padding(padding))
             page == AppPage.ATLAS -> AtlasHomePage(runtime, snapshot, providers.isNotEmpty(), mediaRepository, sessionActionScope, Modifier.padding(padding), onOpenSession = { page = AppPage.SESSION }, onOpenSystem = { page = AppPage.SYSTEM })
             page == AppPage.SESSION -> SessionPage(runtime, snapshot, providers.isNotEmpty(), mediaRepository, sessionActionScope, Modifier.padding(padding), onConfigureInference = { page = AppPage.SYSTEM })
-            page == AppPage.SYSTEM -> SystemPage(runtime, snapshot, settings, providers, managedAccount, sessionArchive, Modifier.padding(padding)) { providerRevision++ }
+            page == AppPage.SYSTEM -> SystemPage(runtime, snapshot, settings, providers, managedAccount, chatGptAuth, sessionArchive, Modifier.padding(padding)) { providerRevision++ }
         }
     }
 }
@@ -596,6 +603,7 @@ private fun SystemPage(
     settings: SecureSettings,
     providers: List<ProviderEndpoint>,
     managedAccount: ManagedAccountClient,
+    chatGptAuth: ChatGptAuthManager,
     archive: SessionArchive,
     modifier: Modifier,
     onProvidersChanged: () -> Unit,
@@ -613,7 +621,7 @@ private fun SystemPage(
         }
         Box(Modifier.weight(1f)) {
             when (section) {
-                "Inference" -> ProviderPage(settings, providers, managedAccount, Modifier.fillMaxSize(), onProvidersChanged)
+                "Inference" -> ProviderPage(settings, providers, managedAccount, chatGptAuth, Modifier.fillMaxSize(), onProvidersChanged)
                 "Intent" -> IntentRuntimePage(runtime, idleStatus, snapshot, Modifier.fillMaxSize())
                 else -> EventsPage(runtime, snapshot, settings, archive, Modifier.fillMaxSize())
             }
@@ -1021,9 +1029,10 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
 }
 
 @Composable
-private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpoint>, managedAccount: ManagedAccountClient, modifier: Modifier, onChanged: () -> Unit) {
+private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpoint>, managedAccount: ManagedAccountClient, chatGptAuth: ChatGptAuthManager, modifier: Modifier, onChanged: () -> Unit) {
     val scope = rememberCoroutineScope()
     val managedState by managedAccount.state.collectAsState()
+    val chatGptState by chatGptAuth.state.collectAsState()
     val tester = remember { ProviderConnectionTester() }
     var name by remember { mutableStateOf("") }
     var baseUrl by remember { mutableStateOf("") }
@@ -1070,11 +1079,14 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
             }
         }
         item {
+            ChatGptPlanCard(chatGptAuth, chatGptState, settings) { onChanged() }
+        }
+        item {
             if (managedState.configured) ManagedAccountCard(managedAccount, settings, onChanged)
             else ManagedInferenceSoonCard()
         }
         if (providers.isNotEmpty()) item { Text("Configured endpoints", style = MaterialTheme.typography.titleMedium) }
-        items(providers, key = { it.id }) { endpoint ->
+        items(providers.filter { it.kind != com.grinningfrog.atlas.model.ProviderKind.CHATGPT_PLAN }, key = { it.id }) { endpoint ->
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -1208,6 +1220,80 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Save endpoint") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatGptPlanCard(
+    auth: ChatGptAuthManager,
+    state: ChatGptAuthState,
+    settings: SecureSettings,
+    onChanged: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .35f))) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("CHATGPT", color = MaterialTheme.colorScheme.primary, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 1.sp)
+            when (state) {
+                ChatGptAuthState.Disconnected -> {
+                    Text("Continue with ChatGPT", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Use eligible inference included with your ChatGPT plan. No API key required. Atlas cannot access your ChatGPT conversations or memory.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = { scope.launch {
+                        val result = auth.authorize()
+                        if (result is ChatGptAuthState.Connected) {
+                            val routes = settings.loadRoutes()
+                            val id = ChatGptAuthManager.ENDPOINT_ID
+                            settings.saveRoutes(routes.copy(
+                                fast = (routes.fast + id).distinct(), vision = (routes.vision + id).distinct(),
+                                reasoning = (routes.reasoning + id).distinct(), fallback = (routes.fallback + id).distinct(),
+                            ))
+                        }
+                        onChanged()
+                    } }, modifier = Modifier.fillMaxWidth()) { Text("Continue with ChatGPT") }
+                }
+                ChatGptAuthState.Authenticating -> {
+                    Text("Waiting for OpenAI authorization…", fontWeight = FontWeight.Bold)
+                    Text("Finish sign-in in your browser, then return to Atlas.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    CircularProgressIndicator(Modifier.size(28.dp))
+                }
+                ChatGptAuthState.Refreshing -> {
+                    Text("Refreshing ChatGPT authorization…", fontWeight = FontWeight.Bold)
+                    CircularProgressIndicator(Modifier.size(28.dp))
+                }
+                is ChatGptAuthState.Connected -> {
+                    Text("● Connected", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    Text("Using ChatGPT plan${state.email?.let { " · $it" }.orEmpty()}")
+                    Text("Text · images where accepted · Atlas tools · streaming", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Model: ${state.models.firstOrNull { it.slug == state.model }?.displayName ?: state.model}", style = MaterialTheme.typography.bodySmall)
+                    if (state.models.size > 1) OutlinedButton(onClick = {
+                        val current = state.models.indexOfFirst { it.slug == state.model }.coerceAtLeast(0)
+                        auth.selectModel(state.models[(current + 1) % state.models.size].slug); onChanged()
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Choose next eligible model") }
+                    OutlinedButton(onClick = { scope.launch {
+                        auth.disconnect()
+                        val id = ChatGptAuthManager.ENDPOINT_ID
+                        val routes = settings.loadRoutes()
+                        settings.saveRoutes(routes.copy(fast = routes.fast - id, vision = routes.vision - id, reasoning = routes.reasoning - id, fallback = routes.fallback - id))
+                        onChanged()
+                    } }, modifier = Modifier.fillMaxWidth()) { Text("Disconnect") }
+                }
+                is ChatGptAuthState.AuthorizationRequired -> {
+                    Text("Authorization required", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    Text(state.message)
+                    Button(onClick = { scope.launch { auth.authorize(); onChanged() } }, modifier = Modifier.fillMaxWidth()) { Text("Continue with ChatGPT") }
+                }
+                is ChatGptAuthState.EntitlementUnavailable -> {
+                    Text("ChatGPT plan unavailable", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    Text(state.message)
+                    OutlinedButton(onClick = { scope.launch { auth.authorize(); onChanged() } }, modifier = Modifier.fillMaxWidth()) { Text("Authorize plan usage") }
+                }
+                is ChatGptAuthState.Error -> {
+                    Text("ChatGPT connection error", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    Text(state.message)
+                    OutlinedButton(onClick = { scope.launch { auth.authorize(); onChanged() } }, modifier = Modifier.fillMaxWidth()) { Text("Try again") }
                 }
             }
         }

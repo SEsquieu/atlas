@@ -6,6 +6,7 @@ import com.grinningfrog.atlas.data.SecureSettings
 import com.grinningfrog.atlas.media.MediaRepository
 import com.grinningfrog.atlas.cloud.ManagedAccountClient
 import com.grinningfrog.atlas.data.SessionArchive
+import com.grinningfrog.atlas.provider.ChatGptAuthManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,7 +17,13 @@ class AtlasApplication : Application() {
     val settings by lazy { SecureSettings(this) }
     val mediaRepository by lazy { MediaRepository(this) }
     val managedAccount by lazy { ManagedAccountClient(this, settings) }
+    val chatGptAuth by lazy { ChatGptAuthManager(this, settings) }
     val sessionArchive by lazy { SessionArchive(this, database, mediaRepository) }
+
+    fun inferenceProviders() = buildList {
+        addAll(settings.loadProviders())
+        chatGptAuth.endpointOrNull()?.let(::add)
+    }
 
     override fun onCreate() {
         super.onCreate()
