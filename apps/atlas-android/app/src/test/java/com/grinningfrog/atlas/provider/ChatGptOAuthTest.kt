@@ -7,6 +7,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatGptOAuthTest {
+    @Test fun jwkThumbprintUriIncludesRequiredHashAlgorithm() {
+        val uri = ChatGptOAuth.jwkThumbprintUri("{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"x\",\"y\":\"y\"}")
+        assertTrue(uri.startsWith("urn:ietf:params:oauth:jwk-thumbprint:sha-256:"))
+        assertFalse(uri.substringAfterLast(':').contains('='))
+    }
+
     @Test fun pkceUsesFreshUrlSafeValuesAndS256() {
         val first = ChatGptOAuth.randomValue(64)
         val second = ChatGptOAuth.randomValue(64)

@@ -89,6 +89,14 @@ object ChatGptOAuth {
         .digest(verifier.toByteArray(StandardCharsets.US_ASCII))
         .let { Base64.UrlSafe.encode(it).trimEnd('=') }
 
+    @OptIn(ExperimentalEncodingApi::class)
+    internal fun jwkThumbprintUri(canonicalJwk: String): String {
+        val thumbprint = Base64.UrlSafe.encode(
+            MessageDigest.getInstance("SHA-256").digest(canonicalJwk.toByteArray(StandardCharsets.UTF_8)),
+        ).trimEnd('=')
+        return "urn:ietf:params:oauth:jwk-thumbprint:sha-256:$thumbprint"
+    }
+
     fun parseCallback(target: String): OAuthCallback {
         val uri = java.net.URI(target)
         val query = uri.rawQuery.orEmpty().split('&').filter(String::isNotBlank).associate { part ->
@@ -334,8 +342,7 @@ class ChatGptAuthManager(
             return Base64.UrlSafe.encode(raw).trimEnd('=')
         }
         val canonical = "{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"${coordinate(publicKey.w.affineX)}\",\"y\":\"${coordinate(publicKey.w.affineY)}\"}"
-        val thumbprint = Base64.UrlSafe.encode(MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray())).trimEnd('=')
-        return "urn:ietf:params:oauth:jwk-thumbprint:$thumbprint"
+        return ChatGptOAuth.jwkThumbprintUri(canonical)
     }
 
     private data class TokenResult(val accessToken: String, val refreshToken: String, val idToken: String, val scopes: Set<String>, val expiresAtMs: Long, val earliestRefreshAtMs: Long) {
