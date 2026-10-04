@@ -33,12 +33,14 @@ import kotlin.coroutines.resumeWithException
 
 /** Device-context tools remain owned and executed by Atlas; inference providers only propose calls. */
 object AndroidContextTools {
-    fun create(context: Context, database: AtlasDatabase, settings: SecureSettings): List<AtlasToolAdapter> = listOf(
-        CurrentLocationTool(context.applicationContext),
-        ReverseGeocodeTool(context.applicationContext),
-        BraveWebSearchTool(settings),
-        RecordFindingTool(database),
-    )
+    fun create(context: Context, database: AtlasDatabase, settings: SecureSettings): List<AtlasToolAdapter> = buildList {
+        add(CurrentLocationTool(context.applicationContext))
+        add(ReverseGeocodeTool(context.applicationContext))
+        // Do not advertise a local search executor that cannot run. ChatGPT hosted search is
+        // provider-owned and is declared by ChatGptPlanBackend instead of ToolHarness.
+        if (!settings.braveSearchKey().isNullOrBlank()) add(BraveWebSearchTool(settings))
+        add(RecordFindingTool(database))
+    }
 }
 
 private class BraveWebSearchTool(

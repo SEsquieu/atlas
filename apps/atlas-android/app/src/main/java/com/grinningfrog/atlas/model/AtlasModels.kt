@@ -177,6 +177,18 @@ data class ToolCallProposal(
     val reason: String? = null,
 )
 
+data class ProviderCitation(
+    val title: String,
+    val url: String,
+)
+
+data class ProviderToolUse(
+    val type: String,
+    val action: String? = null,
+    val status: String? = null,
+    val queries: List<String> = emptyList(),
+)
+
 data class AtlasToolCall(
     val id: String,
     val sessionId: String,
@@ -337,6 +349,8 @@ data class InferenceResponse(
     val promptTokens: Int? = null,
     val completionTokens: Int? = null,
     val totalTokens: Int? = null,
+    val citations: List<ProviderCitation> = emptyList(),
+    val providerToolUses: List<ProviderToolUse> = emptyList(),
 )
 
 sealed interface InferenceStreamEvent {

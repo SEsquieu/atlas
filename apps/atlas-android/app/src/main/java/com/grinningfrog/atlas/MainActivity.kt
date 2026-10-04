@@ -78,6 +78,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -684,9 +686,9 @@ private fun CapabilityToolsPage(settings: SecureSettings, modifier: Modifier) {
         item {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Bounded web search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text(if (searchConfigured) "● Brave Search configured" else "Not configured", color = if (searchConfigured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Returns at most five public results per call with strict safe search. The key is protected by Android Keystore and never sent to the inference provider.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Independent web search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(if (searchConfigured) "● Brave fallback configured" else "Optional", color = if (searchConfigured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("ChatGPT-hosted search is available automatically when the connected model and account permit it. Configure Brave only as a provider-independent fallback for local, LAN, or other inference routes.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     OutlinedTextField(braveKey, { braveKey = it }, label = { Text(if (searchConfigured) "Replace Brave Search API key" else "Brave Search API key") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { settings.saveBraveSearchKey(braveKey); searchConfigured = true; braveKey = "" }, enabled = braveKey.isNotBlank()) { Text("Save") }
@@ -984,7 +986,7 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
                     ) {
                         Column(Modifier.padding(14.dp)) {
                             Text(if (message.role == MessageRole.USER) "You" else "Atlas", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
-                            Spacer(Modifier.height(4.dp)); Text(message.content)
+                            Spacer(Modifier.height(4.dp)); AutoLinkedText(message.content)
                             if (message.role == MessageRole.ASSISTANT && message.deliveryStatus in setOf(DeliveryStatus.INTERRUPTED, DeliveryStatus.FAILED)) {
                                 Spacer(Modifier.height(6.dp))
                                 Text(
@@ -1096,6 +1098,20 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
         item { HealthCard(snapshot) }
     }
 }
+
+@Composable
+private fun AutoLinkedText(content: String) {
+    val annotated = buildAnnotatedString {
+        append(content)
+        URL_PATTERN.findAll(content).forEach { match ->
+            val trimmed = match.value.trimEnd('.', ',', ')', ']', '}')
+            if (trimmed.isNotEmpty()) addLink(LinkAnnotation.Url(trimmed), match.range.first, match.range.first + trimmed.length)
+        }
+    }
+    Text(annotated)
+}
+
+private val URL_PATTERN = Regex("https?://[^\\s]+")
 
 @Composable
 private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpoint>, managedAccount: ManagedAccountClient, chatGptAuth: ChatGptAuthManager, database: AtlasDatabase, modifier: Modifier, onChanged: () -> Unit) {
@@ -1340,7 +1356,7 @@ private fun ChatGptPlanCard(
                 is ChatGptAuthState.Connected -> {
                     Text("● Connected", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                     Text("Using ChatGPT plan${state.email?.let { " · $it" }.orEmpty()}")
-                    Text("Text · images where accepted · Atlas tools · streaming", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Text · images where accepted · Atlas tools · hosted web search where eligible · streaming", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Model: ${state.models.firstOrNull { it.slug == state.model }?.displayName ?: state.model}", style = MaterialTheme.typography.bodySmall)
                     if (state.models.size > 1) OutlinedButton(onClick = {
                         val current = state.models.indexOfFirst { it.slug == state.model }.coerceAtLeast(0)

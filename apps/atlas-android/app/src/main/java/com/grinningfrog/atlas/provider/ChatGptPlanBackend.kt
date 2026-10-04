@@ -7,6 +7,8 @@ import com.grinningfrog.atlas.model.InferenceResponse
 import com.grinningfrog.atlas.model.InferenceStreamEvent
 import com.grinningfrog.atlas.model.MessageRole
 import com.grinningfrog.atlas.model.ProviderEndpoint
+import com.grinningfrog.atlas.model.ProviderCitation
+import com.grinningfrog.atlas.model.ProviderToolUse
 import com.grinningfrog.atlas.model.ToolCallProposal
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +30,7 @@ import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -37,6 +40,8 @@ class ChatGptPlanBackend(
     private val baseClient: OkHttpClient = OkHttpClient(),
     private val responsesUrl: String = "https://api.openai.com/v1/responses",
 ) : InferenceBackend {
+    private val hostedSearchUnsupportedModels = ConcurrentHashMap.newKeySet<String>()
+
     override suspend fun infer(endpoint: ProviderEndpoint, apiKey: String?, request: InferenceRequest): InferenceResponse {
         var completed: InferenceResponse? = null
         stream(endpoint, apiKey, request).collect { if (it is InferenceStreamEvent.Completed) completed = it.response }
@@ -46,9 +51,11 @@ class ChatGptPlanBackend(
     override fun stream(endpoint: ProviderEndpoint, apiKey: String?, request: InferenceRequest): Flow<InferenceStreamEvent> = flow {
         val started = System.nanoTime()
         var refreshed = false
+        var hostedSearch = endpoint.model !in hostedSearchUnsupportedModels
+        var hostedSearchUnavailable = false
         while (true) {
             val token = auth.accessToken(forceRefresh = refreshed)
-            val call = client(endpoint).newCall(httpRequest(endpoint, token, request))
+            val call = client(endpoint).newCall(httpRequest(endpoint, token, request, hostedSearch))
             val invalidation = auth.onSessionInvalidated(call::cancel)
             val response = try { call.await() } catch (cancelled: CancellationException) {
                 invalidation.close()
@@ -64,11 +71,20 @@ class ChatGptPlanBackend(
                 refreshed = true
                 continue
             }
-            try { response.use { network ->
-                if (!network.isSuccessful) {
-                    val body = network.body?.string().orEmpty()
-                    throw providerError(network.code, body, network.header("x-request-id") ?: network.header("openai-request-id"))
+            if (!response.isSuccessful) {
+                val body = response.body?.string().orEmpty()
+                val error = providerError(response.code, body, response.header("x-request-id") ?: response.header("openai-request-id"))
+                invalidation.close()
+                response.close()
+                if (hostedSearch && error.providerCode == "subscription_sharing_unsupported_capability") {
+                    hostedSearchUnsupportedModels += endpoint.model
+                    hostedSearch = false
+                    hostedSearchUnavailable = true
+                    continue
                 }
+                throw error
+            }
+            try { response.use { network ->
                 val source = network.body?.source() ?: throw InferenceUnavailableException("ChatGPT returned an empty stream", outcomeAmbiguous = true)
                 val text = StringBuilder()
                 val calls = linkedMapOf<Int, MutableCall>()
@@ -79,6 +95,9 @@ class ChatGptPlanBackend(
                 var outputTokens: Int? = null
                 var totalTokens: Int? = null
                 var completed = false
+                val citations = linkedMapOf<String, ProviderCitation>()
+                val providerToolUses = mutableListOf<ProviderToolUse>()
+                if (hostedSearchUnavailable) providerToolUses += ProviderToolUse("web_search", status = "unsupported")
                 try {
                     while (true) {
                         val line = source.readUtf8Line() ?: break
@@ -95,14 +114,19 @@ class ChatGptPlanBackend(
                                 if (firstTokenMs == null) firstTokenMs = elapsedMs(started)
                                 text.append(delta); emit(InferenceStreamEvent.TextDelta(delta))
                             }
-                            "response.output_item.added" -> event.optJSONObject("item")?.takeIf { it.optString("type") == "function_call" }?.let { item ->
-                                val index = event.optInt("output_index", calls.size)
-                                val aggregate = calls.getOrPut(index) { MutableCall() }
-                                aggregate.itemId = item.optString("id").takeIf(String::isNotBlank) ?: aggregate.itemId
-                                aggregate.callId = item.optString("call_id").takeIf(String::isNotBlank) ?: aggregate.callId
-                                aggregate.name = item.optString("name").takeIf(String::isNotBlank) ?: aggregate.name
-                                item.optString("arguments").takeIf(String::isNotEmpty)?.let(aggregate.arguments::append)
-                                emit(InferenceStreamEvent.ToolCallDelta(index, aggregate.callId, aggregate.name, ""))
+                            "response.output_item.added" -> event.optJSONObject("item")?.let { item ->
+                                when (item.optString("type")) {
+                                    "function_call" -> {
+                                        val index = event.optInt("output_index", calls.size)
+                                        val aggregate = calls.getOrPut(index) { MutableCall() }
+                                        aggregate.itemId = item.optString("id").takeIf(String::isNotBlank) ?: aggregate.itemId
+                                        aggregate.callId = item.optString("call_id").takeIf(String::isNotBlank) ?: aggregate.callId
+                                        aggregate.name = item.optString("name").takeIf(String::isNotBlank) ?: aggregate.name
+                                        item.optString("arguments").takeIf(String::isNotEmpty)?.let(aggregate.arguments::append)
+                                        emit(InferenceStreamEvent.ToolCallDelta(index, aggregate.callId, aggregate.name, ""))
+                                    }
+                                    // Hosted calls are recorded once their final action/status is available.
+                                }
                             }
                             "response.function_call_arguments.delta" -> {
                                 val index = event.optInt("output_index", calls.size)
@@ -112,15 +136,21 @@ class ChatGptPlanBackend(
                                 if (firstTokenMs == null) firstTokenMs = elapsedMs(started)
                                 emit(InferenceStreamEvent.ToolCallDelta(index, aggregate.callId, aggregate.name, delta))
                             }
-                            "response.output_item.done" -> event.optJSONObject("item")?.takeIf { it.optString("type") == "function_call" }?.let { item ->
-                                val index = event.optInt("output_index", calls.size)
-                                val aggregate = calls.getOrPut(index) { MutableCall() }
-                                aggregate.itemId = item.optString("id").takeIf(String::isNotBlank) ?: aggregate.itemId
-                                aggregate.callId = item.optString("call_id").takeIf(String::isNotBlank) ?: aggregate.callId
-                                aggregate.name = item.optString("name").takeIf(String::isNotBlank) ?: aggregate.name
-                                val finalArguments = item.optString("arguments")
-                                if (finalArguments.isNotBlank()) { aggregate.arguments.clear(); aggregate.arguments.append(finalArguments) }
+                            "response.output_item.done" -> event.optJSONObject("item")?.let { item ->
+                                when (item.optString("type")) {
+                                    "function_call" -> {
+                                        val index = event.optInt("output_index", calls.size)
+                                        val aggregate = calls.getOrPut(index) { MutableCall() }
+                                        aggregate.itemId = item.optString("id").takeIf(String::isNotBlank) ?: aggregate.itemId
+                                        aggregate.callId = item.optString("call_id").takeIf(String::isNotBlank) ?: aggregate.callId
+                                        aggregate.name = item.optString("name").takeIf(String::isNotBlank) ?: aggregate.name
+                                        val finalArguments = item.optString("arguments")
+                                        if (finalArguments.isNotBlank()) { aggregate.arguments.clear(); aggregate.arguments.append(finalArguments) }
+                                    }
+                                    "web_search_call" -> providerToolUses += parseHostedToolUse(item)
+                                }
                             }
+                            "response.output_text.annotation.added" -> event.optJSONObject("annotation")?.let { collectCitation(it, citations) }
                             "response.completed" -> {
                                 val finished = event.getJSONObject("response")
                                 responseId = finished.optString("id").takeIf(String::isNotBlank) ?: responseId
@@ -131,6 +161,7 @@ class ChatGptPlanBackend(
                                     totalTokens = usage.optInt("total_tokens").takeIf { usage.has("total_tokens") }
                                         ?: listOfNotNull(inputTokens, outputTokens).takeIf { it.size == 2 }?.sum()
                                 }
+                                collectCompletedOutput(finished, citations, providerToolUses)
                                 completed = true
                             }
                             "response.failed" -> throw responseFailure(event.optJSONObject("response"))
@@ -149,29 +180,78 @@ class ChatGptPlanBackend(
                 ) }
                 if (text.isBlank() && proposals.isEmpty()) throw InferenceUnavailableException("ChatGPT returned neither assistant text nor tool calls", outcomeAmbiguous = true)
                 auth.onProviderSuccess()
-                emit(InferenceStreamEvent.Completed(InferenceResponse(request.requestId, endpoint.id, text.toString().trim(), elapsedMs(started),
+                val finalText = appendSources(text.toString().trim(), citations.values.toList())
+                emit(InferenceStreamEvent.Completed(InferenceResponse(request.requestId, endpoint.id, finalText, elapsedMs(started),
                     selectedModel = model ?: endpoint.model, toolCalls = proposals, finishReason = "completed", providerContinuationId = responseId,
-                    firstTokenLatencyMs = firstTokenMs, promptTokens = inputTokens, completionTokens = outputTokens, totalTokens = totalTokens)))
+                    firstTokenLatencyMs = firstTokenMs, promptTokens = inputTokens, completionTokens = outputTokens, totalTokens = totalTokens,
+                    citations = citations.values.toList(), providerToolUses = providerToolUses.distinct())))
             } } finally { invalidation.close() }
             return@flow
         }
     }.flowOn(Dispatchers.IO)
 
-    internal fun requestJson(endpoint: ProviderEndpoint, request: InferenceRequest): JSONObject = JSONObject().apply {
+    internal fun requestJson(endpoint: ProviderEndpoint, request: InferenceRequest, includeHostedSearch: Boolean = true): JSONObject = JSONObject().apply {
         put("model", endpoint.model)
         put("store", false)
         put("stream", true)
         put("instructions", request.systemPrompt)
         put("input", input(request))
-        if (request.tools.isNotEmpty()) put("tools", JSONArray().put(JSONObject().apply {
-            put("type", "namespace")
-            put("name", TOOL_NAMESPACE)
-            put("description", "Atlas device tools. Atlas enforces permissions and executes approved calls locally.")
-            put("tools", JSONArray(request.tools.map { tool -> JSONObject().apply {
-                put("type", "function"); put("name", tool.name); put("description", tool.description)
-                put("parameters", JSONObject(tool.parametersJson)); put("strict", false)
-            } }))
-        }))
+        put("tools", JSONArray().apply {
+            if (includeHostedSearch) put(JSONObject().put("type", "web_search"))
+            if (request.tools.isNotEmpty()) put(JSONObject().apply {
+                put("type", "namespace")
+                put("name", TOOL_NAMESPACE)
+                put("description", "Atlas device tools. Atlas enforces permissions and executes approved calls locally.")
+                put("tools", JSONArray(request.tools.map { tool -> JSONObject().apply {
+                    put("type", "function"); put("name", tool.name); put("description", tool.description)
+                    put("parameters", JSONObject(tool.parametersJson)); put("strict", false)
+                } }))
+            })
+        })
+    }
+
+    private fun collectCompletedOutput(response: JSONObject, citations: MutableMap<String, ProviderCitation>, uses: MutableList<ProviderToolUse>) {
+        val output = response.optJSONArray("output") ?: return
+        for (index in 0 until output.length()) {
+            val item = output.optJSONObject(index) ?: continue
+            when (item.optString("type")) {
+                "web_search_call" -> uses += parseHostedToolUse(item)
+                "message" -> item.optJSONArray("content")?.let { content ->
+                    for (contentIndex in 0 until content.length()) {
+                        val annotations = content.optJSONObject(contentIndex)?.optJSONArray("annotations") ?: continue
+                        for (annotationIndex in 0 until annotations.length()) {
+                            annotations.optJSONObject(annotationIndex)?.let { collectCitation(it, citations) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun collectCitation(annotation: JSONObject, citations: MutableMap<String, ProviderCitation>) {
+        if (annotation.optString("type") != "url_citation") return
+        val url = annotation.optString("url").takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: return
+        citations[url] = ProviderCitation(annotation.optString("title").ifBlank { url }, url)
+    }
+
+    private fun parseHostedToolUse(item: JSONObject): ProviderToolUse {
+        val action = item.optJSONObject("action")
+        val queries = mutableListOf<String>()
+        action?.optString("query")?.takeIf(String::isNotBlank)?.let(queries::add)
+        action?.optJSONArray("queries")?.let { values ->
+            for (index in 0 until values.length()) values.optString(index).takeIf(String::isNotBlank)?.let(queries::add)
+        }
+        return ProviderToolUse("web_search", action?.optString("type")?.takeIf(String::isNotBlank),
+            item.optString("status").takeIf(String::isNotBlank), queries.distinct())
+    }
+
+    private fun appendSources(text: String, citations: List<ProviderCitation>): String {
+        if (citations.isEmpty()) return text
+        return buildString {
+            append(text)
+            append("\n\nSources:\n")
+            citations.distinctBy { it.url }.forEach { append("• ").append(it.title).append(" — ").append(it.url).append('\n') }
+        }.trimEnd()
     }
 
     private fun input(request: InferenceRequest): JSONArray {
@@ -206,10 +286,10 @@ class ChatGptPlanBackend(
 
     private companion object { const val TOOL_NAMESPACE = "atlas" }
 
-    private fun httpRequest(endpoint: ProviderEndpoint, token: String, request: InferenceRequest) = Request.Builder().url(responsesUrl)
+    private fun httpRequest(endpoint: ProviderEndpoint, token: String, request: InferenceRequest, includeHostedSearch: Boolean) = Request.Builder().url(responsesUrl)
         .header("Authorization", "Bearer $token").header("Content-Type", "application/json").header("Accept", "text/event-stream")
         .header("X-Atlas-Request-Id", request.requestId)
-        .post(requestJson(endpoint, request).toString().toRequestBody("application/json".toMediaType())).build()
+        .post(requestJson(endpoint, request, includeHostedSearch).toString().toRequestBody("application/json".toMediaType())).build()
 
     private fun client(endpoint: ProviderEndpoint) = baseClient.newBuilder().connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(endpoint.timeoutMs, TimeUnit.MILLISECONDS).writeTimeout(30, TimeUnit.SECONDS).callTimeout(endpoint.timeoutMs, TimeUnit.MILLISECONDS).build()

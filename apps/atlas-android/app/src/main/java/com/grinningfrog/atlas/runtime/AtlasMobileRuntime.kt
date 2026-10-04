@@ -452,6 +452,12 @@ class AtlasMobileRuntime(
                 put("promptTokens", response.promptTokens); put("completionTokens", response.completionTokens); put("totalTokens", response.totalTokens)
                 put("finishReason", response.finishReason); put("providerContinuationId", response.providerContinuationId)
                 put("text", response.text); put("toolCallCount", response.toolCalls.size)
+                put("providerToolUses", org.json.JSONArray(response.providerToolUses.map { use -> JSONObject().apply {
+                    put("type", use.type); put("action", use.action); put("status", use.status)
+                    put("queries", org.json.JSONArray(use.queries))
+                } }))
+                put("citations", org.json.JSONArray(response.citations.map { citation -> JSONObject()
+                    .put("title", citation.title).put("url", citation.url) }))
             })
             require(response.toolCalls.map { it.id }.distinct().size == response.toolCalls.size) {
                 "Provider returned duplicate tool-call ids in one response"
@@ -1120,6 +1126,8 @@ class AtlasMobileRuntime(
         Goal: ${session.goal.ifBlank { "Help the user with their present physical context." }}
         Be concise for speech. Never claim an observation is current beyond the supplied timing metadata.
         Do not invent tool results or imply an external action occurred.
+        When describing capabilities, name only tools actually supplied on this request. Do not invent
+        parallel-call wrappers, orchestration helpers, browsers, or provider tools that were not declared.
     """.trimIndent()
 
     private fun requireSession() = mutableState.value.session ?: throw IllegalStateException("Create a session first")

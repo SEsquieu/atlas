@@ -28,9 +28,30 @@ class ChatGptPlanBackendTest {
         val json = backend.requestJson(endpoint(), request().copy(tools = listOf(ToolDefinition("observe", "Observe", "{\"type\":\"object\"}", ToolRisk.READ_ONLY))))
         assertFalse(json.getBoolean("store")); assertTrue(json.getBoolean("stream"))
         assertFalse(json.has("temperature")); assertFalse(json.has("max_output_tokens")); assertFalse(json.has("previous_response_id"))
-        val namespace = json.getJSONArray("tools").getJSONObject(0)
+        assertEquals("web_search", json.getJSONArray("tools").getJSONObject(0).getString("type"))
+        val namespace = json.getJSONArray("tools").getJSONObject(1)
         assertEquals("namespace", namespace.getString("type")); assertEquals("atlas", namespace.getString("name"))
         assertEquals("function", namespace.getJSONArray("tools").getJSONObject(0).getString("type"))
+    }
+
+    @Test fun hostedSearchIsNormalizedWithVisibleSources() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Current answer.\"}\n\n" +
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_search\",\"model\":\"gpt-test\",\"output\":[" +
+                "{\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"queries\":[\"current events\"]}}," +
+                "{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"Current answer.\",\"annotations\":[{\"type\":\"url_citation\",\"title\":\"Example News\",\"url\":\"https://example.com/news\"}]}]}]}}\n\n",
+        ))
+        server.start()
+        try {
+            val backend = ChatGptPlanBackend(ChatGptTokenProvider { _ -> "token" }, responsesUrl = server.url("/v1/responses").toString())
+            val completed = backend.stream(endpoint(server.url("/v1").toString()), null, request()).toList()
+                .filterIsInstance<InferenceStreamEvent.Completed>().single().response
+            assertEquals("web_search", completed.providerToolUses.single().type)
+            assertEquals(listOf("current events"), completed.providerToolUses.single().queries)
+            assertEquals("https://example.com/news", completed.citations.single().url)
+            assertTrue(completed.text.contains("Example News — https://example.com/news"))
+        } finally { server.shutdown() }
     }
 
     @Test fun streamNormalizesTextToolsUsageAndCompletion() = runTest {
@@ -72,6 +93,26 @@ class ChatGptPlanBackendTest {
             assertEquals("subscription_sharing_usage_limit_exceeded", classified.providerCode)
             assertEquals("subscription_sharing_usage_limit_exceeded", reportedCode)
             assertTrue(classified.message!!.contains("usage limit"))
+        } finally { server.shutdown() }
+    }
+
+    @Test fun unsupportedHostedSearchRetriesInferenceWithoutDisablingChatGpt() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(400)
+            .setBody("{\"error\":{\"code\":\"subscription_sharing_unsupported_capability\"}}"))
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Still available\"}\n\n" +
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_retry\",\"model\":\"gpt-test\"}}\n\n",
+        ))
+        server.start()
+        try {
+            val backend = ChatGptPlanBackend(ChatGptTokenProvider { _ -> "token" }, responsesUrl = server.url("/v1/responses").toString())
+            val completed = backend.stream(endpoint(server.url("/v1").toString()), null, request()).toList()
+                .filterIsInstance<InferenceStreamEvent.Completed>().single().response
+            assertEquals("Still available", completed.text)
+            assertEquals("unsupported", completed.providerToolUses.single().status)
+            assertEquals("web_search", JSONObject(server.takeRequest().body.readUtf8()).getJSONArray("tools").getJSONObject(0).getString("type"))
+            assertEquals(0, JSONObject(server.takeRequest().body.readUtf8()).getJSONArray("tools").length())
         } finally { server.shutdown() }
     }
 
