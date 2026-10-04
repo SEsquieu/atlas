@@ -21,4 +21,5 @@ class InferenceUnavailableException(
     message: String,
     cause: Throwable? = null,
     val outcomeAmbiguous: Boolean = false,
+    val providerCode: String? = null,
 ) : Exception(message, cause)

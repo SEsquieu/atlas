@@ -27,8 +27,8 @@ object ResponsePolicy {
         if (risk == InferenceRisk.SAFETY_CRITICAL) return ResponseContract(ResponseMode.SAFETY, 35, 60, 4, 110, actionFirst = true)
         if (physicalGuidance.containsMatchIn(text)) return ResponseContract(ResponseMode.PHYSICAL_GUIDANCE, 30, 55, 3, 100, actionFirst = true)
         if (explicitDetail.containsMatchIn(text)) return ResponseContract(ResponseMode.EXPLANATION, 75, 120, 7, 190)
-        if (immediate.containsMatchIn(text.trim())) return ResponseContract(ResponseMode.IMMEDIATE, 18, 35, 2, 70)
-        return ResponseContract(ResponseMode.DEFAULT, 35, 65, 3, 115)
+        if (immediate.containsMatchIn(text.trim())) return ResponseContract(ResponseMode.IMMEDIATE, 14, 28, 2, 55)
+        return ResponseContract(ResponseMode.DEFAULT, 24, 45, 2, 85)
     }
 
     fun instructions(contract: ResponseContract): String = buildString {
@@ -37,6 +37,8 @@ object ResponsePolicy {
         if (contract.actionFirst) append("State the action or answer first. ")
         append("Use natural contractions and plain spoken sentences. Do not restate the question, use markdown, announce that you are an AI, ")
         append("or begin with canned filler such as 'Certainly', 'Absolutely', or 'Great question'. ")
+        append("Answer the user's actual question before caveats. A hard maximum is a ceiling, not a target. ")
+        append("For ordinary conversation, prefer one short sentence and do not volunteer a checklist, implementation plan, or several alternatives unless asked. ")
         append("Give only what this moment requires. For physical guidance, give one safe actionable step and let the user continue the conversation.")
     }
 }

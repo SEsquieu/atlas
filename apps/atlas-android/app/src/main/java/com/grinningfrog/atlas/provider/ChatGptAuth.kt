@@ -44,6 +44,8 @@ sealed interface ChatGptAuthState {
     data object Refreshing : ChatGptAuthState
     data class AuthorizationRequired(val message: String) : ChatGptAuthState
     data class EntitlementUnavailable(val message: String) : ChatGptAuthState
+    data class UsageLimited(val message: String) : ChatGptAuthState
+    data class UsageUnavailable(val message: String) : ChatGptAuthState
     data class Error(val message: String) : ChatGptAuthState
 }
 
@@ -68,6 +70,8 @@ data class OAuthCallback(val code: String?, val state: String?, val clientId: St
 fun interface ChatGptTokenProvider {
     suspend fun accessToken(forceRefresh: Boolean): String
     fun onSessionInvalidated(callback: () -> Unit): AutoCloseable = AutoCloseable { }
+    fun onProviderFailure(code: String) = Unit
+    fun onProviderSuccess() = Unit
 }
 
 object ChatGptOAuth {
@@ -121,6 +125,7 @@ class ChatGptAuthManager(
     private val authorizationMutex = Mutex()
     private val refreshMutex = Mutex()
     private val invalidationCallbacks = CopyOnWriteArraySet<() -> Unit>()
+    @Volatile private var usageUnavailableUntilMs = 0L
     private val _state = MutableStateFlow<ChatGptAuthState>(initialState())
     val state: StateFlow<ChatGptAuthState> = _state
 
@@ -229,7 +234,37 @@ class ChatGptAuthManager(
         return AutoCloseable { invalidationCallbacks -= callback }
     }
 
+    override fun onProviderFailure(code: String) {
+        if (code == "subscription_sharing_usage_unavailable") usageUnavailableUntilMs = now() + USAGE_RETRY_DELAY_MS
+        _state.value = when (code) {
+            "subscription_sharing_usage_limit_exceeded" -> ChatGptAuthState.UsageLimited(
+                "Atlas reached a ChatGPT plan usage limit. OpenAI does not expose the remaining allowance or reset time.",
+            )
+            "subscription_sharing_usage_unavailable" -> ChatGptAuthState.UsageUnavailable(
+                "OpenAI could not check ChatGPT plan usage. Other configured providers remain available.",
+            )
+            "subscription_sharing_user_not_eligible" -> ChatGptAuthState.EntitlementUnavailable(
+                "This ChatGPT account or workspace is not eligible for plan inference.",
+            )
+            "subscription_sharing_invalid_user", "chatpass_v2_scope_not_authorized", "chatpass_v2_invalid_authorization_context" ->
+                ChatGptAuthState.AuthorizationRequired("ChatGPT authorization is no longer valid. Sign in again.")
+            else -> return
+        }
+    }
+
+    fun retryPlanUsage() {
+        usageUnavailableUntilMs = 0
+        _state.value = initialState()
+    }
+
+    override fun onProviderSuccess() {
+        usageUnavailableUntilMs = 0
+        if (_state.value is ChatGptAuthState.UsageUnavailable) _state.value = initialState()
+    }
+
     fun endpointOrNull(): com.grinningfrog.atlas.model.ProviderEndpoint? {
+        if (_state.value is ChatGptAuthState.UsageLimited || (_state.value is ChatGptAuthState.UsageUnavailable && now() < usageUnavailableUntilMs) ||
+            _state.value is ChatGptAuthState.AuthorizationRequired || _state.value is ChatGptAuthState.EntitlementUnavailable) return null
         val credential = loadCredential() ?: return null
         if (credential.accessToken.isBlank() || ChatGptOAuth.REQUIRED_SCOPE !in credential.scopes || credential.selectedModel.isBlank()) return null
         return com.grinningfrog.atlas.model.ProviderEndpoint(
@@ -354,6 +389,7 @@ class ChatGptAuthManager(
 
     companion object {
         const val ENDPOINT_ID = "chatgpt-plan"
+        private const val USAGE_RETRY_DELAY_MS = 60_000L
         private const val CREDENTIAL_ALIAS = "chatgpt.oauth.v1"
         private const val HOST_KEY_ALIAS = "atlas.chatgpt-host.v1"
         private fun pad(value: String) = value + "=".repeat((4 - value.length % 4) % 4)

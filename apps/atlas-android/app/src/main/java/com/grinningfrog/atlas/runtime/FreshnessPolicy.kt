@@ -24,6 +24,13 @@ object FreshnessPolicy {
         Regex("what does this say", RegexOption.IGNORE_CASE), Regex("which one", RegexOption.IGNORE_CASE),
         Regex("is this", RegexOption.IGNORE_CASE), Regex("where should", RegexOption.IGNORE_CASE),
         Regex("help me (fix|find|identify)", RegexOption.IGNORE_CASE),
+        Regex("what (is|are) (this|that|these|those)(\\b|\\?)", RegexOption.IGNORE_CASE),
+        Regex("where (am i|are we|is (this|that))(\\b|\\?)", RegexOption.IGNORE_CASE),
+        Regex("where do you think (i am|we are|this is|that is)", RegexOption.IGNORE_CASE),
+        Regex("what (kind|type|model|make|color|colour) of .{0,40}(is this|is that|am i in|are we in)", RegexOption.IGNORE_CASE),
+        Regex("what (vehicle|car|truck|room|building|place|object|plant|animal).{0,40}(am i|are we|is this|is that)", RegexOption.IGNORE_CASE),
+        Regex("what (vehicle|car|truck|room|building|place).{0,50}(i('| a)m|we('| a)re)", RegexOption.IGNORE_CASE),
+        Regex("what do you think (this|that|these|those) (is|are)", RegexOption.IGNORE_CASE),
     )
     private val highRisk = Regex("(wire.*cut|safe|danger|hazard|drive|energized|live circuit)", RegexOption.IGNORE_CASE)
     private val navigation = Regex("(where should|which way|right place|right aisle|navigate|direction)", RegexOption.IGNORE_CASE)

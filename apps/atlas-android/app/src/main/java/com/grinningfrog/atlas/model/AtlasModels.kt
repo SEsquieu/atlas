@@ -59,6 +59,7 @@ data class SessionPermissions(
     val observe: Boolean = true,
     val captureImage: PermissionPolicy = PermissionPolicy.ACTIVE_SESSION,
     val microphone: PermissionPolicy = PermissionPolicy.USER_REQUEST,
+    val location: PermissionPolicy = PermissionPolicy.USER_REQUEST,
     val speakResponses: Boolean = true,
     val proactiveSpeech: Boolean = false,
     val externalActionsRequireConfirmation: Boolean = true,

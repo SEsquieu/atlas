@@ -44,6 +44,19 @@ import org.json.JSONObject
 import org.json.JSONArray
 import java.util.UUID
 
+data class ChatGptUsageSummary(
+    val requests: Int = 0,
+    val interactiveRequests: Int = 0,
+    val backgroundRequests: Int = 0,
+    val visionRequests: Int = 0,
+    val inputTokens: Long = 0,
+    val outputTokens: Long = 0,
+    val totalTokens: Long = 0,
+    val failedAttempts: Int = 0,
+    val usageLimitFailures: Int = 0,
+    val lastFailureCode: String? = null,
+)
+
 class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 9) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
@@ -724,6 +737,51 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         }.reversed()
     }
 
+    fun loadChatGptUsageSummary(sinceMs: Long = 0): ChatGptUsageSummary {
+        var requests = 0
+        var interactive = 0
+        var background = 0
+        var vision = 0
+        var input = 0L
+        var output = 0L
+        var total = 0L
+        var failures = 0
+        var limits = 0
+        var lastFailureCode: String? = null
+        val visionByRequest = mutableMapOf<String, Boolean>()
+        readableDatabase.rawQuery(
+            "SELECT event_type,data_json FROM events WHERE at_ms >= ? AND event_type IN ('provider.requested','provider.responded','provider.route_attempted') ORDER BY sequence",
+            arrayOf(sinceMs.toString()),
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val type = cursor.getString(0)
+                val data = runCatching { JSONObject(cursor.getString(1)) }.getOrNull() ?: continue
+                if (type == "provider.requested") {
+                    data.optString("requestId").takeIf(String::isNotBlank)?.let { requestId ->
+                        visionByRequest[requestId] = data.optBoolean("visionAttached", false) || data.optString("source") == "heartbeat"
+                    }
+                    continue
+                }
+                if (data.optString("endpointId") != com.grinningfrog.atlas.provider.ChatGptAuthManager.ENDPOINT_ID) continue
+                if (type == "provider.responded") {
+                    requests++
+                    if (data.optString("source") in setOf("heartbeat", "memory_compaction")) background++ else interactive++
+                    if (visionByRequest[data.optString("requestId")] == true) vision++
+                    input += data.optLong("promptTokens", 0)
+                    output += data.optLong("completionTokens", 0)
+                    total += data.optLong("totalTokens", 0)
+                } else if (!data.optBoolean("success", false)) {
+                    failures++
+                    data.optString("errorCode").takeIf(String::isNotBlank)?.let { code ->
+                        lastFailureCode = code
+                        if (code == "subscription_sharing_usage_limit_exceeded") limits++
+                    }
+                }
+            }
+        }
+        return ChatGptUsageSummary(requests, interactive, background, vision, input, output, total, failures, limits, lastFailureCode)
+    }
+
     @Synchronized
     fun createTurn(sessionId: String, trigger: String, turnId: String = UUID.randomUUID().toString(), nowMs: Long = System.currentTimeMillis()): AgentTurn {
         val turn = AgentTurn(turnId, sessionId, TurnStatus.CREATED, trigger, nowMs, nowMs)
@@ -1133,7 +1191,7 @@ private fun jsonStringList(raw: String): List<String> = runCatching {
 private fun android.database.Cursor.nullableString(index: Int): String? = if (isNull(index)) null else getString(index)
 
 private fun SessionPermissions.toJson() = JSONObject().apply {
-    put("observe", observe); put("captureImage", captureImage.name); put("microphone", microphone.name)
+    put("observe", observe); put("captureImage", captureImage.name); put("microphone", microphone.name); put("location", location.name)
     put("speakResponses", speakResponses); put("proactiveSpeech", proactiveSpeech)
     put("externalActionsRequireConfirmation", externalActionsRequireConfirmation)
 }
@@ -1144,6 +1202,7 @@ private fun permissionsFromJson(raw: String?) = runCatching {
         observe = json.optBoolean("observe", true),
         captureImage = PermissionPolicy.valueOf(json.optString("captureImage", PermissionPolicy.ACTIVE_SESSION.name)),
         microphone = PermissionPolicy.valueOf(json.optString("microphone", PermissionPolicy.USER_REQUEST.name)),
+        location = PermissionPolicy.valueOf(json.optString("location", PermissionPolicy.USER_REQUEST.name)),
         speakResponses = json.optBoolean("speakResponses", true), proactiveSpeech = json.optBoolean("proactiveSpeech", false),
         externalActionsRequireConfirmation = json.optBoolean("externalActionsRequireConfirmation", true),
     )

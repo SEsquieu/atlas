@@ -76,6 +76,7 @@ class AtlasMobileRuntime(
     private val router: CapabilityRouter,
     private val scope: CoroutineScope,
     private val idleRuntime: AndroidIdleRuntime? = null,
+    private val additionalTools: List<AtlasToolAdapter> = emptyList(),
     private val onLiveContextChanged: (Boolean) -> Unit = {},
 ) {
     private val operations = Mutex()
@@ -96,6 +97,7 @@ class AtlasMobileRuntime(
             database = database,
             capture = { reason, purpose -> captureLocked(requireActiveSession(), reason, purpose) },
             deviceHealth = health::snapshot,
+            additionalTools = additionalTools,
         )
     }
 
@@ -434,7 +436,8 @@ class AtlasMobileRuntime(
             } catch (_: SoftTimeoutDetached) {
                 return
             } catch (error: Exception) {
-                database.appendEvent(session.id, "provider.failed", JSONObject().put("turnId", turnId).put("step", step).put("requestId", request.requestId).put("error", error.safeMessage()))
+                database.appendEvent(session.id, "provider.failed", JSONObject().put("turnId", turnId).put("step", step).put("requestId", request.requestId)
+                    .put("error", error.safeMessage()).apply { (error as? com.grinningfrog.atlas.provider.InferenceUnavailableException)?.providerCode?.let { put("errorCode", it) } })
                 throw error
             }
             if (generation.get() != operationGeneration || mutableState.value.session?.status != SessionStatus.ACTIVE) {
@@ -895,7 +898,12 @@ class AtlasMobileRuntime(
             val through = candidates.last().sequence
             database.saveSummary(SessionSummary(session.id, response.text.take(8_000), through, System.currentTimeMillis()))
             database.appendEvent(session.id, "provider.responded", JSONObject().put("source", "memory_compaction").put("requestId", request.requestId)
-                .put("endpointId", response.endpointId).put("latencyMs", response.latencyMs).put("throughMessageSequence", through))
+                .put("endpointId", response.endpointId).put("model", response.selectedModel).put("routingProfile", response.routingProfile)
+                .put("routingReason", response.routingReason).put("routingRevision", response.routingRevision)
+                .put("latencyMs", response.latencyMs).put("firstTokenLatencyMs", response.firstTokenLatencyMs)
+                .put("promptTokens", response.promptTokens).put("completionTokens", response.completionTokens)
+                .put("totalTokens", response.totalTokens).put("finishReason", response.finishReason)
+                .put("providerContinuationId", response.providerContinuationId).put("throughMessageSequence", through))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -1033,7 +1041,10 @@ class AtlasMobileRuntime(
             database.appendEvent(session.id, "provider.responded", JSONObject().put("source", "heartbeat").put("requestId", request.requestId)
                 .put("endpointId", response.endpointId).put("model", response.selectedModel).put("routingProfile", response.routingProfile)
                 .put("routingReason", response.routingReason).put("routingRevision", response.routingRevision)
-                .put("latencyMs", response.latencyMs).put("text", response.text))
+                .put("latencyMs", response.latencyMs).put("firstTokenLatencyMs", response.firstTokenLatencyMs)
+                .put("promptTokens", response.promptTokens).put("completionTokens", response.completionTokens)
+                .put("totalTokens", response.totalTokens).put("finishReason", response.finishReason)
+                .put("providerContinuationId", response.providerContinuationId).put("text", response.text))
             val action = heartbeatAction(response.text)
             if (action != null && session.permissions.proactiveSpeech) {
                 scope.launch { operations.withLock { speakLocked(session, action) } }
@@ -1041,7 +1052,8 @@ class AtlasMobileRuntime(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
-            database.appendEvent(session.id, "provider.failed", JSONObject().put("source", "heartbeat").put("requestId", request.requestId).put("error", error.safeMessage()))
+            database.appendEvent(session.id, "provider.failed", JSONObject().put("source", "heartbeat").put("requestId", request.requestId)
+                .put("error", error.safeMessage()).apply { (error as? com.grinningfrog.atlas.provider.InferenceUnavailableException)?.providerCode?.let { put("errorCode", it) } })
         }
     }
 

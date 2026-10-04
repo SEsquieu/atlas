@@ -30,6 +30,12 @@ The host key and encrypted authorization survive normal app restarts. Clearing a
 
 `ChatGptPlanBackend` uses only `POST https://api.openai.com/v1/responses` with the OAuth access token. Every request uses `store: false` and `stream: true`, sends the full Atlas-selected history in `input`, and puts the Atlas system contract in `instructions`. It omits unsupported plan-route fields including temperature, output-token limits, metadata, conversation IDs, and `previous_response_id`.
 
+## Usage visibility and limits
+
+Atlas records the input, output, and total token counts returned on completed Responses events for interactive, heartbeat, and persistent-intent inference. **System → Inference → ChatGPT → Usage details** aggregates Atlas-local consumption and separates interactive, background, and vision traffic. These figures describe what Atlas used; OpenAI does not expose a supported numeric remaining-plan balance or reset time to local applications.
+
+Plan errors are classified by their documented machine-readable code. A usage-limit rejection removes ChatGPT from active routing until the user explicitly retries, while Atlas continues through its configured local, LAN, BYOK, or managed fallback routes. Temporary usage-check failures preserve authorization and also allow other routes to continue. Atlas never guesses a reset time or treats an app-specific limit as proof that the user's entire ChatGPT plan is exhausted.
+
 The backend maps Responses SSE events into Atlas `TextDelta`, `ToolCallDelta`, and `Completed` events. A response succeeds only after `response.completed`; incomplete, failed, malformed, cancelled, and interrupted streams preserve Atlas outcome-ambiguity semantics. OpenAI function calls become ordinary `ToolCallProposal` values and must pass through `ToolHarness`, risk policy, confirmation, idempotency, and audit like calls from every other provider.
 
 Text, image input, client-side function tools, and streaming are used only where the selected account model accepts them. Unsupported-capability errors are safe routing failures before output and can fall through to another configured Atlas provider.

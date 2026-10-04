@@ -59,11 +59,40 @@ class ChatGptPlanBackendTest {
         server.enqueue(MockResponse().setResponseCode(429).setBody("{\"error\":{\"code\":\"subscription_sharing_usage_limit_exceeded\"}}"))
         server.start()
         try {
-            val backend = ChatGptPlanBackend(ChatGptTokenProvider { _ -> "token" }, responsesUrl = server.url("/v1/responses").toString())
+            var reportedCode: String? = null
+            val tokens = object : ChatGptTokenProvider {
+                override suspend fun accessToken(forceRefresh: Boolean) = "token"
+                override fun onProviderFailure(code: String) { reportedCode = code }
+            }
+            val backend = ChatGptPlanBackend(tokens, responsesUrl = server.url("/v1/responses").toString())
             val error = runCatching { backend.stream(endpoint(server.url("/v1").toString()), null, request()).toList() }.exceptionOrNull()
             assertTrue(error is InferenceUnavailableException)
-            assertFalse((error as InferenceUnavailableException).outcomeAmbiguous)
-            assertTrue(error.message!!.contains("usage limit"))
+            val classified = error as InferenceUnavailableException
+            assertFalse(classified.outcomeAmbiguous)
+            assertEquals("subscription_sharing_usage_limit_exceeded", classified.providerCode)
+            assertEquals("subscription_sharing_usage_limit_exceeded", reportedCode)
+            assertTrue(classified.message!!.contains("usage limit"))
+        } finally { server.shutdown() }
+    }
+
+    @Test fun streamedPlanLimitIsClassifiedAndReported() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+            "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"subscription_sharing_usage_limit_exceeded\"}}}\n\n",
+        ))
+        server.start()
+        try {
+            var reportedCode: String? = null
+            val tokens = object : ChatGptTokenProvider {
+                override suspend fun accessToken(forceRefresh: Boolean) = "token"
+                override fun onProviderFailure(code: String) { reportedCode = code }
+            }
+            val backend = ChatGptPlanBackend(tokens, responsesUrl = server.url("/v1/responses").toString())
+            val error = runCatching { backend.stream(endpoint(server.url("/v1").toString()), null, request()).toList() }.exceptionOrNull()
+            val classified = error as InferenceUnavailableException
+            assertEquals("subscription_sharing_usage_limit_exceeded", classified.providerCode)
+            assertEquals("subscription_sharing_usage_limit_exceeded", reportedCode)
+            assertFalse(classified.outcomeAmbiguous)
         } finally { server.shutdown() }
     }
 

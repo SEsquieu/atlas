@@ -46,4 +46,14 @@ class SpeechDeliveryTest {
         assertEquals(1, exact.maxSentences)
         assertEquals(16, exact.maxOutputTokens)
     }
+
+    @Test fun ordinarySpokenAnswersStayConversational() {
+        val contract = ResponsePolicy.contract("Tell me what happened", spoken = true, risk = InferenceRisk.NORMAL)
+        val instructions = ResponsePolicy.instructions(contract)
+
+        assertEquals(2, contract.maxSentences)
+        assertTrue(contract.hardMaxWords <= 45)
+        assertTrue(instructions.contains("hard maximum is a ceiling"))
+        assertTrue(instructions.contains("do not volunteer a checklist"))
+    }
 }

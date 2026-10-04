@@ -148,6 +148,7 @@ class ChatGptPlanBackend(
                     argumentsJson = call.arguments.toString().ifBlank { "{}" },
                 ) }
                 if (text.isBlank() && proposals.isEmpty()) throw InferenceUnavailableException("ChatGPT returned neither assistant text nor tool calls", outcomeAmbiguous = true)
+                auth.onProviderSuccess()
                 emit(InferenceStreamEvent.Completed(InferenceResponse(request.requestId, endpoint.id, text.toString().trim(), elapsedMs(started),
                     selectedModel = model ?: endpoint.model, toolCalls = proposals, finishReason = "completed", providerContinuationId = responseId,
                     firstTokenLatencyMs = firstTokenMs, promptTokens = inputTokens, completionTokens = outputTokens, totalTokens = totalTokens)))
@@ -215,6 +216,7 @@ class ChatGptPlanBackend(
 
     private fun providerError(status: Int, raw: String, requestId: String?): InferenceUnavailableException {
         val code = runCatching { JSONObject(raw).optJSONObject("error")?.optString("code")?.ifBlank { null } ?: JSONObject(raw).optString("detail") }.getOrNull()
+        code?.takeIf(String::isNotBlank)?.let(auth::onProviderFailure)
         val message = when (code) {
             "subscription_sharing_user_not_eligible" -> "This ChatGPT account or workspace is not eligible for plan inference."
             "subscription_sharing_usage_limit_exceeded" -> "The ChatGPT plan usage limit was reached. Review usage in ChatGPT settings."
@@ -224,7 +226,7 @@ class ChatGptPlanBackend(
             "subscription_sharing_invalid_user", "chatpass_v2_scope_not_authorized", "chatpass_v2_invalid_authorization_context" -> "ChatGPT authorization is no longer valid. Sign in again."
             else -> "ChatGPT returned HTTP $status${code?.takeIf(String::isNotBlank)?.let { ": $it" }.orEmpty()}"
         } + requestId?.let { " (request $it)" }.orEmpty()
-        return InferenceUnavailableException(message, outcomeAmbiguous = status !in setOf(400, 401, 403, 429, 503))
+        return InferenceUnavailableException(message, outcomeAmbiguous = status !in setOf(400, 401, 403, 429, 503), providerCode = code)
     }
 
     private fun responseFailure(response: JSONObject?): InferenceUnavailableException {

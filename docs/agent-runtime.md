@@ -96,7 +96,13 @@ The current alpha stores memory locally. Working, task, and environment memory r
 - A policy decision
 - An executor returning a JSON result
 
-Built-in physical/runtime tools are `capture_current_view`, `get_device_state`, and `atlas_remember`. Android also exposes `atlas_clarification` as a Core control signal; it is never executed as a physical tool.
+Built-in physical/runtime tools are `capture_current_view`, `get_device_state`, and `atlas_remember`. Android additionally installs `get_current_location`, `reverse_geocode`, bounded `web_search`, and `atlas_record_finding` adapters, and exposes `atlas_clarification` as a Core control signal; clarification is never executed as a physical tool.
+
+Location is optional rather than an onboarding requirement. The user grants Android location access from **System → Tools**, and the default session policy asks for confirmation before a fresh location is returned to the inference loop. Reverse geocoding uses the device geocoder only for coordinates already available to the session.
+
+Web search uses the documented Brave Search API and is disabled until the user stores their own key in **System → Tools**. The key is Android-Keystore protected, stays inside the Atlas-owned adapter, and is never included in provider prompts or session exports. Each call is capped at five strict-safe-search results and three calls per turn; it returns titles, URLs, short descriptions, and reported age rather than fetching arbitrary result pages. Search is read-only and does not grant browser or external-action authority.
+
+`atlas_record_finding` writes a typed `development.finding_recorded` event for capability, bug, UX, policy, and improvement findings. These records remain attributable to their turn/tool call and travel with the normal session export, making natural-language field testing actionable without giving a model repository-write authority.
 
 Adding location, notifications, Bluetooth, smart-home, or account tools requires an adapter, not a change to the agent loop. External-effect adapters default to confirmation when the session policy requires it.
 

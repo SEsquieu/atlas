@@ -15,7 +15,7 @@ class CapabilityRouter(
     private val endpoints: () -> List<ProviderEndpoint>,
     private val routes: () -> RouteTable,
     private val apiKey: suspend (ProviderEndpoint) -> String?,
-    private val onAttempt: suspend (endpoint: ProviderEndpoint, success: Boolean, error: String?) -> Unit = { _, _, _ -> },
+    private val onAttempt: suspend (endpoint: ProviderEndpoint, success: Boolean, error: String?, errorCode: String?) -> Unit = { _, _, _, _ -> },
 ) {
     fun hasToolCapableRoute(request: InferenceRequest): Boolean = hasToolCapableRoute(request.capability, request.image != null)
 
@@ -45,14 +45,14 @@ class CapabilityRouter(
         for (endpoint in candidates) {
             try {
                 val result = backend.infer(endpoint, apiKey(endpoint), request)
-                onAttempt(endpoint, true, null)
+                onAttempt(endpoint, true, null, null)
                 return result.copy(degraded = endpoint.id !in routeIds.take(1))
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 val message = error.message ?: error::class.java.simpleName
                 failures += "${endpoint.name}: $message"
-                onAttempt(endpoint, false, message)
+                onAttempt(endpoint, false, message, (error as? InferenceUnavailableException)?.providerCode)
                 if (error !is InferenceUnavailableException || error.outcomeAmbiguous) throw error
             }
         }
@@ -80,7 +80,7 @@ class CapabilityRouter(
                     }
                 }
                 check(completed) { "${endpoint.name} stream ended without a completion event" }
-                onAttempt(endpoint, true, null)
+                onAttempt(endpoint, true, null, null)
                 return@flow
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -90,7 +90,7 @@ class CapabilityRouter(
                 } else error
                 val message = effective.message ?: effective::class.java.simpleName
                 failures += "${endpoint.name}: $message"
-                onAttempt(endpoint, false, message)
+                onAttempt(endpoint, false, message, (effective as? InferenceUnavailableException)?.providerCode)
                 if (effective !is InferenceUnavailableException || effective.outcomeAmbiguous) throw effective
             }
         }

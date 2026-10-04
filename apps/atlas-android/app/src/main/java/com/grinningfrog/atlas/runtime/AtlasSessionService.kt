@@ -67,7 +67,7 @@ class AtlasSessionService : LifecycleService() {
                 endpoint.id == com.grinningfrog.atlas.provider.ChatGptAuthManager.ENDPOINT_ID -> null
                 else -> app.settings.apiKey(endpoint)
             } },
-            onAttempt = { endpoint, success, error ->
+            onAttempt = { endpoint, success, error, errorCode ->
                 app.database.loadLatestSession()?.let { session ->
                     app.database.appendEvent(session.id, "provider.route_attempted", JSONObject().apply {
                         put("endpointId", endpoint.id)
@@ -81,6 +81,7 @@ class AtlasSessionService : LifecycleService() {
                         put("configuredTimeoutMs", endpoint.timeoutMs)
                         put("success", success)
                         error?.let { put("error", it) }
+                        errorCode?.let { put("errorCode", it) }
                     })
                 }
             },
@@ -93,7 +94,10 @@ class AtlasSessionService : LifecycleService() {
                 IntentInferenceWorkHandler(InferenceLocation.CLOUD, app.database, router),
             ),
         )
-        runtime = AtlasMobileRuntime(app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope, idleRuntime)
+        runtime = AtlasMobileRuntime(
+            app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope, idleRuntime,
+            additionalTools = AndroidContextTools.create(this, app.database, app.settings),
+        )
         serviceScope.launch {
             runCatching { runtime.initialize() }.onFailure { error ->
                 app.database.loadLatestSession()?.let { session ->

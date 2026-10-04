@@ -108,6 +108,11 @@ class SecureSettings(context: Context) {
     fun removeSecret(alias: String) = SecretStore.remove(alias, prefs)
     fun putSecretAtomically(alias: String, value: String): Boolean = SecretStore.put(alias, value, prefs, synchronous = true)
 
+    fun saveBraveSearchKey(value: String) {
+        if (value.isBlank()) removeSecret(BRAVE_SEARCH_KEY_ALIAS) else putSecret(BRAVE_SEARCH_KEY_ALIAS, value.trim())
+    }
+    fun braveSearchKey(): String? = secret(BRAVE_SEARCH_KEY_ALIAS)
+
     fun saveRoutes(routes: RouteTable) = prefs.edit().putString("routes", JSONObject().apply {
         put("fast", JSONArray(routes.fast)); put("vision", JSONArray(routes.vision)); put("reasoning", JSONArray(routes.reasoning)); put("fallback", JSONArray(routes.fallback))
     }.toString()).apply()
@@ -125,6 +130,8 @@ class SecureSettings(context: Context) {
         put("promptProfile", endpoint.promptProfile.name)
         put("kind", endpoint.kind.name)
     }
+
+    companion object { const val BRAVE_SEARCH_KEY_ALIAS = "tool.brave-search.v1" }
 }
 
 private fun JSONObject.strings(key: String): List<String> {
