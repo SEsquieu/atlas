@@ -5,6 +5,8 @@ Atlas is easiest to understand by following ownership from the persistent runtim
 ## Runtime and ownership
 
 - [Runtime code map](./runtime-code-map.md) — end-to-end path through the shipping Android implementation, with direct source links.
+- [Persistent intent and idle runtime](./persistent-intent-runtime.md) — durable unresolved intent, autonomy modes, scoring, budgets, preemption, and idle telemetry.
+- [Sign in with ChatGPT and plan inference](./chatgpt-plan-inference.md) — local OAuth, protected credentials, Responses translation, and provider boundaries.
 - [Architecture](./architecture.md) — repository-level components and ownership boundaries.
 - [Android runtime architecture](./android-runtime-architecture.md) — native service, runtime, persistence, provider, camera, and speech composition.
 - [Atlas Core](./agent-runtime.md) — turn persistence, context assembly, memory admission, tools, recovery, and loop budgets.
@@ -21,6 +23,7 @@ Atlas is easiest to understand by following ownership from the persistent runtim
 ## Testing and release work
 
 - [Build and test](./build-and-test.md) — reproducible checks for Core, Android, cloud, and public readiness.
+- [Android app guide](../apps/atlas-android/README.md) — install, first run, ChatGPT-plan sign-in, BYOI endpoints, build variants, and limitations.
 - [Testing](./testing.md) — test layers and the role of the legacy scenario harness.
 - [Behavioral eval fixtures](../evals/README.md) — small regression cases derived from real sessions.
 - [Public-release audit](./public-release-audit.md) — findings, evidence, and remaining publication blockers.

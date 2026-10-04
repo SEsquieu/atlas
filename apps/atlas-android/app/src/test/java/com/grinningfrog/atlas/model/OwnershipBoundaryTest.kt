@@ -23,6 +23,7 @@ class OwnershipBoundaryTest {
             capability = RouteCapability.VISION,
             systemPrompt = "system",
             userText = "what changed",
+            provenance = InferenceProvenance(InferenceDomain.INTERACTIVE, InferencePurpose.USER_RESPONSE, userInitiated = true),
         )
         assertEquals("8d74d4fd-84c2-49b6-bac4-040864663643", request.workspaceId)
         assertEquals("75943256-a187-4840-9d73-c6fc63775f9b", request.taskRunId)

@@ -5,6 +5,9 @@ import com.grinningfrog.atlas.model.ProviderEndpoint
 import com.grinningfrog.atlas.model.ResponseContract
 import com.grinningfrog.atlas.model.ResponseMode
 import com.grinningfrog.atlas.model.RouteCapability
+import com.grinningfrog.atlas.model.InferenceDomain
+import com.grinningfrog.atlas.model.InferencePurpose
+import com.grinningfrog.atlas.model.InferenceProvenance
 
 data class ProviderCheck(val ok: Boolean, val message: String, val latencyMs: Long? = null)
 
@@ -28,6 +31,7 @@ class ProviderConnectionTester(private val backend: InferenceBackend = OpenAiCom
                     systemPrompt = "This is an Atlas connection test. Reply with only: ready",
                     userText = "Connection test",
                     responseContract = ResponseContract(ResponseMode.IMMEDIATE, 1, 3, 1, 8),
+                    provenance = InferenceProvenance(InferenceDomain.DIAGNOSTIC, InferencePurpose.CONNECTION_TEST, userInitiated = true),
                 ),
             )
             val tuning = if (assessment.location == EndpointLocation.DEVICE) " · on-device thinking disabled" else ""

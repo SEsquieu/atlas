@@ -9,6 +9,8 @@ enum class ContextMode { MANUAL, LIVE }
 enum class RouteCapability { FAST, VISION, REASONING, FALLBACK }
 enum class InferenceRisk { NORMAL, ELEVATED, SAFETY_CRITICAL }
 enum class LatencyClass { LATENCY_CRITICAL, INTERACTIVE, BACKGROUND }
+enum class InferenceDomain { INTERACTIVE, PERCEPTION, MEMORY, INTENT, DIAGNOSTIC }
+enum class InferencePurpose { USER_RESPONSE, HEARTBEAT_SCENE_REVIEW, MEMORY_COMPACTION, INTENT_ASSESSMENT, INTENT_WORK_SLICE, CONNECTION_TEST }
 enum class ContextStability { STABLE, TRANSITIONING, UNKNOWN }
 enum class MotionState { STATIONARY, HANDHELD_STABLE, TURNING, WALKING, VEHICLE, UNKNOWN }
 enum class PermissionPolicy { NEVER, USER_REQUEST, ACTIVE_SESSION }
@@ -28,6 +30,7 @@ enum class DeliveryStatus { NOT_APPLICABLE, PENDING, DELIVERED, INTERRUPTED, TEX
 enum class SpeechSegmentStatus { QUEUED, STARTED, COMPLETED, INTERRUPTED, SKIPPED, FAILED }
 enum class ResponseMode { IMMEDIATE, DEFAULT, PHYSICAL_GUIDANCE, SAFETY, EXPLANATION }
 enum class PromptProfile { AUTO, FULL, COMPACT }
+enum class ProviderKind { OPENAI_COMPATIBLE, CHATGPT_PLAN, MANAGED }
 enum class WorkspaceKind { PERSONAL, ORGANIZATION }
 enum class PrincipalKind { USER, SERVICE, DEVICE }
 enum class TaskRunStatus { PENDING, ACTIVE, BLOCKED, COMPLETED, CANCELLED }
@@ -56,6 +59,7 @@ data class SessionPermissions(
     val observe: Boolean = true,
     val captureImage: PermissionPolicy = PermissionPolicy.ACTIVE_SESSION,
     val microphone: PermissionPolicy = PermissionPolicy.USER_REQUEST,
+    val location: PermissionPolicy = PermissionPolicy.USER_REQUEST,
     val speakResponses: Boolean = true,
     val proactiveSpeech: Boolean = false,
     val externalActionsRequireConfirmation: Boolean = true,
@@ -122,6 +126,8 @@ data class AtlasMessage(
     val deliveryStatus: DeliveryStatus = DeliveryStatus.NOT_APPLICABLE,
     val deliveredContent: String? = null,
     val interruptedSentence: String? = null,
+    /** Provider-owned evidence for later turns. Never rendered as user-visible dialogue. */
+    val providerContextJson: String? = null,
 )
 
 data class SpeechSegment(
@@ -171,6 +177,19 @@ data class ToolCallProposal(
     val name: String,
     val argumentsJson: String,
     val reason: String? = null,
+)
+
+data class ProviderCitation(
+    val title: String,
+    val url: String,
+)
+
+data class ProviderToolUse(
+    val type: String,
+    val action: String? = null,
+    val status: String? = null,
+    val queries: List<String> = emptyList(),
+    val urls: List<String> = emptyList(),
 )
 
 data class AtlasToolCall(
@@ -268,6 +287,7 @@ data class ProviderEndpoint(
     val timeoutMs: Long = 60_000,
     val reasoningEnabled: Boolean = false,
     val promptProfile: PromptProfile = PromptProfile.AUTO,
+    val kind: ProviderKind = ProviderKind.OPENAI_COMPATIBLE,
 )
 
 data class RouteTable(
@@ -290,6 +310,7 @@ data class InferenceRequest(
     val capability: RouteCapability,
     val systemPrompt: String,
     val userText: String,
+    val provenance: InferenceProvenance,
     val turnId: String? = null,
     val step: Int = 0,
     val messages: List<InferenceMessage> = emptyList(),
@@ -302,6 +323,16 @@ data class InferenceRequest(
     val responseContract: ResponseContract? = null,
     val workspaceId: String = DEFAULT_PERSONAL_WORKSPACE_ID,
     val taskRunId: String? = null,
+)
+
+data class InferenceProvenance(
+    val domain: InferenceDomain,
+    val purpose: InferencePurpose,
+    val triggerEventId: String? = null,
+    val intentId: String? = null,
+    val workAttemptId: String? = null,
+    val autonomyMode: String? = null,
+    val userInitiated: Boolean,
 )
 
 data class InferenceResponse(
@@ -321,6 +352,8 @@ data class InferenceResponse(
     val promptTokens: Int? = null,
     val completionTokens: Int? = null,
     val totalTokens: Int? = null,
+    val citations: List<ProviderCitation> = emptyList(),
+    val providerToolUses: List<ProviderToolUse> = emptyList(),
 )
 
 sealed interface InferenceStreamEvent {

@@ -62,6 +62,7 @@ class EndpointPromptCompilerTest {
             SPOKEN RESPONSE CONTRACT: mode=default; target about 35 words; hard maximum 65 words and 3 sentences.
         """.trimIndent(),
         userText = "Hello",
+        provenance = com.grinningfrog.atlas.model.InferenceProvenance(com.grinningfrog.atlas.model.InferenceDomain.DIAGNOSTIC, com.grinningfrog.atlas.model.InferencePurpose.CONNECTION_TEST, userInitiated = true),
         responseContract = ResponseContract(ResponseMode.DEFAULT, 35, 65, 3, 115),
     )
 }

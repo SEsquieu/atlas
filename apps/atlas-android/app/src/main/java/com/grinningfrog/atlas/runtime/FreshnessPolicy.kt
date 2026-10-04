@@ -18,19 +18,33 @@ data class FreshnessAssessment(
 )
 
 object FreshnessPolicy {
+    private val temporalAnaphora = Regex(
+        "^\\s*(is|was|are|were) (this|that|these|those) (from|for|as of) (today|tonight|yesterday|tomorrow|this (morning|afternoon|evening|week|month|year))\\b",
+        RegexOption.IGNORE_CASE,
+    )
     private val visualPatterns = listOf(
         Regex("what (am i|are we) looking at", RegexOption.IGNORE_CASE), Regex("can you see", RegexOption.IGNORE_CASE),
         Regex("look at this", RegexOption.IGNORE_CASE), Regex("read this", RegexOption.IGNORE_CASE),
         Regex("what does this say", RegexOption.IGNORE_CASE), Regex("which one", RegexOption.IGNORE_CASE),
         Regex("is this", RegexOption.IGNORE_CASE), Regex("where should", RegexOption.IGNORE_CASE),
         Regex("help me (fix|find|identify)", RegexOption.IGNORE_CASE),
+        Regex("what (is|are) (this|that|these|those)(\\b|\\?)", RegexOption.IGNORE_CASE),
+        Regex("where (am i|are we|is (this|that))(\\b|\\?)", RegexOption.IGNORE_CASE),
+        Regex("where do you think (i am|we are|this is|that is)", RegexOption.IGNORE_CASE),
+        Regex("what (kind|type|model|make|color|colour) of .{0,40}(is this|is that|am i in|are we in)", RegexOption.IGNORE_CASE),
+        Regex("what (vehicle|car|truck|room|building|place|object|plant|animal).{0,40}(am i|are we|is this|is that)", RegexOption.IGNORE_CASE),
+        Regex("what (vehicle|car|truck|room|building|place).{0,50}(i('| a)m|we('| a)re)", RegexOption.IGNORE_CASE),
+        Regex("what do you think (this|that|these|those) (is|are)", RegexOption.IGNORE_CASE),
     )
     private val highRisk = Regex("(wire.*cut|safe|danger|hazard|drive|energized|live circuit)", RegexOption.IGNORE_CASE)
     private val navigation = Regex("(where should|which way|right place|right aisle|navigate|direction)", RegexOption.IGNORE_CASE)
     private val detail = Regex("(read this|what does this say|label|small text|serial|part number|model number)", RegexOption.IGNORE_CASE)
-    private val confirmation = Regex("(^|\\s)(is|are|am|do|does|confirm|right one)", RegexOption.IGNORE_CASE)
+    private val confirmation = Regex("^\\s*(is|are|am|do|does|can|confirm)\\b|\\b(right one|correct one)\\b", RegexOption.IGNORE_CASE)
 
     fun classify(text: String): VisualUseCase {
+        // "Is this from today?" refers to prior information, not the camera. Keep this narrow:
+        // physical predicates such as "is this safe today" must still take the visual path.
+        if (temporalAnaphora.containsMatchIn(text)) return VisualUseCase.NONE
         if (highRisk.containsMatchIn(text)) return VisualUseCase.HIGH_RISK
         if (navigation.containsMatchIn(text)) return VisualUseCase.NAVIGATION
         if (detail.containsMatchIn(text)) return VisualUseCase.DETAIL

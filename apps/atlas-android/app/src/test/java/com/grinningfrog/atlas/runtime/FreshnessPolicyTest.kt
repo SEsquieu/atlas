@@ -13,11 +13,29 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FreshnessPolicyTest {
+    @Test fun `deictic location and object questions require current vision`() {
+        listOf(
+            "Where do you think I am right now?",
+            "What vehicle do you think I'm sitting in?",
+            "What is this?",
+            "What kind of plant is this?",
+        ).forEach { text -> assertEquals(text, VisualUseCase.DESCRIPTIVE, FreshnessPolicy.classify(text)) }
+
+        assertEquals(VisualUseCase.NONE, FreshnessPolicy.classify("Where do you think the project is headed?"))
+        assertEquals(VisualUseCase.NONE, FreshnessPolicy.classify("What kind of answer is best?"))
+    }
+
     @Test fun nonVisualRequestsDoNotConsumeCameraContext() {
         val result = FreshnessPolicy.assess("Write a short toast", null, nowMs = 100_000)
         assertEquals(VisualUseCase.NONE, result.useCase)
         assertEquals(FreshnessDecision.NOT_REQUIRED, result.decision)
         assertNull(result.ageMs)
+    }
+
+    @Test fun temporalFollowUpsDoNotBecomeVisionRequests() {
+        assertEquals(VisualUseCase.NONE, FreshnessPolicy.classify("Is this from today? What is today's date?"))
+        assertEquals(VisualUseCase.NONE, FreshnessPolicy.classify("Was that from yesterday?"))
+        assertEquals(VisualUseCase.CONFIRMATION, FreshnessPolicy.classify("Is this the correct cable today?"))
     }
 
     @Test fun movingContextExpiresSoonerThanStationaryContext() {

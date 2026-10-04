@@ -44,7 +44,23 @@ import org.json.JSONObject
 import org.json.JSONArray
 import java.util.UUID
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 8) {
+data class ChatGptUsageSummary(
+    val requests: Int = 0,
+    val interactiveRequests: Int = 0,
+    val backgroundRequests: Int = 0,
+    val visionRequests: Int = 0,
+    val inputTokens: Long = 0,
+    val outputTokens: Long = 0,
+    val totalTokens: Long = 0,
+    val failedAttempts: Int = 0,
+    val usageLimitFailures: Int = 0,
+    val lastFailureCode: String? = null,
+    val hostedSearchUses: Int = 0,
+    val lastHostedSearchAction: String? = null,
+    val lastHostedSearchStatus: String? = null,
+)
+
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 10) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         db.setForeignKeyConstraintsEnabled(true)
@@ -101,6 +117,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 delivery_status TEXT NOT NULL DEFAULT 'NOT_APPLICABLE',
                 delivered_content TEXT,
                 interrupted_sentence TEXT,
+                provider_context_json TEXT,
                 created_at INTEGER NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id),
                 FOREIGN KEY(turn_id) REFERENCES turns(turn_id)
@@ -203,6 +220,49 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         db.execSQL("CREATE INDEX IF NOT EXISTS clarifications_session_status ON clarifications(session_id,status,updated_at DESC)")
     }
 
+    private fun createIntentRuntimeTables(db: SQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS intents (
+            intent_id TEXT PRIMARY KEY, type TEXT NOT NULL, subject TEXT NOT NULL, description TEXT,
+            origin TEXT NOT NULL, created_at INTEGER NOT NULL, last_updated_at INTEGER NOT NULL,
+            last_evaluated_at INTEGER, last_worked_at INTEGER, state TEXT NOT NULL,
+            importance REAL NOT NULL, user_relevance REAL NOT NULL, confidence REAL NOT NULL,
+            environmental_affinity_json TEXT, required_capabilities_json TEXT NOT NULL DEFAULT '[]',
+            required_authorities_json TEXT NOT NULL DEFAULT '[]', estimated_cost REAL, estimated_risk REAL,
+            attempt_count INTEGER NOT NULL DEFAULT 0, identical_failure_count INTEGER NOT NULL DEFAULT 0,
+            successful_step_count INTEGER NOT NULL DEFAULT 0, information_gain REAL, progress_rate REAL,
+            blocked_reason TEXT, next_action TEXT, parent_intent_id TEXT, supersedes_intent_id TEXT,
+            cooldown_until INTEGER, metadata_json TEXT NOT NULL DEFAULT '{}'
+        )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS intents_state_pressure_inputs ON intents(state, importance DESC, user_relevance DESC, last_updated_at DESC)")
+        db.execSQL("""CREATE TABLE IF NOT EXISTS intent_transitions (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT, intent_id TEXT NOT NULL, from_state TEXT NOT NULL,
+            to_state TEXT NOT NULL, reason TEXT, at_ms INTEGER NOT NULL,
+            FOREIGN KEY(intent_id) REFERENCES intents(intent_id)
+        )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS intent_transitions_intent_time ON intent_transitions(intent_id, at_ms DESC)")
+        db.execSQL("""CREATE TABLE IF NOT EXISTS idle_evaluations (
+            evaluation_id TEXT PRIMARY KEY, at_ms INTEGER NOT NULL, autonomy_mode TEXT NOT NULL,
+            environment_json TEXT NOT NULL, candidate_count INTEGER NOT NULL, eligible_count INTEGER NOT NULL,
+            ranked_json TEXT NOT NULL, decision TEXT NOT NULL, selected_intent_id TEXT, reason TEXT NOT NULL,
+            next_evaluation_at INTEGER, budget_usage_json TEXT NOT NULL
+        )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS idle_evaluations_time ON idle_evaluations(at_ms DESC)")
+        db.execSQL("""CREATE TABLE IF NOT EXISTS idle_work_attempts (
+            attempt_id TEXT PRIMARY KEY, intent_id TEXT NOT NULL, started_at INTEGER NOT NULL,
+            completed_at INTEGER NOT NULL, autonomy_mode TEXT NOT NULL, inference_location TEXT NOT NULL,
+            contract_json TEXT NOT NULL, result_json TEXT NOT NULL,
+            FOREIGN KEY(intent_id) REFERENCES intents(intent_id)
+        )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS idle_work_attempts_intent_time ON idle_work_attempts(intent_id, started_at DESC)")
+        db.execSQL("""CREATE TABLE IF NOT EXISTS intent_quarantine (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT, intent_id TEXT, raw_json TEXT NOT NULL,
+            error TEXT NOT NULL, quarantined_at INTEGER NOT NULL
+        )""".trimIndent())
+        db.execSQL("""CREATE TABLE IF NOT EXISTS idle_runtime_state (
+            state_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL
+        )""".trimIndent())
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         createOwnershipTables(db)
         db.execSQL(
@@ -276,6 +336,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         )
         db.execSQL("CREATE INDEX observations_session_time ON observations(session_id, observed_at DESC)")
         createAgentRuntimeTables(db)
+        createIntentRuntimeTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -347,6 +408,8 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             db.execSQL("CREATE INDEX IF NOT EXISTS memory_scope_status ON memory_items(workspace_id,scope,scope_id,status,updated_at DESC)")
         }
         if (oldVersion < 8) createAgentRuntimeTables(db)
+        if (oldVersion < 9) createIntentRuntimeTables(db)
+        if (oldVersion < 10) addColumnIfMissing(db, "messages", "provider_context_json", "TEXT")
     }
 
     @Synchronized
@@ -679,6 +742,64 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         }.reversed()
     }
 
+    fun loadChatGptUsageSummary(sinceMs: Long = 0): ChatGptUsageSummary {
+        var requests = 0
+        var interactive = 0
+        var background = 0
+        var vision = 0
+        var input = 0L
+        var output = 0L
+        var total = 0L
+        var failures = 0
+        var limits = 0
+        var lastFailureCode: String? = null
+        var hostedSearchUses = 0
+        var lastHostedSearchAction: String? = null
+        var lastHostedSearchStatus: String? = null
+        val visionByRequest = mutableMapOf<String, Boolean>()
+        readableDatabase.rawQuery(
+            "SELECT event_type,data_json FROM events WHERE at_ms >= ? AND event_type IN ('provider.requested','provider.responded','provider.route_attempted') ORDER BY sequence",
+            arrayOf(sinceMs.toString()),
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val type = cursor.getString(0)
+                val data = runCatching { JSONObject(cursor.getString(1)) }.getOrNull() ?: continue
+                if (type == "provider.requested") {
+                    data.optString("requestId").takeIf(String::isNotBlank)?.let { requestId ->
+                        visionByRequest[requestId] = data.optBoolean("visionAttached", false) || data.optString("source") == "heartbeat"
+                    }
+                    continue
+                }
+                if (data.optString("endpointId") != com.grinningfrog.atlas.provider.ChatGptAuthManager.ENDPOINT_ID) continue
+                if (type == "provider.responded") {
+                    requests++
+                    if (data.optString("source") in setOf("heartbeat", "memory_compaction")) background++ else interactive++
+                    if (visionByRequest[data.optString("requestId")] == true) vision++
+                    input += data.optLong("promptTokens", 0)
+                    output += data.optLong("completionTokens", 0)
+                    total += data.optLong("totalTokens", 0)
+                    data.optJSONArray("providerToolUses")?.let { uses ->
+                        for (index in 0 until uses.length()) {
+                            val use = uses.optJSONObject(index) ?: continue
+                            if (use.optString("type") != "web_search") continue
+                            hostedSearchUses++
+                            lastHostedSearchAction = use.optString("action").takeIf(String::isNotBlank)
+                            lastHostedSearchStatus = use.optString("status").takeIf(String::isNotBlank)
+                        }
+                    }
+                } else if (!data.optBoolean("success", false)) {
+                    failures++
+                    data.optString("errorCode").takeIf(String::isNotBlank)?.let { code ->
+                        lastFailureCode = code
+                        if (code == "subscription_sharing_usage_limit_exceeded") limits++
+                    }
+                }
+            }
+        }
+        return ChatGptUsageSummary(requests, interactive, background, vision, input, output, total, failures, limits,
+            lastFailureCode, hostedSearchUses, lastHostedSearchAction, lastHostedSearchStatus)
+    }
+
     @Synchronized
     fun createTurn(sessionId: String, trigger: String, turnId: String = UUID.randomUUID().toString(), nowMs: Long = System.currentTimeMillis()): AgentTurn {
         val turn = AgentTurn(turnId, sessionId, TurnStatus.CREATED, trigger, nowMs, nowMs)
@@ -725,6 +846,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 put("tool_call_id", message.toolCallId); put("tool_calls_json", message.toolCallsJson); put("created_at", message.createdAtMs)
                 put("delivery_status", message.deliveryStatus.name); put("delivered_content", message.deliveredContent)
                 put("interrupted_sentence", message.interruptedSentence)
+                put("provider_context_json", message.providerContextJson)
             })
             appendEventLocked(this, message.sessionId, "message.recorded", message.createdAtMs, JSONObject().apply {
                 put("messageId", message.id); put("turnId", message.turnId); put("role", message.role.name.lowercase())
@@ -736,10 +858,11 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     @Synchronized
-    fun updateAssistantMessage(messageId: String, content: String, toolCallsJson: String? = null) {
+    fun updateAssistantMessage(messageId: String, content: String, toolCallsJson: String? = null, providerContextJson: String? = null) {
         writableDatabase.update("messages", ContentValues().apply {
             put("content", content)
             put("tool_calls_json", toolCallsJson)
+            if (providerContextJson != null) put("provider_context_json", providerContextJson)
         }, "message_id = ?", arrayOf(messageId))
     }
 
@@ -749,14 +872,14 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     fun loadMessages(sessionId: String, afterSequence: Long = 0, limit: Int = 80): List<AtlasMessage> = readableDatabase.rawQuery(
-        """SELECT sequence,message_id,session_id,turn_id,role,content,created_at,kind,tool_call_id,tool_calls_json,delivery_status,delivered_content,interrupted_sentence
+        """SELECT sequence,message_id,session_id,turn_id,role,content,created_at,kind,tool_call_id,tool_calls_json,delivery_status,delivered_content,interrupted_sentence,provider_context_json
             FROM messages WHERE session_id = ? AND sequence > ? ORDER BY sequence DESC LIMIT ?""".trimIndent(),
         arrayOf(sessionId, afterSequence.toString(), limit.toString()),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toMessage()) }.reversed() }
 
     /** Oldest-first page used by checkpointing so a failed backlog can never be skipped. */
     fun loadMessagesForCompaction(sessionId: String, afterSequence: Long, limit: Int): List<AtlasMessage> = readableDatabase.rawQuery(
-        """SELECT sequence,message_id,session_id,turn_id,role,content,created_at,kind,tool_call_id,tool_calls_json,delivery_status,delivered_content,interrupted_sentence
+        """SELECT sequence,message_id,session_id,turn_id,role,content,created_at,kind,tool_call_id,tool_calls_json,delivery_status,delivered_content,interrupted_sentence,provider_context_json
             FROM messages WHERE session_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT ?""".trimIndent(),
         arrayOf(sessionId, afterSequence.toString(), limit.toString()),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toMessage()) } }
@@ -1056,6 +1179,7 @@ private fun android.database.Cursor.toMessage() = AtlasMessage(
     getLong(0), getString(1), getString(2), getString(3), MessageRole.valueOf(getString(4)), getString(5), getLong(6),
     MessageKind.valueOf(getString(7)), if (isNull(8)) null else getString(8), if (isNull(9)) null else getString(9),
     DeliveryStatus.valueOf(getString(10)), if (isNull(11)) null else getString(11), if (isNull(12)) null else getString(12),
+    if (isNull(13)) null else getString(13),
 )
 
 private fun android.database.Cursor.toToolCall() = AtlasToolCall(
@@ -1088,7 +1212,7 @@ private fun jsonStringList(raw: String): List<String> = runCatching {
 private fun android.database.Cursor.nullableString(index: Int): String? = if (isNull(index)) null else getString(index)
 
 private fun SessionPermissions.toJson() = JSONObject().apply {
-    put("observe", observe); put("captureImage", captureImage.name); put("microphone", microphone.name)
+    put("observe", observe); put("captureImage", captureImage.name); put("microphone", microphone.name); put("location", location.name)
     put("speakResponses", speakResponses); put("proactiveSpeech", proactiveSpeech)
     put("externalActionsRequireConfirmation", externalActionsRequireConfirmation)
 }
@@ -1099,6 +1223,7 @@ private fun permissionsFromJson(raw: String?) = runCatching {
         observe = json.optBoolean("observe", true),
         captureImage = PermissionPolicy.valueOf(json.optString("captureImage", PermissionPolicy.ACTIVE_SESSION.name)),
         microphone = PermissionPolicy.valueOf(json.optString("microphone", PermissionPolicy.USER_REQUEST.name)),
+        location = PermissionPolicy.valueOf(json.optString("location", PermissionPolicy.USER_REQUEST.name)),
         speakResponses = json.optBoolean("speakResponses", true), proactiveSpeech = json.optBoolean("proactiveSpeech", false),
         externalActionsRequireConfirmation = json.optBoolean("externalActionsRequireConfirmation", true),
     )

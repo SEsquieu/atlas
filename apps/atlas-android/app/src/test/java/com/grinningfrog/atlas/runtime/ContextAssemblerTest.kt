@@ -65,6 +65,21 @@ class ContextAssemblerTest {
         assertFalse(context.messages.any { it.content == "secret trace" })
     }
 
+    @Test fun providerEvidenceSurvivesIntoLaterTurnsWithoutChangingVisibleContent() {
+        val prior = message(2, "turn-1", MessageRole.ASSISTANT, "The store page did not load.").copy(
+            providerContextJson = "{\"providerToolUses\":[{\"type\":\"web_search\",\"action\":\"open_page\",\"status\":\"completed\",\"urls\":[\"https://example.com/ad\"]}]}",
+        )
+        val context = ContextAssembler().assemble(
+            session(), listOf(message(1, "turn-1", MessageRole.USER, "Check the ad"), prior),
+            emptyList(), null, null, 10,
+        )
+
+        assertTrue(context.messages[1].content.startsWith("The store page did not load."))
+        assertTrue(context.messages[1].content.contains("authoritative audit context"))
+        assertTrue(context.messages[1].content.contains("open_page"))
+        assertTrue(context.messages[1].content.contains("https://example.com/ad"))
+    }
+
     @Test fun physicalMemoryKeepsEvidenceConfidenceAndDeterministicExpiry() {
         val item = MemoryItem(
             id = "environment-1", sessionId = "session", kind = MemoryKind.ENVIRONMENT,

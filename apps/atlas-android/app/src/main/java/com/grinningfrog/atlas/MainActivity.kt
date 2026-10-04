@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
@@ -77,6 +78,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -95,6 +98,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.grinningfrog.atlas.data.SecureSettings
+import com.grinningfrog.atlas.data.AtlasDatabase
+import com.grinningfrog.atlas.data.ChatGptUsageSummary
 import com.grinningfrog.atlas.data.SessionArchive
 import com.grinningfrog.atlas.cloud.ManagedAccountClient
 import com.grinningfrog.atlas.media.MediaRepository
@@ -116,6 +121,11 @@ import com.grinningfrog.atlas.runtime.AtlasSessionService
 import com.grinningfrog.atlas.ui.AtlasUiPresentation
 import com.grinningfrog.atlas.provider.EndpointSecurity
 import com.grinningfrog.atlas.provider.ProviderConnectionTester
+import com.grinningfrog.atlas.provider.ChatGptAuthManager
+import com.grinningfrog.atlas.provider.ChatGptAuthState
+import com.grinningfrog.atlas.intent.IdleRuntimeStatus
+import com.grinningfrog.atlas.intent.IntentAutonomyMode
+import com.grinningfrog.atlas.intent.IntentState
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.DateFormat
@@ -155,6 +165,8 @@ class MainActivity : ComponentActivity() {
                     settings = app.settings,
                     mediaRepository = app.mediaRepository,
                     managedAccount = app.managedAccount,
+                    chatGptAuth = app.chatGptAuth,
+                    database = app.database,
                     sessionArchive = app.sessionArchive,
                     onboardingComplete = onboardingComplete,
                     permissionsGranted = permissionsGranted,
@@ -209,6 +221,8 @@ private fun AtlasApp(
     settings: SecureSettings,
     mediaRepository: MediaRepository,
     managedAccount: ManagedAccountClient,
+    chatGptAuth: ChatGptAuthManager,
+    database: AtlasDatabase,
     sessionArchive: SessionArchive,
     onboardingComplete: Boolean,
     permissionsGranted: Boolean,
@@ -219,7 +233,10 @@ private fun AtlasApp(
     var page by remember { mutableStateOf(AppPage.ATLAS) }
     val sessionActionScope = rememberCoroutineScope()
     var providerRevision by remember { mutableIntStateOf(0) }
-    val providers = remember(providerRevision) { settings.loadProviders() }
+    val chatGptState by chatGptAuth.state.collectAsState()
+    val providers = remember(providerRevision, chatGptState) { buildList {
+        addAll(settings.loadProviders()); chatGptAuth.endpointOrNull()?.let(::add)
+    } }
     val snapshot by runtime?.state?.collectAsState() ?: remember { mutableStateOf(RuntimeSnapshot()) }
 
     if (!onboardingComplete) {
@@ -245,7 +262,7 @@ private fun AtlasApp(
             runtime == null -> LoadingRuntime(Modifier.padding(padding))
             page == AppPage.ATLAS -> AtlasHomePage(runtime, snapshot, providers.isNotEmpty(), mediaRepository, sessionActionScope, Modifier.padding(padding), onOpenSession = { page = AppPage.SESSION }, onOpenSystem = { page = AppPage.SYSTEM })
             page == AppPage.SESSION -> SessionPage(runtime, snapshot, providers.isNotEmpty(), mediaRepository, sessionActionScope, Modifier.padding(padding), onConfigureInference = { page = AppPage.SYSTEM })
-            page == AppPage.SYSTEM -> SystemPage(runtime, snapshot, settings, providers, managedAccount, sessionArchive, Modifier.padding(padding)) { providerRevision++ }
+            page == AppPage.SYSTEM -> SystemPage(runtime, snapshot, settings, providers, managedAccount, chatGptAuth, database, sessionArchive, Modifier.padding(padding)) { providerRevision++ }
         }
     }
 }
@@ -593,23 +610,198 @@ private fun SystemPage(
     settings: SecureSettings,
     providers: List<ProviderEndpoint>,
     managedAccount: ManagedAccountClient,
+    chatGptAuth: ChatGptAuthManager,
+    database: AtlasDatabase,
     archive: SessionArchive,
     modifier: Modifier,
     onProvidersChanged: () -> Unit,
 ) {
     var section by remember { mutableStateOf("Inference") }
+    val idleStatus by runtime.idleStatus?.collectAsState() ?: remember { mutableStateOf(IdleRuntimeStatus()) }
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (section == "Inference") Button({ section = "Inference" }, Modifier.weight(1f)) { Text("Inference") }
             else OutlinedButton({ section = "Inference" }, Modifier.weight(1f)) { Text("Inference") }
             if (section == "Data") Button({ section = "Data" }, Modifier.weight(1f)) { Text("Data & logs") }
             else OutlinedButton({ section = "Data" }, Modifier.weight(1f)) { Text("Data & logs") }
+            if (section == "Intent") Button({ section = "Intent" }, Modifier.weight(1f)) { Text("Intent") }
+            else OutlinedButton({ section = "Intent" }, Modifier.weight(1f)) { Text("Intent") }
+            if (section == "Tools") Button({ section = "Tools" }, Modifier.weight(1f)) { Text("Tools") }
+            else OutlinedButton({ section = "Tools" }, Modifier.weight(1f)) { Text("Tools") }
         }
         Box(Modifier.weight(1f)) {
-            if (section == "Inference") ProviderPage(settings, providers, managedAccount, Modifier.fillMaxSize(), onProvidersChanged)
-            else EventsPage(runtime, snapshot, settings, archive, Modifier.fillMaxSize())
+            when (section) {
+                "Inference" -> ProviderPage(settings, providers, managedAccount, chatGptAuth, database, Modifier.fillMaxSize(), onProvidersChanged)
+                "Intent" -> IntentRuntimePage(runtime, idleStatus, snapshot, Modifier.fillMaxSize())
+                "Tools" -> CapabilityToolsPage(settings, Modifier.fillMaxSize())
+                else -> EventsPage(runtime, snapshot, settings, archive, Modifier.fillMaxSize())
+            }
         }
     }
+}
+
+@Composable
+private fun CapabilityToolsPage(settings: SecureSettings, modifier: Modifier) {
+    val context = LocalContext.current
+    var locationGranted by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED,
+        )
+    }
+    val locationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        locationGranted = result.values.any { it } ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    }
+    var braveKey by remember { mutableStateOf("") }
+    var searchConfigured by remember { mutableStateOf(!settings.braveSearchKey().isNullOrBlank()) }
+    LazyColumn(modifier, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            AtlasBrandHeader("ATLAS TOOLS", "Device-owned")
+            Spacer(Modifier.height(14.dp))
+            Text("Capabilities", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+            Text("Providers can propose these tools. Atlas applies policy, asks when required, executes them, and records the result.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Location", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(if (locationGranted) "● Android permission granted" else "Permission not granted", color = if (locationGranted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Enables foreground current-location and reverse-geocoding tools. Atlas asks before sharing a fresh location with a model.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (!locationGranted) Button(onClick = {
+                        locationLauncher.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
+                    }) { Text("Enable location") }
+                }
+            }
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Structured findings", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Available", color = MaterialTheme.colorScheme.primary)
+                    Text("Atlas can preserve capability ideas, bugs, UX issues, policy gaps, and proposed improvements as structured session events included in exports.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Independent web search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(if (searchConfigured) "● Brave fallback configured" else "Optional", color = if (searchConfigured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("ChatGPT-hosted search is available automatically when the connected model and account permit it. Configure Brave only as a provider-independent fallback for local, LAN, or other inference routes.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(braveKey, { braveKey = it }, label = { Text(if (searchConfigured) "Replace Brave Search API key" else "Brave Search API key") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { settings.saveBraveSearchKey(braveKey); searchConfigured = true; braveKey = "" }, enabled = braveKey.isNotBlank()) { Text("Save") }
+                        if (searchConfigured) TextButton(onClick = { settings.saveBraveSearchKey(""); searchConfigured = false }) { Text("Remove") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun IntentRuntimePage(runtime: AtlasMobileRuntime, status: IdleRuntimeStatus, snapshot: RuntimeSnapshot, modifier: Modifier) {
+    LazyColumn(modifier, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            AtlasBrandHeader("IDLE RUNTIME", status.lastDecision.name)
+            Spacer(Modifier.height(14.dp))
+            Text("Persistent intent", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+            Text("Core keeps unfinished work durable. Models are optional, bounded capabilities.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Autonomy mode", fontWeight = FontWeight.Bold)
+                    IntentAutonomyMode.entries.forEach { mode ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(mode.name, fontWeight = if (status.mode == mode) FontWeight.Bold else FontWeight.Normal)
+                                Text(modeDescription(mode), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (status.mode != mode) TextButton(onClick = { runtime.setIntentAutonomyMode(mode) }) { Text("Select") }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text("Runtime status", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("${status.cognitionMode.name} · pressure ${(status.runtimePressure * 100).toInt()}%")
+                    Text(status.lastReason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    status.nextEvaluationAtMs?.let { Text("Next evaluation ${DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(it))}", style = MaterialTheme.typography.bodySmall) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (status.paused) Button({ runtime.resumeIdleRuntime() }) { Text("Resume") }
+                        else OutlinedButton({ runtime.pauseIdleRuntime() }) { Text("Pause") }
+                        OutlinedButton({ runtime.forceIdleEvaluation() }) { Text("Evaluate now") }
+                    }
+                }
+            }
+        }
+        item {
+            val t = status.telemetry
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Activity telemetry", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Runtime evaluations ${t.runtimeEvaluations} · deterministic work ${t.deterministicWorkUnits}")
+                    Text("Local calls ${t.localModelCalls} · cloud calls ${t.cloudModelCalls}")
+                    Text("Idle tokens ${t.idleInputTokens + t.idleOutputTokens} · cloud cost \$${"%.4f".format(t.idleCloudCostUsd)}")
+                    val remaining = status.budgetRemaining
+                    Text("Today remaining: ${remaining.inputTokens + remaining.outputTokens} tokens · \$${"%.4f".format(remaining.cloudCostUsd)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        item {
+            val domains = remember(snapshot.recentEvents) { inferenceDomains(snapshot.recentEvents) }
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Inference by runtime domain", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Interactive ${domains["INTERACTIVE"] ?: 0} · perception ${domains["PERCEPTION"] ?: 0}")
+                    Text("Memory ${domains["MEMORY"] ?: 0} · persistent intent ${domains["INTENT"] ?: 0} · diagnostics ${domains["DIAGNOSTIC"] ?: 0}")
+                    Text("Current session event window. Intent autonomy controls only INTENT.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        if (status.topIntents.isEmpty()) item { NoticeCard("No active intents", "Nothing is valid idle work. Zero model calls is correct behavior.") }
+        else {
+            item { Text("Top intents", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            items(status.topIntents, key = { it.intent.id }) { ranked ->
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(ranked.intent.subject, fontWeight = FontWeight.SemiBold)
+                        Text("${ranked.intent.state.name} · score ${(ranked.score.pressure * 100).toInt()}%", color = MaterialTheme.colorScheme.primary)
+                        ranked.eligibility.reason?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        ranked.intent.nextAction?.let { Text("Next: $it", style = MaterialTheme.typography.bodySmall) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (IntentStateMachineUi.canDormant(ranked.intent.state)) TextButton({ runtime.changeIntentState(ranked.intent.id, IntentState.DORMANT) }) { Text("Dormant") }
+                            if (ranked.intent.state in setOf(IntentState.DORMANT, IntentState.WAITING_EVENT, IntentState.WAITING_USER, IntentState.FAILED, IntentState.BLOCKED)) TextButton({ runtime.changeIntentState(ranked.intent.id, IntentState.ELIGIBLE) }) { Text("Reactivate") }
+                            TextButton({ runtime.changeIntentState(ranked.intent.id, IntentState.ABANDONED) }) { Text("Abandon") }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private object IntentStateMachineUi {
+    fun canDormant(state: IntentState) = state in setOf(IntentState.NEW, IntentState.ELIGIBLE, IntentState.BLOCKED)
+}
+
+private fun inferenceDomains(events: List<AtlasEvent>): Map<String, Int> = events.asSequence()
+    .filter { it.type == "provider.requested" }
+    .mapNotNull { event -> runCatching { org.json.JSONObject(event.dataJson).optString("inferenceDomain").takeIf(String::isNotBlank) }.getOrNull() }
+    .groupingBy { it }
+    .eachCount()
+
+private fun modeDescription(mode: IntentAutonomyMode) = when (mode) {
+    IntentAutonomyMode.OFF -> "No persistent idle intent processing"
+    IntentAutonomyMode.PERSIST_ONLY -> "Continuity only; no autonomous work or model calls"
+    IntentAutonomyMode.DETERMINISTIC -> "Approved non-inference work; hard zero model calls"
+    IntentAutonomyMode.LOCAL -> "Local/private inference allowed; cloud forbidden"
+    IntentAutonomyMode.BUDGETED -> "Local and cloud inference within hard budgets"
 }
 
 @Composable
@@ -794,7 +986,7 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
                     ) {
                         Column(Modifier.padding(14.dp)) {
                             Text(if (message.role == MessageRole.USER) "You" else "Atlas", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
-                            Spacer(Modifier.height(4.dp)); Text(message.content)
+                            Spacer(Modifier.height(4.dp)); AutoLinkedText(message.content)
                             if (message.role == MessageRole.ASSISTANT && message.deliveryStatus in setOf(DeliveryStatus.INTERRUPTED, DeliveryStatus.FAILED)) {
                                 Spacer(Modifier.height(6.dp))
                                 Text(
@@ -908,9 +1100,24 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
 }
 
 @Composable
-private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpoint>, managedAccount: ManagedAccountClient, modifier: Modifier, onChanged: () -> Unit) {
+private fun AutoLinkedText(content: String) {
+    val annotated = buildAnnotatedString {
+        append(content)
+        URL_PATTERN.findAll(content).forEach { match ->
+            val trimmed = match.value.trimEnd('.', ',', ')', ']', '}')
+            if (trimmed.isNotEmpty()) addLink(LinkAnnotation.Url(trimmed), match.range.first, match.range.first + trimmed.length)
+        }
+    }
+    Text(annotated)
+}
+
+private val URL_PATTERN = Regex("https?://[^\\s]+")
+
+@Composable
+private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpoint>, managedAccount: ManagedAccountClient, chatGptAuth: ChatGptAuthManager, database: AtlasDatabase, modifier: Modifier, onChanged: () -> Unit) {
     val scope = rememberCoroutineScope()
     val managedState by managedAccount.state.collectAsState()
+    val chatGptState by chatGptAuth.state.collectAsState()
     val tester = remember { ProviderConnectionTester() }
     var name by remember { mutableStateOf("") }
     var baseUrl by remember { mutableStateOf("") }
@@ -957,11 +1164,14 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
             }
         }
         item {
+            ChatGptPlanCard(chatGptAuth, chatGptState, settings, database) { onChanged() }
+        }
+        item {
             if (managedState.configured) ManagedAccountCard(managedAccount, settings, onChanged)
             else ManagedInferenceSoonCard()
         }
         if (providers.isNotEmpty()) item { Text("Configured endpoints", style = MaterialTheme.typography.titleMedium) }
-        items(providers, key = { it.id }) { endpoint ->
+        items(providers.filter { it.kind != com.grinningfrog.atlas.model.ProviderKind.CHATGPT_PLAN }, key = { it.id }) { endpoint ->
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -1099,6 +1309,119 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
             }
         }
     }
+}
+
+@Composable
+private fun ChatGptPlanCard(
+    auth: ChatGptAuthManager,
+    state: ChatGptAuthState,
+    settings: SecureSettings,
+    database: AtlasDatabase,
+    onChanged: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var showUsage by remember { mutableStateOf(false) }
+    var usage by remember { mutableStateOf(ChatGptUsageSummary()) }
+    fun refreshUsage() { usage = database.loadChatGptUsageSummary() }
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .35f))) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("CHATGPT", color = MaterialTheme.colorScheme.primary, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 1.sp)
+            when (state) {
+                ChatGptAuthState.Disconnected -> {
+                    Text("Continue with ChatGPT", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Use eligible inference included with your ChatGPT plan. No API key required. Atlas cannot access your ChatGPT conversations or memory.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = { scope.launch {
+                        val result = auth.authorize()
+                        if (result is ChatGptAuthState.Connected) {
+                            val routes = settings.loadRoutes()
+                            val id = ChatGptAuthManager.ENDPOINT_ID
+                            settings.saveRoutes(routes.copy(
+                                fast = (routes.fast + id).distinct(), vision = (routes.vision + id).distinct(),
+                                reasoning = (routes.reasoning + id).distinct(), fallback = (routes.fallback + id).distinct(),
+                            ))
+                        }
+                        onChanged()
+                    } }, modifier = Modifier.fillMaxWidth()) { Text("Continue with ChatGPT") }
+                }
+                ChatGptAuthState.Authenticating -> {
+                    Text("Waiting for OpenAI authorization…", fontWeight = FontWeight.Bold)
+                    Text("Finish sign-in in your browser, then return to Atlas.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    CircularProgressIndicator(Modifier.size(28.dp))
+                }
+                ChatGptAuthState.Refreshing -> {
+                    Text("Refreshing ChatGPT authorization…", fontWeight = FontWeight.Bold)
+                    CircularProgressIndicator(Modifier.size(28.dp))
+                }
+                is ChatGptAuthState.Connected -> {
+                    Text("● Connected", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    Text("Using ChatGPT plan${state.email?.let { " · $it" }.orEmpty()}")
+                    Text("Text · images where accepted · Atlas tools · hosted web search where eligible · streaming", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Model: ${state.models.firstOrNull { it.slug == state.model }?.displayName ?: state.model}", style = MaterialTheme.typography.bodySmall)
+                    if (state.models.size > 1) OutlinedButton(onClick = {
+                        val current = state.models.indexOfFirst { it.slug == state.model }.coerceAtLeast(0)
+                        auth.selectModel(state.models[(current + 1) % state.models.size].slug); onChanged()
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Choose next eligible model") }
+                    OutlinedButton(onClick = { showUsage = !showUsage; if (showUsage) refreshUsage() }, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (showUsage) "Hide usage details" else "Usage details")
+                    }
+                    OutlinedButton(onClick = { scope.launch {
+                        auth.disconnect()
+                        val id = ChatGptAuthManager.ENDPOINT_ID
+                        val routes = settings.loadRoutes()
+                        settings.saveRoutes(routes.copy(fast = routes.fast - id, vision = routes.vision - id, reasoning = routes.reasoning - id, fallback = routes.fallback - id))
+                        onChanged()
+                    } }, modifier = Modifier.fillMaxWidth()) { Text("Disconnect") }
+                }
+                is ChatGptAuthState.AuthorizationRequired -> {
+                    Text("Authorization required", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    Text(state.message)
+                    Button(onClick = { scope.launch { auth.authorize(); onChanged() } }, modifier = Modifier.fillMaxWidth()) { Text("Continue with ChatGPT") }
+                }
+                is ChatGptAuthState.EntitlementUnavailable -> {
+                    Text("ChatGPT plan unavailable", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    Text(state.message)
+                    OutlinedButton(onClick = { scope.launch { auth.authorize(); onChanged() } }, modifier = Modifier.fillMaxWidth()) { Text("Authorize plan usage") }
+                }
+                is ChatGptAuthState.UsageLimited -> {
+                    Text("ChatGPT plan usage limit reached", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    Text(state.message)
+                    Button(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://chatgpt.com/#settings/Usage"))) }, modifier = Modifier.fillMaxWidth()) { Text("View ChatGPT usage") }
+                    OutlinedButton(onClick = { auth.retryPlanUsage(); onChanged() }, modifier = Modifier.fillMaxWidth()) { Text("Try ChatGPT again") }
+                    OutlinedButton(onClick = { showUsage = !showUsage; if (showUsage) refreshUsage() }, modifier = Modifier.fillMaxWidth()) { Text(if (showUsage) "Hide Atlas usage" else "Atlas usage details") }
+                }
+                is ChatGptAuthState.UsageUnavailable -> {
+                    Text("ChatGPT usage temporarily unavailable", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    Text(state.message)
+                    OutlinedButton(onClick = { auth.retryPlanUsage(); onChanged() }, modifier = Modifier.fillMaxWidth()) { Text("Retry") }
+                    OutlinedButton(onClick = { showUsage = !showUsage; if (showUsage) refreshUsage() }, modifier = Modifier.fillMaxWidth()) { Text(if (showUsage) "Hide Atlas usage" else "Atlas usage details") }
+                }
+                is ChatGptAuthState.Error -> {
+                    Text("ChatGPT connection error", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    Text(state.message)
+                    OutlinedButton(onClick = { scope.launch { auth.authorize(); onChanged() } }, modifier = Modifier.fillMaxWidth()) { Text("Try again") }
+                }
+            }
+            if (showUsage) ChatGptUsageDetails(usage)
+        }
+    }
+}
+
+@Composable
+private fun ChatGptUsageDetails(usage: ChatGptUsageSummary) {
+    HorizontalDivider()
+    Text("Atlas usage", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+    Text("${usage.totalTokens} tokens · ${usage.requests} completed requests", fontFamily = FontFamily.Monospace)
+    Text("Input ${usage.inputTokens} · output ${usage.outputTokens}", style = MaterialTheme.typography.bodySmall)
+    Text("Interactive ${usage.interactiveRequests} · background ${usage.backgroundRequests} · vision ${usage.visionRequests}", style = MaterialTheme.typography.bodySmall)
+    Text(
+        if (usage.hostedSearchUses == 0) "Hosted web search: no recorded use yet"
+        else "Hosted web search: ${usage.hostedSearchUses} actions · latest ${usage.lastHostedSearchAction ?: "unknown"} / ${usage.lastHostedSearchStatus ?: "unknown"}",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (usage.failedAttempts > 0) Text("Provider failures ${usage.failedAttempts} · usage-limit failures ${usage.usageLimitFailures}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    Text("Measured locally by Atlas. OpenAI does not expose remaining plan allowance or reset time.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable
