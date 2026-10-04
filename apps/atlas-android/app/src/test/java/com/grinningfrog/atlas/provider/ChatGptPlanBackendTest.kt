@@ -50,7 +50,7 @@ class ChatGptPlanBackendTest {
             assertEquals("web_search", completed.providerToolUses.single().type)
             assertEquals(listOf("current events"), completed.providerToolUses.single().queries)
             assertEquals("https://example.com/news", completed.citations.single().url)
-            assertTrue(completed.text.contains("Example News — https://example.com/news"))
+            assertTrue(completed.text.contains("[Example News](https://example.com/news)"))
         } finally { server.shutdown() }
     }
 
