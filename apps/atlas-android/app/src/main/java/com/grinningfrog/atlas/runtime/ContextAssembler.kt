@@ -104,7 +104,7 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
             groups
         }
         for (turn in turns.asReversed()) {
-            val cost = turn.sumOf { it.content.length + (it.toolCallsJson?.length ?: 0) }
+            val cost = turn.sumOf { it.content.length + (it.toolCallsJson?.length ?: 0) + (it.providerContextJson?.length ?: 0) }
             if (selected.isNotEmpty() && (messageCount + turn.size > budget.maxMessages || characters + cost > budget.maxConversationCharacters)) break
             selected.addFirst(turn)
             messageCount += turn.size
@@ -134,7 +134,14 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
 
     private fun toInferenceMessage(message: AtlasMessage): InferenceMessage = InferenceMessage(
         role = message.role,
-        content = deliveryAwareContent(message),
+        content = buildString {
+            append(deliveryAwareContent(message))
+            message.providerContextJson?.takeIf(String::isNotBlank)?.let {
+                append("\n\n[Atlas provider evidence; authoritative audit context, not assistant prose: ")
+                append(it)
+                append(']')
+            }
+        },
         toolCallId = message.toolCallId,
         toolCalls = parseToolCalls(message.toolCallsJson),
     )

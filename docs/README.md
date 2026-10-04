@@ -23,6 +23,7 @@ Atlas is easiest to understand by following ownership from the persistent runtim
 ## Testing and release work
 
 - [Build and test](./build-and-test.md) — reproducible checks for Core, Android, cloud, and public readiness.
+- [Android app guide](../apps/atlas-android/README.md) — install, first run, ChatGPT-plan sign-in, BYOI endpoints, build variants, and limitations.
 - [Testing](./testing.md) — test layers and the role of the legacy scenario harness.
 - [Behavioral eval fixtures](../evals/README.md) — small regression cases derived from real sessions.
 - [Public-release audit](./public-release-audit.md) — findings, evidence, and remaining publication blockers.

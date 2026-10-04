@@ -32,6 +32,12 @@ class FreshnessPolicyTest {
         assertNull(result.ageMs)
     }
 
+    @Test fun temporalFollowUpsDoNotBecomeVisionRequests() {
+        assertEquals(VisualUseCase.NONE, FreshnessPolicy.classify("Is this from today? What is today's date?"))
+        assertEquals(VisualUseCase.NONE, FreshnessPolicy.classify("Was that from yesterday?"))
+        assertEquals(VisualUseCase.CONFIRMATION, FreshnessPolicy.classify("Is this the correct cable today?"))
+    }
+
     @Test fun movingContextExpiresSoonerThanStationaryContext() {
         val now = 100_000L
         val walking = observation(now - 12_000, MotionState.WALKING)

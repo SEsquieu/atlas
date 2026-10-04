@@ -1,6 +1,6 @@
 # Atlas — Historical OpenClaw Prototype Build Plan
 
-> **Historical record (May 2026; superseded September 2026).** This was the original plan for proving Atlas through an OpenClaw-backed Android bridge. It is intentionally preserved to show architectural evolution, but it is not the current build guide or product architecture. The shipping reference runtime is the native Android app with direct local, LAN, BYOK cloud, or optional Atlas Managed inference. See [`../../BUILD_DOC.md`](../../BUILD_DOC.md) for current instructions.
+> **Historical record (May 2026; superseded September 2026).** This was the original plan for proving Atlas through an OpenClaw-backed Android bridge. It is intentionally preserved to show architectural evolution, but it is not the current build guide or product architecture. The shipping reference runtime is the native Android app with direct local, LAN, BYOK cloud, ChatGPT-plan, or optional Atlas Managed inference. See [Build and test](../build-and-test.md) for current instructions.
 
 Project name: **Atlas**  
 Status: design draft  

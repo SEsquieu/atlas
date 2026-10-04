@@ -1,6 +1,6 @@
 # Atlas roadmap
 
-Status: working roadmap toward a closed Android alpha and public v0.1 developer release.
+Status: working roadmap for the public Android alpha and a signed v0.1 developer release.
 
 ## Current position
 
@@ -15,6 +15,9 @@ Atlas has crossed the line from adapter experiment to a native physical-agent ru
 - bounded tool loops with confirmation and recovery;
 - manual and Live Context modes;
 - capability-oriented provider routing;
+- ChatGPT-plan OAuth and Responses inference, hosted web search, and local usage/failure visibility;
+- separate persistent-intent scheduling with provenance and bounded idle budgets;
+- permissioned Android location, reverse-geocoding, and bounded search tools;
 - optional managed-inference authentication, metering, and billing plumbing; and
 - deterministic Core, cloud, and Android CI.
 
@@ -47,7 +50,7 @@ Goal: another developer can understand Atlas, install it, configure inference, r
 
 Must complete:
 
-- every blocking item in [`OPEN_SOURCE_CHECKLIST.md`](./OPEN_SOURCE_CHECKLIST.md);
+- every release-blocking item in [`OPEN_SOURCE_CHECKLIST.md`](./OPEN_SOURCE_CHECKLIST.md);
 - project-name and redistribution-rights review;
 - repository history secret scan and credential rotation;
 - coherent API/versioning policy for Core, provider, device, tool, event, and storage contracts;

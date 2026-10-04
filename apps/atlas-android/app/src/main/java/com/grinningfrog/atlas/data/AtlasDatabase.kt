@@ -55,9 +55,12 @@ data class ChatGptUsageSummary(
     val failedAttempts: Int = 0,
     val usageLimitFailures: Int = 0,
     val lastFailureCode: String? = null,
+    val hostedSearchUses: Int = 0,
+    val lastHostedSearchAction: String? = null,
+    val lastHostedSearchStatus: String? = null,
 )
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 9) {
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 10) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         db.setForeignKeyConstraintsEnabled(true)
@@ -114,6 +117,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 delivery_status TEXT NOT NULL DEFAULT 'NOT_APPLICABLE',
                 delivered_content TEXT,
                 interrupted_sentence TEXT,
+                provider_context_json TEXT,
                 created_at INTEGER NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id),
                 FOREIGN KEY(turn_id) REFERENCES turns(turn_id)
@@ -405,6 +409,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         }
         if (oldVersion < 8) createAgentRuntimeTables(db)
         if (oldVersion < 9) createIntentRuntimeTables(db)
+        if (oldVersion < 10) addColumnIfMissing(db, "messages", "provider_context_json", "TEXT")
     }
 
     @Synchronized
@@ -748,6 +753,9 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         var failures = 0
         var limits = 0
         var lastFailureCode: String? = null
+        var hostedSearchUses = 0
+        var lastHostedSearchAction: String? = null
+        var lastHostedSearchStatus: String? = null
         val visionByRequest = mutableMapOf<String, Boolean>()
         readableDatabase.rawQuery(
             "SELECT event_type,data_json FROM events WHERE at_ms >= ? AND event_type IN ('provider.requested','provider.responded','provider.route_attempted') ORDER BY sequence",
@@ -770,6 +778,15 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                     input += data.optLong("promptTokens", 0)
                     output += data.optLong("completionTokens", 0)
                     total += data.optLong("totalTokens", 0)
+                    data.optJSONArray("providerToolUses")?.let { uses ->
+                        for (index in 0 until uses.length()) {
+                            val use = uses.optJSONObject(index) ?: continue
+                            if (use.optString("type") != "web_search") continue
+                            hostedSearchUses++
+                            lastHostedSearchAction = use.optString("action").takeIf(String::isNotBlank)
+                            lastHostedSearchStatus = use.optString("status").takeIf(String::isNotBlank)
+                        }
+                    }
                 } else if (!data.optBoolean("success", false)) {
                     failures++
                     data.optString("errorCode").takeIf(String::isNotBlank)?.let { code ->
@@ -779,7 +796,8 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 }
             }
         }
-        return ChatGptUsageSummary(requests, interactive, background, vision, input, output, total, failures, limits, lastFailureCode)
+        return ChatGptUsageSummary(requests, interactive, background, vision, input, output, total, failures, limits,
+            lastFailureCode, hostedSearchUses, lastHostedSearchAction, lastHostedSearchStatus)
     }
 
     @Synchronized
@@ -828,6 +846,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 put("tool_call_id", message.toolCallId); put("tool_calls_json", message.toolCallsJson); put("created_at", message.createdAtMs)
                 put("delivery_status", message.deliveryStatus.name); put("delivered_content", message.deliveredContent)
                 put("interrupted_sentence", message.interruptedSentence)
+                put("provider_context_json", message.providerContextJson)
             })
             appendEventLocked(this, message.sessionId, "message.recorded", message.createdAtMs, JSONObject().apply {
                 put("messageId", message.id); put("turnId", message.turnId); put("role", message.role.name.lowercase())
@@ -839,10 +858,11 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     @Synchronized
-    fun updateAssistantMessage(messageId: String, content: String, toolCallsJson: String? = null) {
+    fun updateAssistantMessage(messageId: String, content: String, toolCallsJson: String? = null, providerContextJson: String? = null) {
         writableDatabase.update("messages", ContentValues().apply {
             put("content", content)
             put("tool_calls_json", toolCallsJson)
+            if (providerContextJson != null) put("provider_context_json", providerContextJson)
         }, "message_id = ?", arrayOf(messageId))
     }
 
@@ -852,14 +872,14 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     fun loadMessages(sessionId: String, afterSequence: Long = 0, limit: Int = 80): List<AtlasMessage> = readableDatabase.rawQuery(
-        """SELECT sequence,message_id,session_id,turn_id,role,content,created_at,kind,tool_call_id,tool_calls_json,delivery_status,delivered_content,interrupted_sentence
+        """SELECT sequence,message_id,session_id,turn_id,role,content,created_at,kind,tool_call_id,tool_calls_json,delivery_status,delivered_content,interrupted_sentence,provider_context_json
             FROM messages WHERE session_id = ? AND sequence > ? ORDER BY sequence DESC LIMIT ?""".trimIndent(),
         arrayOf(sessionId, afterSequence.toString(), limit.toString()),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toMessage()) }.reversed() }
 
     /** Oldest-first page used by checkpointing so a failed backlog can never be skipped. */
     fun loadMessagesForCompaction(sessionId: String, afterSequence: Long, limit: Int): List<AtlasMessage> = readableDatabase.rawQuery(
-        """SELECT sequence,message_id,session_id,turn_id,role,content,created_at,kind,tool_call_id,tool_calls_json,delivery_status,delivered_content,interrupted_sentence
+        """SELECT sequence,message_id,session_id,turn_id,role,content,created_at,kind,tool_call_id,tool_calls_json,delivery_status,delivered_content,interrupted_sentence,provider_context_json
             FROM messages WHERE session_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT ?""".trimIndent(),
         arrayOf(sessionId, afterSequence.toString(), limit.toString()),
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toMessage()) } }
@@ -1159,6 +1179,7 @@ private fun android.database.Cursor.toMessage() = AtlasMessage(
     getLong(0), getString(1), getString(2), getString(3), MessageRole.valueOf(getString(4)), getString(5), getLong(6),
     MessageKind.valueOf(getString(7)), if (isNull(8)) null else getString(8), if (isNull(9)) null else getString(9),
     DeliveryStatus.valueOf(getString(10)), if (isNull(11)) null else getString(11), if (isNull(12)) null else getString(12),
+    if (isNull(13)) null else getString(13),
 )
 
 private fun android.database.Cursor.toToolCall() = AtlasToolCall(

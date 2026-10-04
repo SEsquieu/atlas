@@ -241,16 +241,26 @@ class ChatGptPlanBackend(
         action?.optJSONArray("queries")?.let { values ->
             for (index in 0 until values.length()) values.optString(index).takeIf(String::isNotBlank)?.let(queries::add)
         }
+        val urls = buildList {
+            action?.optString("url")?.takeIf { it.startsWith("https://") || it.startsWith("http://") }?.let(::add)
+            action?.optJSONArray("urls")?.let { values ->
+                for (index in 0 until values.length()) values.optString(index)
+                    .takeIf { it.startsWith("https://") || it.startsWith("http://") }?.let(::add)
+            }
+        }
         return ProviderToolUse("web_search", action?.optString("type")?.takeIf(String::isNotBlank),
-            item.optString("status").takeIf(String::isNotBlank), queries.distinct())
+            item.optString("status").takeIf(String::isNotBlank), queries.distinct(), urls.distinct())
     }
 
     private fun appendSources(text: String, citations: List<ProviderCitation>): String {
         if (citations.isEmpty()) return text
+        if (citations.all { text.contains(it.url) }) return text
         return buildString {
             append(text)
             append("\n\nSources:\n")
-            citations.distinctBy { it.url }.forEach { append("• ").append(it.title).append(" — ").append(it.url).append('\n') }
+            citations.distinctBy { it.url }.forEachIndexed { index, citation ->
+                append(index + 1).append(". [").append(citation.title).append("](").append(citation.url).append(")\n")
+            }
         }.trimEnd()
     }
 

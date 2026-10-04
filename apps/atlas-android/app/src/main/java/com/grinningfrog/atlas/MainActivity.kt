@@ -1414,6 +1414,12 @@ private fun ChatGptUsageDetails(usage: ChatGptUsageSummary) {
     Text("${usage.totalTokens} tokens · ${usage.requests} completed requests", fontFamily = FontFamily.Monospace)
     Text("Input ${usage.inputTokens} · output ${usage.outputTokens}", style = MaterialTheme.typography.bodySmall)
     Text("Interactive ${usage.interactiveRequests} · background ${usage.backgroundRequests} · vision ${usage.visionRequests}", style = MaterialTheme.typography.bodySmall)
+    Text(
+        if (usage.hostedSearchUses == 0) "Hosted web search: no recorded use yet"
+        else "Hosted web search: ${usage.hostedSearchUses} actions · latest ${usage.lastHostedSearchAction ?: "unknown"} / ${usage.lastHostedSearchStatus ?: "unknown"}",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
     if (usage.failedAttempts > 0) Text("Provider failures ${usage.failedAttempts} · usage-limit failures ${usage.usageLimitFailures}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
     Text("Measured locally by Atlas. OpenAI does not expose remaining plan allowance or reset time.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }

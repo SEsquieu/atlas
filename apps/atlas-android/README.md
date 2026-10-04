@@ -9,7 +9,7 @@ For the end-to-end ownership path, see the [runtime code map](../../docs/runtime
 - Android Studio with JDK 17
 - Android SDK 35
 - a physical Android device running Android 9 (API 28) or newer
-- an OpenAI-compatible inference endpoint reachable from the phone
+- either an eligible ChatGPT account or an OpenAI-compatible inference endpoint reachable from the phone
 
 Open this directory directly in Android Studio and run the `app` configuration. The repository does not commit machine-specific `local.properties`; Android Studio creates it from your SDK location.
 
@@ -17,12 +17,12 @@ The reference app is Apache-2.0 and works with user-configured inference without
 
 The default APK leaves Atlas Cloud disabled. A gateway deployment can enable account sign-up, subscription checkout, credit-block purchase, balance display, and managed inference by supplying the three Gradle properties documented below. BYOI never requires those values.
 
-Android database version 8 creates a personal workspace automatically and durably stores clarification state alongside sessions, turns, observations, events, and memory. The same persistence boundary supports optional site, station, actor, task-run, policy, and scoped-memory identities without placing enterprise administration in the consumer UI.
+Android database version 10 creates a personal workspace automatically and durably stores clarification state, persistent intent, and provider evidence alongside sessions, turns, observations, events, and memory. The same persistence boundary supports optional site, station, actor, task-run, policy, and scoped-memory identities without placing enterprise administration in the consumer UI.
 
 ## First run
 
 1. Read the three-screen first-run explanation, then grant camera, microphone, and notification access. Atlas acquires camera, microphone, speech, and motion resources on session start/resume and releases them on pause/end.
-2. Open **System → Inference**, add an endpoint name, base URL, model, and optional API key, then pass the bounded connection test before saving.
+2. Open **System → Inference**. Choose **Continue with ChatGPT** for eligible plan inference without an API key, or add an endpoint name, base URL, model, and optional API key and pass the bounded connection test before saving.
 3. Mark the endpoint as image-capable only if its chat-completions API accepts an `image_url` content part.
 4. Mark it tool-capable only if it accepts OpenAI-compatible function tools and returns assistant `tool_calls`. Enable **Stream** only for endpoints that return chat-completion SSE deltas.
 5. Open **Atlas**, enter a durable goal, and start. New sessions begin with **Live Context** off.

@@ -455,6 +455,7 @@ class AtlasMobileRuntime(
                 put("providerToolUses", org.json.JSONArray(response.providerToolUses.map { use -> JSONObject().apply {
                     put("type", use.type); put("action", use.action); put("status", use.status)
                     put("queries", org.json.JSONArray(use.queries))
+                    put("urls", org.json.JSONArray(use.urls))
                 } }))
                 put("citations", org.json.JSONArray(response.citations.map { citation -> JSONObject()
                     .put("title", citation.title).put("url", citation.url) }))
@@ -644,7 +645,12 @@ class AtlasMobileRuntime(
                     enqueueSentence(session, turnId, messageId, sentenceIndex++, sentence)
                 }
                 val response = checkNotNull(completed) { "Provider stream ended without a completed response" }
-                database.updateAssistantMessage(messageId, response.text, response.toolCalls.takeIf { it.isNotEmpty() }?.let(::toolCallsJson))
+                database.updateAssistantMessage(
+                    messageId,
+                    response.text,
+                    response.toolCalls.takeIf { it.isNotEmpty() }?.let(::toolCallsJson),
+                    providerContextJson(response),
+                )
                 if (softTimedOut.get()) {
                     database.refreshMessageDelivery(messageId, DeliveryStatus.TEXT_ONLY)
                     database.updateTurn(turnId, TurnStatus.COMPLETED_LATE, stepCount = request.step)
@@ -845,6 +851,18 @@ class AtlasMobileRuntime(
         }) }
     }.toString()
 
+    private fun providerContextJson(response: InferenceResponse): String? {
+        if (response.providerToolUses.isEmpty() && response.citations.isEmpty()) return null
+        return JSONObject().apply {
+            put("providerToolUses", org.json.JSONArray(response.providerToolUses.map { use -> JSONObject().apply {
+                put("type", use.type); put("action", use.action); put("status", use.status)
+                put("queries", org.json.JSONArray(use.queries)); put("urls", org.json.JSONArray(use.urls))
+            } }))
+            put("citations", org.json.JSONArray(response.citations.map { citation -> JSONObject()
+                .put("title", citation.title).put("url", citation.url) }))
+        }.toString()
+    }
+
     private fun usableLatestObservation(sessionId: String) = database.loadLatestObservation(sessionId)?.takeIf {
         it.media.byteSize > 0 && it.media.sha256.isNotBlank()
     }
@@ -876,7 +894,10 @@ class AtlasMobileRuntime(
         val candidates = turns.dropLast(AgentLoopPolicy.RECENT_TURNS_AFTER_COMPACTION).flatten()
         if (candidates.isEmpty()) return
         val transcript = candidates.joinToString("\n") { message ->
-            "${message.role.name.lowercase()}: ${message.content.ifBlank { "[tool proposal]" }}"
+            buildString {
+                append("${message.role.name.lowercase()}: ${message.content.ifBlank { "[tool proposal]" }}")
+                message.providerContextJson?.takeIf(String::isNotBlank)?.let { append(" [recorded provider evidence: ").append(it).append(']') }
+            }
         }.take(24_000)
         val prompt = buildString {
             appendLine("Create a compact, factual checkpoint for a continuing conversation. Preserve user preferences, corrections, decisions, named entities, completed work, pending tasks, safety constraints, and unresolved references. Do not add facts. Do not describe the summarization process.")

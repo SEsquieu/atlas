@@ -54,6 +54,23 @@ class ChatGptPlanBackendTest {
         } finally { server.shutdown() }
     }
 
+    @Test fun hostedOpenPagePreservesItsUrl() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Page checked.\"}\n\n" +
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_open\",\"model\":\"gpt-test\",\"output\":[" +
+                "{\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"open_page\",\"url\":\"https://example.com/ad\"}}]}}\n\n",
+        ))
+        server.start()
+        try {
+            val backend = ChatGptPlanBackend(ChatGptTokenProvider { _ -> "token" }, responsesUrl = server.url("/v1/responses").toString())
+            val completed = backend.stream(endpoint(server.url("/v1").toString()), null, request()).toList()
+                .filterIsInstance<InferenceStreamEvent.Completed>().single().response
+            assertEquals("open_page", completed.providerToolUses.single().action)
+            assertEquals(listOf("https://example.com/ad"), completed.providerToolUses.single().urls)
+        } finally { server.shutdown() }
+    }
+
     @Test fun streamNormalizesTextToolsUsageAndCompletion() = runTest {
         val server = MockWebServer()
         server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(

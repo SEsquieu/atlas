@@ -18,6 +18,10 @@ data class FreshnessAssessment(
 )
 
 object FreshnessPolicy {
+    private val temporalAnaphora = Regex(
+        "^\\s*(is|was|are|were) (this|that|these|those) (from|for|as of) (today|tonight|yesterday|tomorrow|this (morning|afternoon|evening|week|month|year))\\b",
+        RegexOption.IGNORE_CASE,
+    )
     private val visualPatterns = listOf(
         Regex("what (am i|are we) looking at", RegexOption.IGNORE_CASE), Regex("can you see", RegexOption.IGNORE_CASE),
         Regex("look at this", RegexOption.IGNORE_CASE), Regex("read this", RegexOption.IGNORE_CASE),
@@ -38,6 +42,9 @@ object FreshnessPolicy {
     private val confirmation = Regex("^\\s*(is|are|am|do|does|can|confirm)\\b|\\b(right one|correct one)\\b", RegexOption.IGNORE_CASE)
 
     fun classify(text: String): VisualUseCase {
+        // "Is this from today?" refers to prior information, not the camera. Keep this narrow:
+        // physical predicates such as "is this safe today" must still take the visual path.
+        if (temporalAnaphora.containsMatchIn(text)) return VisualUseCase.NONE
         if (highRisk.containsMatchIn(text)) return VisualUseCase.HIGH_RISK
         if (navigation.containsMatchIn(text)) return VisualUseCase.NAVIGATION
         if (detail.containsMatchIn(text)) return VisualUseCase.DETAIL

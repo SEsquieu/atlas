@@ -126,6 +126,8 @@ data class AtlasMessage(
     val deliveryStatus: DeliveryStatus = DeliveryStatus.NOT_APPLICABLE,
     val deliveredContent: String? = null,
     val interruptedSentence: String? = null,
+    /** Provider-owned evidence for later turns. Never rendered as user-visible dialogue. */
+    val providerContextJson: String? = null,
 )
 
 data class SpeechSegment(
@@ -187,6 +189,7 @@ data class ProviderToolUse(
     val action: String? = null,
     val status: String? = null,
     val queries: List<String> = emptyList(),
+    val urls: List<String> = emptyList(),
 )
 
 data class AtlasToolCall(

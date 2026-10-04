@@ -14,11 +14,11 @@ The phone is the body. Models are replaceable reasoning engines.
 ![Android](https://img.shields.io/badge/Android-native-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-runtime-7F52FF?logo=kotlin&logoColor=white)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
-![Status](https://img.shields.io/badge/status-pre--v0.1_alpha-yellow)
+![Status](https://img.shields.io/badge/status-public_alpha-yellow)
 
-<img src="./docs/assets/atlas-session-alpha.jpg" alt="Atlas pre-v0.1 alpha session interface on Android" width="420">
+<img src="./docs/assets/atlas-session-alpha.jpg" alt="Atlas alpha session interface on Android" width="420">
 
-<sub><em>Current pre-v0.1 Android alpha. Real app, not a product mockup.</em></sub>
+<sub><em>Current Android alpha. Real app, not a product mockup.</em></sub>
 
 </div>
 
@@ -41,7 +41,7 @@ The runtime owns the things a persistent physical agent cannot safely outsource 
 
 Changing from an on-device model to a LAN server or cloud API changes a capability. It does **not** change the identity that owns the session.
 
-> **Status:** public pre-v0.1 open-source alpha. Atlas is appropriate for development and invited physical-device testing, not unattended, emergency, safety-critical, or production operation.
+> **Status:** public open-source Android alpha under active development. Atlas is appropriate for development and hands-on physical-device testing, not unattended, emergency, safety-critical, or production operation.
 
 ## Start here
 
@@ -52,7 +52,9 @@ Changing from an on-device model to a LAN server or cloud API changes a capabili
 | **Trace a turn through the shipping runtime** | [`docs/runtime-code-map.md`](./docs/runtime-code-map.md) |
 | **Dig into the Android runtime** | [`docs/android-runtime-architecture.md`](./docs/android-runtime-architecture.md) |
 | **Understand context and memory** | [`docs/context-memory-and-sidecars.md`](./docs/context-memory-and-sidecars.md) |
-| **Understand failure semantics** | [`docs/failure-semantics.md`](./docs/failure-semantics.md) |
+| **Understand failure semantics** | [`docs/runtime-failure-semantics.md`](./docs/runtime-failure-semantics.md) |
+| **Use a ChatGPT plan** | [`docs/chatgpt-plan-inference.md`](./docs/chatgpt-plan-inference.md) |
+| **Understand persistent intent** | [`docs/persistent-intent-runtime.md`](./docs/persistent-intent-runtime.md) |
 | **Browse all engineering docs** | [`docs/README.md`](./docs/README.md) |
 | **See what is intentionally unfinished** | [`ROADMAP.md`](./ROADMAP.md) |
 
@@ -105,6 +107,11 @@ The native Android reference app currently provides:
 - durable conversational clarification that survives tangents and blocks ambiguous physical actions;
 - capability routes for `fast`, `vision`, `reasoning`, and `fallback`;
 - direct OpenAI-compatible local, LAN, and cloud endpoints;
+- first-class **Continue with ChatGPT** authorization and Responses API inference, without an API key;
+- provider-hosted web search with citations and durable provider-tool provenance where the connected ChatGPT model permits it;
+- permissioned device location, reverse geocoding, provider-independent bounded search, and explicit finding capture;
+- a separate persistent-intent/idle scheduler with its own inference provenance, budgets, cancellation, and telemetry;
+- local ChatGPT usage accounting plus explicit plan-limit and provider-failure states;
 - optional Atlas Managed account/inference plumbing;
 - in-app session, inference, health, context, and event views.
 
@@ -145,7 +152,7 @@ Read [`docs/product-structure.md`](./docs/product-structure.md) for the exact bo
 
 Open [`apps/atlas-android`](./apps/atlas-android) in Android Studio, let Gradle sync, and run it on a physical Android device. Camera and microphone access are required for the complete loop.
 
-Configure an OpenAI-compatible endpoint in the app. For LAN inference, use the computer's LAN address from the phone. `10.0.2.2` is only the Android emulator alias for its host.
+In **System → Inference**, either configure an OpenAI-compatible endpoint or choose **Continue with ChatGPT** to use eligible inference from a ChatGPT plan without an API key. For LAN inference, use the computer's LAN address from the phone. `10.0.2.2` is only the Android emulator alias for its host.
 
 See [`apps/atlas-android/README.md`](./apps/atlas-android/README.md) for setup, provider compatibility, media handling, speech behavior, and current limitations.
 
@@ -181,7 +188,7 @@ Managed inference is optional. See [`apps/atlas-cloud/README.md`](./apps/atlas-c
 
 **One Android phone. One durable personal workspace. One excellent observe → reason → act → respond loop. User-owned inference. Enough evidence to explain every consequential decision.**
 
-The source repository is public. [`OPEN_SOURCE_CHECKLIST.md`](./OPEN_SOURCE_CHECKLIST.md) records release-readiness work and remaining repository hardening. Distribution of a signed closed-alpha APK is a separate gate tracked by [`docs/closed-alpha.md`](./docs/closed-alpha.md).
+The source repository is public. [`OPEN_SOURCE_CHECKLIST.md`](./OPEN_SOURCE_CHECKLIST.md) records maintainer release-readiness work. Distribution of a signed release APK remains a separate gate tracked by [`docs/closed-alpha.md`](./docs/closed-alpha.md); CI debug APKs are test artifacts, not production releases.
 
 ## Contributing and security
 

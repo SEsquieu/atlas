@@ -1,6 +1,6 @@
 # Android + OpenClaw Basic Example
 
-> **Legacy prototype harness.** This example preserves Atlas's first live physical-loop integration and remains useful for adapter contract tests. It is not the current Android application, inference path, or MVP setup. Use [`../../apps/atlas-android`](../../apps/atlas-android) and the current [`../../BUILD_DOC.md`](../../BUILD_DOC.md) for the native runtime.
+> **Legacy prototype harness.** This example preserves Atlas's first live physical-loop integration and remains useful for adapter contract tests. It is not the current Android application, inference path, or MVP setup. Use the [native Android app](../../apps/atlas-android) and current [build-and-test guide](../../docs/build-and-test.md) instead.
 
 Original target scenario for Atlas:
 
