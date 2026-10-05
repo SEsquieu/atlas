@@ -8,6 +8,7 @@ import com.grinningfrog.atlas.model.MediaPurpose
 import com.grinningfrog.atlas.model.MemoryItem
 import com.grinningfrog.atlas.model.MemoryKind
 import com.grinningfrog.atlas.model.MemoryStatus
+import com.grinningfrog.atlas.model.MemoryScope
 import com.grinningfrog.atlas.model.ToolCallProposal
 import com.grinningfrog.atlas.model.ToolDefinition
 import com.grinningfrog.atlas.model.ToolRisk
@@ -168,6 +169,20 @@ class ToolHarness(
                 val expiresAt = if (kind == MemoryKind.ENVIRONMENT) {
                     timestamp + arguments.optLong("ttl_seconds", 300L).coerceIn(30L, 86_400L) * 1_000L
                 } else null
+                val scope = when (kind) {
+                    MemoryKind.WORKING -> MemoryScope.SESSION
+                    MemoryKind.TASK -> if (call.sessionId.let { database.loadSession(it)?.taskRunId } != null) MemoryScope.TASK else MemoryScope.SESSION
+                    MemoryKind.ENVIRONMENT -> MemoryScope.ENVIRONMENT
+                    MemoryKind.DURABLE -> MemoryScope.WORKSPACE
+                }
+                val session = database.loadSession(call.sessionId) ?: error("Session is unavailable")
+                val scopeId = when (scope) {
+                    MemoryScope.SESSION -> session.id
+                    MemoryScope.TASK -> session.taskRunId ?: session.id
+                    MemoryScope.PRINCIPAL -> session.actorId ?: session.workspaceId
+                    MemoryScope.WORKSPACE -> session.workspaceId
+                    MemoryScope.ENVIRONMENT -> session.stationId ?: session.siteId ?: session.id
+                }
                 val item = MemoryItem(
                     id = requestedId ?: UUID.randomUUID().toString(),
                     sessionId = call.sessionId,
@@ -180,6 +195,9 @@ class ToolHarness(
                     createdAtMs = timestamp,
                     updatedAtMs = timestamp,
                     expiresAtMs = expiresAt,
+                    workspaceId = session.workspaceId,
+                    scope = scope,
+                    scopeId = scopeId,
                 )
                 database.saveMemory(item)
                 ToolExecutionResult(JSONObject().put("ok", true).put("memory_id", item.id).put("kind", item.kind.name.lowercase()).toString())

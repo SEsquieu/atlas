@@ -39,6 +39,7 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
         nowMs: Long,
         toolsAvailable: Boolean = true,
         pendingClarification: PendingClarification? = null,
+        workspaceContextJson: String? = null,
     ): AssembledContext {
         val eligible = messages.filter { it.kind != MessageKind.INTERNAL }
         val selected = selectRecentMessages(eligible)
@@ -73,6 +74,12 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
                 appendLine()
                 appendLine("ATLAS-ADMITTED MEMORY:")
                 appendLine(memoryBlock)
+            }
+            if (!workspaceContextJson.isNullOrBlank()) {
+                appendLine()
+                appendLine("ACTIVE COMPOSABLE WORKSPACE (Core-owned current UI context):")
+                appendLine(workspaceContextJson)
+                appendLine("Treat this workspace ID, revision, and navigation sequence as authoritative. Use workspace tools for changes; never claim a change applied until Atlas returns its result.")
             }
             if (observation != null) {
                 val age = (nowMs - observation.observedAtMs).coerceAtLeast(0)

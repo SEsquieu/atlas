@@ -40,8 +40,14 @@ import com.grinningfrog.atlas.model.ToolRisk
 import com.grinningfrog.atlas.model.TaskRunStatus
 import com.grinningfrog.atlas.model.TurnStatus
 import com.grinningfrog.atlas.model.VisualObservation
+import com.grinningfrog.atlas.workspace.ComposableWorkspace
+import com.grinningfrog.atlas.workspace.WorkspaceDefinitionValidator
+import com.grinningfrog.atlas.workspace.WorkspaceRecord
+import com.grinningfrog.atlas.workspace.WorkspaceRevision
+import com.grinningfrog.atlas.workspace.WorkspaceStatus
 import org.json.JSONObject
 import org.json.JSONArray
+import java.security.MessageDigest
 import java.util.UUID
 
 data class ChatGptUsageSummary(
@@ -60,7 +66,7 @@ data class ChatGptUsageSummary(
     val lastHostedSearchStatus: String? = null,
 )
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 10) {
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 11) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         db.setForeignKeyConstraintsEnabled(true)
@@ -263,6 +269,29 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         )""".trimIndent())
     }
 
+    private fun createComposableWorkspaceTables(db: SQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS composable_workspaces (
+            composable_workspace_id TEXT PRIMARY KEY, realm_id TEXT NOT NULL, name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, live_revision_id TEXT NOT NULL,
+            created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+            FOREIGN KEY(realm_id) REFERENCES workspaces(workspace_id)
+        )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS composable_workspaces_realm_status ON composable_workspaces(realm_id,status,updated_at DESC)")
+        db.execSQL("""CREATE TABLE IF NOT EXISTS workspace_revisions (
+            revision_id TEXT PRIMARY KEY, composable_workspace_id TEXT NOT NULL, parent_revision_id TEXT,
+            definition_json TEXT NOT NULL, content_hash TEXT NOT NULL, author_type TEXT NOT NULL,
+            source_session_id TEXT, source_turn_id TEXT, purpose TEXT NOT NULL, created_at INTEGER NOT NULL,
+            FOREIGN KEY(composable_workspace_id) REFERENCES composable_workspaces(composable_workspace_id) ON DELETE CASCADE
+        )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS workspace_revisions_workspace_time ON workspace_revisions(composable_workspace_id,created_at DESC)")
+        db.execSQL("""CREATE TABLE IF NOT EXISTS workspace_records (
+            record_id TEXT PRIMARY KEY, composable_workspace_id TEXT NOT NULL, collection_name TEXT NOT NULL,
+            data_json TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+            FOREIGN KEY(composable_workspace_id) REFERENCES composable_workspaces(composable_workspace_id) ON DELETE CASCADE
+        )""".trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS workspace_records_collection ON workspace_records(composable_workspace_id,collection_name,updated_at DESC)")
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         createOwnershipTables(db)
         db.execSQL(
@@ -282,6 +311,8 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 updated_at INTEGER NOT NULL,
                 context_mode TEXT NOT NULL DEFAULT 'MANUAL',
                 permissions_json TEXT NOT NULL DEFAULT '{}',
+                active_composable_workspace_id TEXT,
+                workspace_navigation_sequence INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id),
                 FOREIGN KEY(task_run_id) REFERENCES task_runs(task_run_id)
             )""".trimIndent()
@@ -337,6 +368,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         db.execSQL("CREATE INDEX observations_session_time ON observations(session_id, observed_at DESC)")
         createAgentRuntimeTables(db)
         createIntentRuntimeTables(db)
+        createComposableWorkspaceTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -410,6 +442,11 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         if (oldVersion < 8) createAgentRuntimeTables(db)
         if (oldVersion < 9) createIntentRuntimeTables(db)
         if (oldVersion < 10) addColumnIfMissing(db, "messages", "provider_context_json", "TEXT")
+        if (oldVersion < 11) {
+            createComposableWorkspaceTables(db)
+            addColumnIfMissing(db, "sessions", "active_composable_workspace_id", "TEXT")
+            addColumnIfMissing(db, "sessions", "workspace_navigation_sequence", "INTEGER NOT NULL DEFAULT 0")
+        }
     }
 
     @Synchronized
@@ -503,6 +540,8 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 put("station_id", stationId); put("task_run_id", taskRunId)
                 put("status", session.status.name); put("created_at", nowMs); put("updated_at", nowMs); put("context_mode", session.contextMode.name)
                 put("permissions_json", session.permissions.toJson().toString())
+                put("active_composable_workspace_id", session.activeComposableWorkspaceId)
+                put("workspace_navigation_sequence", session.workspaceNavigationSequence)
             })
             appendEventLocked(this, session.id, "session.created", nowMs, JSONObject().put("source", "atlas-android").toString())
         }
@@ -527,7 +566,8 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     fun loadLatestSession(): AtlasSession? = readableDatabase.rawQuery(
         """SELECT session_id,name,goal,status,created_at,updated_at,context_mode,permissions_json,
-            workspace_id,actor_id,site_id,station_id,task_run_id,policy_id,policy_revision
+            workspace_id,actor_id,site_id,station_id,task_run_id,policy_id,policy_revision,
+            active_composable_workspace_id,workspace_navigation_sequence
             FROM sessions ORDER BY updated_at DESC LIMIT 1""".trimIndent(), null
     ).use { cursor ->
         if (!cursor.moveToFirst()) null else AtlasSession(
@@ -537,7 +577,186 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             workspaceId = cursor.getString(8), actorId = cursor.nullableString(9), siteId = cursor.nullableString(10),
             stationId = cursor.nullableString(11), taskRunId = cursor.nullableString(12), policyId = cursor.nullableString(13),
             policyRevision = if (cursor.isNull(14)) null else cursor.getInt(14),
+            activeComposableWorkspaceId = cursor.nullableString(15), workspaceNavigationSequence = cursor.getLong(16),
         )
+    }
+
+    fun loadSession(sessionId: String): AtlasSession? = readableDatabase.rawQuery(
+        """SELECT session_id,name,goal,status,created_at,updated_at,context_mode,permissions_json,
+            workspace_id,actor_id,site_id,station_id,task_run_id,policy_id,policy_revision,
+            active_composable_workspace_id,workspace_navigation_sequence
+            FROM sessions WHERE session_id = ?""".trimIndent(), arrayOf(sessionId)
+    ).use { cursor ->
+        if (!cursor.moveToFirst()) null else AtlasSession(
+            id = cursor.getString(0), name = cursor.getString(1), goal = cursor.getString(2),
+            status = SessionStatus.valueOf(cursor.getString(3)), createdAtMs = cursor.getLong(4), updatedAtMs = cursor.getLong(5),
+            contextMode = ContextMode.valueOf(cursor.getString(6)), permissions = permissionsFromJson(cursor.getString(7)),
+            workspaceId = cursor.getString(8), actorId = cursor.nullableString(9), siteId = cursor.nullableString(10),
+            stationId = cursor.nullableString(11), taskRunId = cursor.nullableString(12), policyId = cursor.nullableString(13),
+            policyRevision = if (cursor.isNull(14)) null else cursor.getInt(14), activeComposableWorkspaceId = cursor.nullableString(15),
+            workspaceNavigationSequence = cursor.getLong(16),
+        )
+    }
+
+    @Synchronized
+    fun activateComposableWorkspace(sessionId: String, workspaceId: String?, nowMs: Long = System.currentTimeMillis()): Long = writableDatabase.transaction {
+        if (workspaceId != null) {
+            check(rawQuery("SELECT 1 FROM composable_workspaces c JOIN sessions s ON s.session_id = ? WHERE c.composable_workspace_id = ? AND c.realm_id = s.workspace_id AND c.status = 'ACTIVE'", arrayOf(sessionId, workspaceId)).use { it.moveToFirst() }) {
+                "Workspace is unavailable to this session"
+            }
+        }
+        val prior = rawQuery("SELECT active_composable_workspace_id,workspace_navigation_sequence FROM sessions WHERE session_id = ?", arrayOf(sessionId)).use { cursor ->
+            check(cursor.moveToFirst()) { "Unknown session $sessionId" }
+            cursor.nullableString(0) to cursor.getLong(1)
+        }
+        val sequence = prior.second + 1
+        update("sessions", ContentValues().apply {
+            put("active_composable_workspace_id", workspaceId); put("workspace_navigation_sequence", sequence); put("updated_at", nowMs)
+        }, "session_id = ?", arrayOf(sessionId))
+        appendEventLocked(this, sessionId, "workspace.activated", nowMs, JSONObject().apply {
+            put("priorWorkspaceId", prior.first); put("workspaceId", workspaceId); put("navigationSequence", sequence)
+        }.toString())
+        sequence
+    }
+
+    @Synchronized
+    fun createComposableWorkspace(
+        name: String,
+        description: String,
+        definitionJson: String = WorkspaceDefinitionValidator.starter(name, description),
+        realmId: String = DEFAULT_PERSONAL_WORKSPACE_ID,
+        sourceSessionId: String? = null,
+        sourceTurnId: String? = null,
+        nowMs: Long = System.currentTimeMillis(),
+    ): ComposableWorkspace {
+        val validation = WorkspaceDefinitionValidator.validate(definitionJson)
+        require(validation.valid) { validation.errors.joinToString("; ") }
+        val workspaceId = UUID.randomUUID().toString()
+        val revisionId = UUID.randomUUID().toString()
+        val workspace = ComposableWorkspace(workspaceId, realmId, name.trim().take(120), description.trim().take(1_000), WorkspaceStatus.ACTIVE, revisionId, nowMs, nowMs)
+        writableDatabase.transaction {
+            insertOrThrow("composable_workspaces", null, ContentValues().apply {
+                put("composable_workspace_id", workspaceId); put("realm_id", realmId); put("name", workspace.name)
+                put("description", workspace.description); put("status", workspace.status.name); put("live_revision_id", revisionId)
+                put("created_at", nowMs); put("updated_at", nowMs)
+            })
+            insertOrThrow("workspace_revisions", null, revisionValues(revisionId, workspaceId, null, definitionJson, "USER", sourceSessionId, sourceTurnId, "Workspace created", nowMs))
+        }
+        return workspace
+    }
+
+    fun listComposableWorkspaces(includeArchived: Boolean = false): List<ComposableWorkspace> = readableDatabase.rawQuery(
+        "SELECT composable_workspace_id,realm_id,name,description,status,live_revision_id,created_at,updated_at FROM composable_workspaces ${if (includeArchived) "" else "WHERE status = 'ACTIVE'"} ORDER BY updated_at DESC", null
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toComposableWorkspace()) } }
+
+    fun loadComposableWorkspace(id: String): ComposableWorkspace? = readableDatabase.rawQuery(
+        "SELECT composable_workspace_id,realm_id,name,description,status,live_revision_id,created_at,updated_at FROM composable_workspaces WHERE composable_workspace_id = ?", arrayOf(id)
+    ).use { if (it.moveToFirst()) it.toComposableWorkspace() else null }
+
+    fun loadWorkspaceRevision(revisionId: String): WorkspaceRevision? = readableDatabase.rawQuery(
+        "SELECT revision_id,composable_workspace_id,parent_revision_id,definition_json,content_hash,author_type,source_session_id,source_turn_id,purpose,created_at FROM workspace_revisions WHERE revision_id = ?", arrayOf(revisionId)
+    ).use { if (it.moveToFirst()) it.toWorkspaceRevision() else null }
+
+    fun loadLiveWorkspaceRevision(workspaceId: String): WorkspaceRevision? = readableDatabase.rawQuery(
+        "SELECT r.revision_id,r.composable_workspace_id,r.parent_revision_id,r.definition_json,r.content_hash,r.author_type,r.source_session_id,r.source_turn_id,r.purpose,r.created_at FROM workspace_revisions r JOIN composable_workspaces w ON w.live_revision_id = r.revision_id WHERE w.composable_workspace_id = ?", arrayOf(workspaceId)
+    ).use { if (it.moveToFirst()) it.toWorkspaceRevision() else null }
+
+    @Synchronized
+    fun replaceWorkspaceDefinition(workspaceId: String, baseRevisionId: String, definitionJson: String, authorType: String, sourceSessionId: String?, sourceTurnId: String?, purpose: String, nowMs: Long = System.currentTimeMillis()): WorkspaceRevision {
+        val validation = WorkspaceDefinitionValidator.validate(definitionJson)
+        require(validation.valid) { validation.errors.joinToString("; ") }
+        val revisionId = UUID.randomUUID().toString()
+        val revision = WorkspaceRevision(revisionId, workspaceId, baseRevisionId, definitionJson, sha256(definitionJson), authorType, sourceSessionId, sourceTurnId, purpose.take(500), nowMs)
+        writableDatabase.transaction {
+            val changed = update("composable_workspaces", ContentValues().apply { put("live_revision_id", revisionId); put("updated_at", nowMs) },
+                "composable_workspace_id = ? AND live_revision_id = ? AND status = 'ACTIVE'", arrayOf(workspaceId, baseRevisionId))
+            check(changed == 1) { "Workspace revision changed; inspect it again before applying this update" }
+            insertOrThrow("workspace_revisions", null, revisionValues(revisionId, workspaceId, baseRevisionId, definitionJson, authorType, sourceSessionId, sourceTurnId, purpose, nowMs))
+        }
+        return revision
+    }
+
+    @Synchronized
+    fun setComposableWorkspaceArchived(workspaceId: String, archived: Boolean, nowMs: Long = System.currentTimeMillis()) {
+        check(writableDatabase.update("composable_workspaces", ContentValues().apply {
+            put("status", if (archived) WorkspaceStatus.ARCHIVED.name else WorkspaceStatus.ACTIVE.name); put("updated_at", nowMs)
+        }, "composable_workspace_id = ?", arrayOf(workspaceId)) == 1) { "Unknown workspace" }
+        if (archived) writableDatabase.execSQL("UPDATE sessions SET active_composable_workspace_id = NULL, workspace_navigation_sequence = workspace_navigation_sequence + 1 WHERE active_composable_workspace_id = ?", arrayOf(workspaceId))
+    }
+
+    @Synchronized
+    fun addWorkspaceRecord(workspaceId: String, collection: String, dataJson: String, nowMs: Long = System.currentTimeMillis()): WorkspaceRecord {
+        require(collection.matches(Regex("[A-Za-z][A-Za-z0-9_-]{0,63}"))) { "Invalid collection name" }
+        require(dataJson.toByteArray().size <= 32 * 1024) { "Record exceeds 32 KiB" }
+        JSONObject(dataJson)
+        check(loadComposableWorkspace(workspaceId)?.status == WorkspaceStatus.ACTIVE) { "Workspace is not active" }
+        val record = WorkspaceRecord(UUID.randomUUID().toString(), workspaceId, collection, dataJson, nowMs, nowMs)
+        writableDatabase.insertOrThrow("workspace_records", null, ContentValues().apply {
+            put("record_id", record.id); put("composable_workspace_id", workspaceId); put("collection_name", collection)
+            put("data_json", dataJson); put("created_at", nowMs); put("updated_at", nowMs)
+        })
+        return record
+    }
+
+    fun listWorkspaceRecords(workspaceId: String, collection: String? = null, limit: Int = 100): List<WorkspaceRecord> {
+        val where = if (collection == null) "composable_workspace_id = ?" else "composable_workspace_id = ? AND collection_name = ?"
+        val args = if (collection == null) arrayOf(workspaceId) else arrayOf(workspaceId, collection)
+        return readableDatabase.query("workspace_records", arrayOf("record_id","composable_workspace_id","collection_name","data_json","created_at","updated_at"), where, args, null, null, "updated_at DESC", limit.coerceIn(1, 200).toString()).use { cursor ->
+            buildList { while (cursor.moveToNext()) add(WorkspaceRecord(cursor.getString(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getLong(5))) }
+        }
+    }
+
+    fun exportComposableWorkspace(workspaceId: String): JSONObject {
+        val workspace = loadComposableWorkspace(workspaceId) ?: error("Unknown workspace")
+        val revision = loadLiveWorkspaceRevision(workspaceId) ?: error("Workspace revision is unavailable")
+        return JSONObject().apply {
+            put("format", "atlas.workspace.bundle.v1"); put("exported_at_ms", System.currentTimeMillis())
+            put("workspace", JSONObject().apply {
+                put("id", workspace.id); put("name", workspace.name); put("description", workspace.description)
+                put("status", workspace.status.name); put("created_at_ms", workspace.createdAtMs); put("updated_at_ms", workspace.updatedAtMs)
+            })
+            put("revision", JSONObject().apply {
+                put("id", revision.id); put("content_hash", revision.contentHash); put("definition", JSONObject(revision.definitionJson))
+            })
+            put("records", JSONArray().apply { listWorkspaceRecords(workspaceId, limit = 200).forEach { record ->
+                put(JSONObject().apply { put("id", record.id); put("collection", record.collection); put("data", JSONObject(record.dataJson)); put("updated_at_ms", record.updatedAtMs) })
+            } })
+            put("notice", "Capability grants and credentials are intentionally excluded.")
+        }
+    }
+
+    @Synchronized
+    fun deleteComposableWorkspace(workspaceId: String) {
+        val workspace = loadComposableWorkspace(workspaceId) ?: error("Unknown workspace")
+        require(workspace.status == WorkspaceStatus.ARCHIVED) { "Archive the workspace before deleting it" }
+        writableDatabase.transaction {
+            update("sessions", ContentValues().apply { putNull("active_composable_workspace_id"); put("workspace_navigation_sequence", 0) },
+                "active_composable_workspace_id = ?", arrayOf(workspaceId))
+            delete("workspace_records", "composable_workspace_id = ?", arrayOf(workspaceId))
+            delete("workspace_revisions", "composable_workspace_id = ?", arrayOf(workspaceId))
+            check(delete("composable_workspaces", "composable_workspace_id = ?", arrayOf(workspaceId)) == 1) { "Workspace deletion failed" }
+        }
+    }
+
+    fun workspaceContextForSession(sessionId: String): String? = readableDatabase.rawQuery(
+        "SELECT active_composable_workspace_id,workspace_navigation_sequence FROM sessions WHERE session_id = ?", arrayOf(sessionId)
+    ).use { cursor ->
+        if (!cursor.moveToFirst() || cursor.isNull(0)) return@use null
+        val id = cursor.getString(0)
+        val sequence = cursor.getLong(1)
+        val workspace = loadComposableWorkspace(id) ?: return@use null
+        val revision = loadWorkspaceRevision(workspace.liveRevisionId) ?: return@use null
+        JSONObject().apply {
+            put("id", workspace.id); put("name", workspace.name); put("description", workspace.description)
+            put("revisionId", revision.id); put("navigationSequence", sequence)
+            put("definition", JSONObject(revision.definitionJson)); put("recordCount", listWorkspaceRecords(id, limit = 200).size)
+        }.toString()
+    }
+
+    private fun revisionValues(id: String, workspaceId: String, parent: String?, definition: String, authorType: String, sourceSessionId: String?, sourceTurnId: String?, purpose: String, nowMs: Long) = ContentValues().apply {
+        put("revision_id", id); put("composable_workspace_id", workspaceId); put("parent_revision_id", parent)
+        put("definition_json", definition); put("content_hash", sha256(definition)); put("author_type", authorType)
+        put("source_session_id", sourceSessionId); put("source_turn_id", sourceTurnId); put("purpose", purpose.take(500)); put("created_at", nowMs)
     }
 
     /** Complete, portable state bundle for an explicit user export. Secrets are never stored here. */
@@ -1203,6 +1422,20 @@ private fun android.database.Cursor.toClarification() = PendingClarification(
     expiresAtMs = if (isNull(13)) null else getLong(13), deferredCount = getInt(14), normalizedAnswer = nullableString(15),
     resolvedByTurnId = nullableString(16),
 )
+
+private fun android.database.Cursor.toComposableWorkspace() = ComposableWorkspace(
+    id = getString(0), realmId = getString(1), name = getString(2), description = getString(3),
+    status = WorkspaceStatus.valueOf(getString(4)), liveRevisionId = getString(5), createdAtMs = getLong(6), updatedAtMs = getLong(7),
+)
+
+private fun android.database.Cursor.toWorkspaceRevision() = WorkspaceRevision(
+    id = getString(0), workspaceId = getString(1), parentRevisionId = nullableString(2), definitionJson = getString(3),
+    contentHash = getString(4), authorType = getString(5), sourceSessionId = nullableString(6), sourceTurnId = nullableString(7),
+    purpose = getString(8), createdAtMs = getLong(9),
+)
+
+private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
+    .digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
 
 private fun jsonStringList(raw: String): List<String> = runCatching {
     val array = JSONArray(raw)

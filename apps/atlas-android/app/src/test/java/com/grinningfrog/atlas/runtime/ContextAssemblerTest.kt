@@ -129,6 +129,18 @@ class ContextAssemblerTest {
         assertTrue(context.systemPrompt.contains("resolve, defer, or abandon"))
     }
 
+    @Test fun activeWorkspaceContextIsExplicitAndVersioned() {
+        val workspace = """{"id":"workspace-1","name":"Bench","revisionId":"revision-7","navigationSequence":4,"definition":{"format":"atlas.workspace.v1","title":"Bench","components":[]}}"""
+        val context = ContextAssembler().assemble(
+            session(), emptyList(), emptyList(), null, null, 10, workspaceContextJson = workspace,
+        )
+
+        assertTrue(context.systemPrompt.contains("ACTIVE COMPOSABLE WORKSPACE"))
+        assertTrue(context.systemPrompt.contains("workspace-1"))
+        assertTrue(context.systemPrompt.contains("revision-7"))
+        assertTrue(context.systemPrompt.contains("navigation sequence"))
+    }
+
     private fun session() = AtlasSession("session", "test", "stay coherent", SessionStatus.ACTIVE, 0, 0)
     private fun message(sequence: Long, turn: String, role: MessageRole, content: String, kind: MessageKind = MessageKind.DIALOGUE) = AtlasMessage(
         sequence = sequence, id = "message-$sequence", sessionId = "session", turnId = turn, role = role, content = content, createdAtMs = sequence, kind = kind,

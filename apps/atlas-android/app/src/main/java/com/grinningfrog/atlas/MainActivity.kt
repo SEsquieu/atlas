@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DashboardCustomize
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Stop
@@ -131,6 +132,7 @@ import java.io.File
 import java.text.DateFormat
 import java.util.Date
 import java.util.UUID
+import com.grinningfrog.atlas.workspace.WorkspacePage
 
 class MainActivity : ComponentActivity() {
     private var service by mutableStateOf<AtlasSessionService?>(null)
@@ -213,7 +215,7 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
     }.toTypedArray()
 }
-private enum class AppPage { ATLAS, SESSION, SYSTEM }
+private enum class AppPage { SESSION, WORKSPACE, SYSTEM }
 
 @Composable
 private fun AtlasApp(
@@ -230,7 +232,7 @@ private fun AtlasApp(
     onRequestPermissions: () -> Unit,
     onOpenSystemSettings: () -> Unit,
 ) {
-    var page by remember { mutableStateOf(AppPage.ATLAS) }
+    var page by remember { mutableStateOf(AppPage.SESSION) }
     val sessionActionScope = rememberCoroutineScope()
     var providerRevision by remember { mutableIntStateOf(0) }
     val chatGptState by chatGptAuth.state.collectAsState()
@@ -250,8 +252,8 @@ private fun AtlasApp(
             Column {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .7f))
                 NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
-                    NavigationBarItem(page == AppPage.ATLAS, { page = AppPage.ATLAS }, { Icon(Icons.Default.GraphicEq, null) }, label = { Text("Atlas") }, colors = atlasNavigationColors())
-                    NavigationBarItem(page == AppPage.SESSION, { page = AppPage.SESSION }, { Icon(Icons.Default.History, null) }, label = { Text("Session") }, colors = atlasNavigationColors())
+                    NavigationBarItem(page == AppPage.SESSION, { page = AppPage.SESSION }, { Icon(Icons.Default.GraphicEq, null) }, label = { Text("Session") }, colors = atlasNavigationColors())
+                    NavigationBarItem(page == AppPage.WORKSPACE, { page = AppPage.WORKSPACE }, { Icon(Icons.Default.DashboardCustomize, null) }, label = { Text("Workspace") }, colors = atlasNavigationColors())
                     NavigationBarItem(page == AppPage.SYSTEM, { page = AppPage.SYSTEM }, { Icon(Icons.Default.Settings, null) }, label = { Text("System") }, colors = atlasNavigationColors())
                 }
             }
@@ -260,8 +262,8 @@ private fun AtlasApp(
         when {
             !permissionsGranted -> PermissionGate(Modifier.padding(padding), onRequestPermissions, onOpenSystemSettings)
             runtime == null -> LoadingRuntime(Modifier.padding(padding))
-            page == AppPage.ATLAS -> AtlasHomePage(runtime, snapshot, providers.isNotEmpty(), mediaRepository, sessionActionScope, Modifier.padding(padding), onOpenSession = { page = AppPage.SESSION }, onOpenSystem = { page = AppPage.SYSTEM })
-            page == AppPage.SESSION -> SessionPage(runtime, snapshot, providers.isNotEmpty(), mediaRepository, sessionActionScope, Modifier.padding(padding), onConfigureInference = { page = AppPage.SYSTEM })
+            page == AppPage.SESSION -> AtlasHomePage(runtime, snapshot, providers.isNotEmpty(), mediaRepository, sessionActionScope, Modifier.padding(padding), onOpenSystem = { page = AppPage.SYSTEM })
+            page == AppPage.WORKSPACE -> WorkspacePage(runtime, snapshot, database, providers.isNotEmpty(), sessionActionScope, Modifier.padding(padding))
             page == AppPage.SYSTEM -> SystemPage(runtime, snapshot, settings, providers, managedAccount, chatGptAuth, database, sessionArchive, Modifier.padding(padding)) { providerRevision++ }
         }
     }
@@ -352,7 +354,6 @@ private fun AtlasHomePage(
     mediaRepository: MediaRepository,
     actionScope: kotlinx.coroutines.CoroutineScope,
     modifier: Modifier,
-    onOpenSession: () -> Unit,
     onOpenSystem: () -> Unit,
 ) {
     var name by remember { mutableStateOf("Everyday Atlas") }
@@ -409,6 +410,19 @@ private fun AtlasHomePage(
                 }
             }
 
+            item {
+                val live = session.contextMode == ContextMode.LIVE
+                InstrumentCard(accent = if (live) MaterialTheme.colorScheme.primary else null) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Live Context", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(if (live) "Atlas is maintaining rolling physical context." else "Atlas observes only when you ask or tap Observe.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked = live, onCheckedChange = { enabled -> runAction { runtime.setLiveContextEnabled(enabled) } }, enabled = active)
+                    }
+                }
+            }
+
             snapshot.pendingClarification?.let { clarification ->
                 item {
                     InstrumentCard(accent = AtlasAmber) {
@@ -454,12 +468,21 @@ private fun AtlasHomePage(
                 ObservationSurface(snapshot, mediaRepository)
             }
 
-            val latestAtlas = snapshot.messages.lastOrNull { it.kind == MessageKind.DIALOGUE && it.role == MessageRole.ASSISTANT && it.content.isNotBlank() }
-            if (latestAtlas != null && snapshot.phase != RuntimePhase.SPEAKING) item {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Atlas", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Text(latestAtlas.content, style = MaterialTheme.typography.bodyLarge)
-                    TextButtonCompact("Open session") { onOpenSession() }
+            val dialogue = snapshot.messages.filter { it.kind == MessageKind.DIALOGUE && it.content.isNotBlank() }.takeLast(24)
+            if (dialogue.isNotEmpty()) {
+                item { Text("Conversation", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+                items(dialogue, key = { "home-${it.id}" }) { message ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.role == MessageRole.USER) Arrangement.End else Arrangement.Start) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(.9f),
+                            colors = CardDefaults.cardColors(containerColor = if (message.role == MessageRole.USER) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer),
+                        ) {
+                            Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(if (message.role == MessageRole.USER) "You" else "Atlas", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                                AutoLinkedText(message.content)
+                            }
+                        }
+                    }
                 }
             }
 
@@ -495,10 +518,16 @@ private fun AtlasHomePage(
             }
 
             item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    TextButtonCompact("Session details") { onOpenSession() }
-                    if (active) TextButtonCompact("Pause") { runAction { runtime.pauseSession() } }
-                    else if (session.status == SessionStatus.PAUSED) TextButtonCompact("Resume") { runAction { runtime.resumeSession() } }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("${dialogue.size} recent messages", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.weight(1f))
+                    if (active) {
+                        TextButtonCompact("Pause") { runAction { runtime.pauseSession() } }
+                        TextButtonCompact("End") { runAction { runtime.endSession() } }
+                    } else if (session.status == SessionStatus.PAUSED) {
+                        TextButtonCompact("Resume") { runAction { runtime.resumeSession() } }
+                        TextButtonCompact("End") { runAction { runtime.endSession() } }
+                    }
                 }
             }
         }

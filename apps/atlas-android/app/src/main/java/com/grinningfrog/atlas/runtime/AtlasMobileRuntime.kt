@@ -126,6 +126,12 @@ class AtlasMobileRuntime(
         active
     }
 
+    suspend fun activateComposableWorkspace(workspaceId: String?) = operations.withLock {
+        val session = requireSession()
+        val sequence = database.activateComposableWorkspace(session.id, workspaceId)
+        publish(session = session.copy(activeComposableWorkspaceId = workspaceId, workspaceNavigationSequence = sequence))
+    }
+
     suspend fun resumeSession() = operations.withLock {
         val session = requireSession()
         if (session.status == SessionStatus.DONE) throw IllegalStateException("Completed sessions cannot be resumed")
@@ -378,6 +384,7 @@ class AtlasMobileRuntime(
         var step = database.loadTurn(turnId)?.stepCount ?: 0
         while (step < AgentLoopPolicy.MAX_STEPS && System.currentTimeMillis() - startedAt < AgentLoopPolicy.MAX_WALL_TIME_MS) {
             currentCoroutineContext().ensureActive()
+            val turnSession = database.loadSession(session.id) ?: session
             step += 1
             database.updateTurn(turnId, TurnStatus.ASSEMBLING_CONTEXT, stepCount = step)
             val summary = database.loadSummary(session.id)
@@ -391,14 +398,17 @@ class AtlasMobileRuntime(
             val attachImage = observation != null && (capability == RouteCapability.VISION ||
                 (latestToolCall?.name == "capture_current_view" && latestToolCall.status == ToolCallStatus.COMPLETED))
             val toolsAvailable = router.hasToolCapableRoute(capability, requiresVision = attachImage)
-            val context = contextAssembler.assemble(session, messages, memories, summary, observation, System.currentTimeMillis(), toolsAvailable, pendingClarification)
-            val spoken = voice || session.permissions.speakResponses
+            val context = contextAssembler.assemble(
+                turnSession, messages, memories, summary, observation, System.currentTimeMillis(), toolsAvailable, pendingClarification,
+                database.workspaceContextForSession(session.id),
+            )
+            val spoken = voice || turnSession.permissions.speakResponses
             val latestUserText = messages.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
             val responseContract = ResponsePolicy.contract(latestUserText, spoken, risk)
             val baseRequest = InferenceRequest(
                 sessionId = session.id,
-                workspaceId = session.workspaceId,
-                taskRunId = session.taskRunId,
+                workspaceId = turnSession.workspaceId,
+                taskRunId = turnSession.taskRunId,
                 turnId = turnId,
                 step = step,
                 capability = capability,
@@ -503,7 +513,7 @@ class AtlasMobileRuntime(
             }
             val calls = response.toolCalls.mapIndexed { index, proposal ->
                 val earlierInBatch = response.toolCalls.take(index).count { it.name == proposal.name }
-                prepareToolCall(session, turnId, step, index, proposal, priorCalls, earlierInBatch)
+                prepareToolCall(turnSession, turnId, step, index, proposal, priorCalls, earlierInBatch)
             }
             calls.forEach(database::insertToolCall)
             calls.forEach { call ->
@@ -1187,16 +1197,17 @@ class AtlasMobileRuntime(
         partialTranscript: String? = mutableState.value.partialTranscript,
         streamingResponse: String? = mutableState.value.streamingResponse,
     ) {
+        val durableSession = session?.let { database.loadSession(it.id) } ?: session
         val age = observation?.let { (System.currentTimeMillis() - it.observedAtMs).coerceAtLeast(0) }
-        val events = session?.let { database.loadRecentEvents(it.id, 80) }.orEmpty()
-        val messages = session?.let { database.loadMessages(it.id, limit = 80) }.orEmpty()
-        val activeTurn = session?.let { database.loadActiveTurn(it.id) }
-        val pendingTools = session?.let { database.loadPendingToolCalls(it.id) }.orEmpty()
-        val memories = session?.let { database.loadActiveMemories(it.id) }.orEmpty()
-        val summary = session?.let { database.loadSummary(it.id) }
-        val pendingClarification = session?.let { database.loadPendingClarification(it.id) }
+        val events = durableSession?.let { database.loadRecentEvents(it.id, 80) }.orEmpty()
+        val messages = durableSession?.let { database.loadMessages(it.id, limit = 80) }.orEmpty()
+        val activeTurn = durableSession?.let { database.loadActiveTurn(it.id) }
+        val pendingTools = durableSession?.let { database.loadPendingToolCalls(it.id) }.orEmpty()
+        val memories = durableSession?.let { database.loadActiveMemories(it.id) }.orEmpty()
+        val summary = durableSession?.let { database.loadSummary(it.id) }
+        val pendingClarification = durableSession?.let { database.loadPendingClarification(it.id) }
         mutableState.value = RuntimeSnapshot(
-            session = session,
+            session = durableSession,
             phase = phase,
             latestObservation = observation,
             latestResponse = response,

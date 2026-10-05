@@ -81,6 +81,8 @@ data class AtlasSession(
     val taskRunId: String? = null,
     val policyId: String? = null,
     val policyRevision: Int? = null,
+    val activeComposableWorkspaceId: String? = null,
+    val workspaceNavigationSequence: Long = 0,
 )
 
 data class ObservationTiming(

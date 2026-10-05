@@ -34,6 +34,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import com.grinningfrog.atlas.workspace.WorkspaceTools
 
 /**
  * Process-local owner of a physical Atlas session.
@@ -96,7 +97,7 @@ class AtlasSessionService : LifecycleService() {
         )
         runtime = AtlasMobileRuntime(
             app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope, idleRuntime,
-            additionalTools = AndroidContextTools.create(this, app.database, app.settings),
+            additionalTools = AndroidContextTools.create(this, app.database, app.settings) + WorkspaceTools.create(app.database),
         )
         serviceScope.launch {
             runCatching { runtime.initialize() }.onFailure { error ->
