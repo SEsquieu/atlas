@@ -44,8 +44,10 @@ class ContextAssemblerTest {
                 message(1, "old", MessageRole.USER, "Old question"),
                 message(2, "old", MessageRole.ASSISTANT, "Old answer"),
                 message(3, "tool-turn", MessageRole.USER, "Look again"),
-                message(4, "tool-turn", MessageRole.ASSISTANT, ""),
-                message(5, "tool-turn", MessageRole.TOOL, "{\"ok\":true}", MessageKind.TOOL_RESULT),
+                message(4, "tool-turn", MessageRole.ASSISTANT, "").copy(
+                    toolCallsJson = """[{"id":"call-observe","name":"capture_current_view","arguments":"{}"}]""",
+                ),
+                message(5, "tool-turn", MessageRole.TOOL, "{\"ok\":true}", MessageKind.TOOL_RESULT).copy(toolCallId = "call-observe"),
                 message(6, "tool-turn", MessageRole.ASSISTANT, "It moved."),
             ),
             memories = emptyList(), summary = null, observation = null, nowMs = 10,
@@ -139,6 +141,41 @@ class ContextAssemblerTest {
         assertTrue(context.systemPrompt.contains("workspace-1"))
         assertTrue(context.systemPrompt.contains("revision-7"))
         assertTrue(context.systemPrompt.contains("navigation sequence"))
+    }
+
+    @Test fun orphanedClarificationResultCannotPoisonResumedProviderContext() {
+        val context = ContextAssembler().assemble(
+            session(),
+            listOf(
+                message(1, "turn-1", MessageRole.USER, "I added workspaces."),
+                message(2, "turn-1", MessageRole.ASSISTANT, "What should we build first?"),
+                message(3, "turn-1", MessageRole.TOOL, "{\"ok\":true}", MessageKind.TOOL_RESULT)
+                    .copy(toolCallId = "call-orphan"),
+                message(4, "turn-2", MessageRole.USER, "Build me a working MUD."),
+            ),
+            emptyList(), null, null, 10,
+        )
+
+        assertEquals(listOf(MessageRole.USER, MessageRole.ASSISTANT, MessageRole.USER), context.messages.map { it.role })
+        assertFalse(context.messages.any { it.toolCallId == "call-orphan" })
+    }
+
+    @Test fun completeToolCallAndResultPairSurvivesSanitization() {
+        val assistant = message(2, "turn-1", MessageRole.ASSISTANT, "").copy(
+            toolCallsJson = """[{"id":"call-1","name":"workspace_create","arguments":"{}"}]""",
+        )
+        val context = ContextAssembler().assemble(
+            session(),
+            listOf(
+                message(1, "turn-1", MessageRole.USER, "Build it."),
+                assistant,
+                message(3, "turn-1", MessageRole.TOOL, "{\"ok\":true}", MessageKind.TOOL_RESULT).copy(toolCallId = "call-1"),
+            ),
+            emptyList(), null, null, 10,
+        )
+
+        assertEquals("workspace_create", context.messages[1].toolCalls.single().name)
+        assertEquals("call-1", context.messages[2].toolCallId)
     }
 
     private fun session() = AtlasSession("session", "test", "stay coherent", SessionStatus.ACTIVE, 0, 0)

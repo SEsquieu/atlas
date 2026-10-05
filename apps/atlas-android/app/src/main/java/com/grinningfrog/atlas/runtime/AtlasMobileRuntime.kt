@@ -138,6 +138,7 @@ class AtlasMobileRuntime(
         publish(phase = RuntimePhase.STARTING)
         startDevices()
         database.updateSessionStatus(session.id, SessionStatus.ACTIVE)
+        database.appendEvent(session.id, "session.resumed", JSONObject())
         publish(session = session.copy(status = SessionStatus.ACTIVE), phase = RuntimePhase.READY)
         if (session.contextMode == ContextMode.LIVE) startHeartbeat() else onLiveContextChanged(false)
     }

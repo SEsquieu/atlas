@@ -1080,7 +1080,10 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     fun updateAssistantMessage(messageId: String, content: String, toolCallsJson: String? = null, providerContextJson: String? = null) {
         writableDatabase.update("messages", ContentValues().apply {
             put("content", content)
-            put("tool_calls_json", toolCallsJson)
+            // Streaming checkpoints and delivery rewrites update only the visible text. Once a
+            // completed response has attached tool calls, those protocol records must survive or
+            // later provider requests will contain orphaned tool results.
+            if (toolCallsJson != null) put("tool_calls_json", toolCallsJson)
             if (providerContextJson != null) put("provider_context_json", providerContextJson)
         }, "message_id = ?", arrayOf(messageId))
     }

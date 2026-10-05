@@ -13,6 +13,7 @@ import com.grinningfrog.atlas.model.SessionSummary
 import com.grinningfrog.atlas.model.ToolCallProposal
 import com.grinningfrog.atlas.model.VisualObservation
 import org.json.JSONArray
+import org.json.JSONObject
 
 data class ContextBudget(
     val maxConversationCharacters: Int = 32_000,
@@ -42,7 +43,8 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
         workspaceContextJson: String? = null,
     ): AssembledContext {
         val eligible = messages.filter { it.kind != MessageKind.INTERNAL }
-        val selected = selectRecentMessages(eligible)
+        val protocolSafe = sanitizeToolProtocol(eligible)
+        val selected = selectRecentMessages(protocolSafe)
         val memoryBlock = formatMemories(memories, nowMs)
         val system = buildString {
             appendLine("You are the replaceable intelligence operating inside Atlas, a durable physical-agent runtime.")
@@ -119,6 +121,49 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
         }
         return selected.flatten()
     }
+
+    /**
+     * Providers require every tool result to have a matching assistant tool proposal. Old Atlas
+     * builds could erase the proposal while rewriting clarification text, and interrupted turns can
+     * leave the inverse half-pair. Keep ordinary dialogue while removing only invalid protocol
+     * fragments so one historical record cannot poison every later request in the session.
+     */
+    private fun sanitizeToolProtocol(messages: List<AtlasMessage>): List<AtlasMessage> = messages
+        .groupBy { it.turnId }
+        .values
+        .flatMap { turn ->
+            val declaredIds = turn.asSequence()
+                .filter { it.role == MessageRole.ASSISTANT }
+                .flatMap { parseToolCalls(it.toolCallsJson).asSequence() }
+                .map { it.id }
+                .toSet()
+            val resultIds = turn.asSequence()
+                .filter { it.role == MessageRole.TOOL }
+                .mapNotNull { it.toolCallId }
+                .toSet()
+            val validIds = declaredIds intersect resultIds
+            turn.mapNotNull { message ->
+                when {
+                    message.role == MessageRole.TOOL -> message.takeIf { it.toolCallId in validIds }
+                    message.role == MessageRole.ASSISTANT && message.toolCallsJson != null -> {
+                        val calls = parseToolCalls(message.toolCallsJson).filter { it.id in validIds }
+                        when {
+                            calls.isNotEmpty() -> message.copy(toolCallsJson = toolCallsJson(calls))
+                            message.content.isNotBlank() -> message.copy(toolCallsJson = null)
+                            else -> null
+                        }
+                    }
+                    else -> message
+                }
+            }
+        }
+
+    private fun toolCallsJson(calls: List<ToolCallProposal>) = JSONArray().apply {
+        calls.forEach { call -> put(JSONObject().apply {
+            put("id", call.id); put("name", call.name); put("arguments", call.argumentsJson)
+            call.reason?.let { put("reason", it) }
+        }) }
+    }.toString()
 
     private fun formatMemories(memories: List<MemoryItem>, nowMs: Long): String {
         var remaining = budget.maxMemoryCharacters

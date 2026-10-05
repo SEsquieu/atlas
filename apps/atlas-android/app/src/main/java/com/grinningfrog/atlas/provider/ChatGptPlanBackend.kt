@@ -305,7 +305,12 @@ class ChatGptPlanBackend(
         .readTimeout(endpoint.timeoutMs, TimeUnit.MILLISECONDS).writeTimeout(30, TimeUnit.SECONDS).callTimeout(endpoint.timeoutMs, TimeUnit.MILLISECONDS).build()
 
     private fun providerError(status: Int, raw: String, requestId: String?): InferenceUnavailableException {
-        val code = runCatching { JSONObject(raw).optJSONObject("error")?.optString("code")?.ifBlank { null } ?: JSONObject(raw).optString("detail") }.getOrNull()
+        val root = runCatching { JSONObject(raw) }.getOrNull()
+        val provider = root?.optJSONObject("error")
+        val code = provider.stringOrNull("code")
+        val type = provider.stringOrNull("type")
+        val param = provider.stringOrNull("param")
+        val detail = provider.stringOrNull("message") ?: root.stringOrNull("detail")
         code?.takeIf(String::isNotBlank)?.let(auth::onProviderFailure)
         val message = when (code) {
             "subscription_sharing_user_not_eligible" -> "This ChatGPT account or workspace is not eligible for plan inference."
@@ -314,16 +319,22 @@ class ChatGptPlanBackend(
             "subscription_sharing_unsupported_capability" -> "The selected ChatGPT model does not support part of this request."
             "subscription_sharing_route_not_supported" -> "ChatGPT plan inference rejected this API route."
             "subscription_sharing_invalid_user", "chatpass_v2_scope_not_authorized", "chatpass_v2_invalid_authorization_context" -> "ChatGPT authorization is no longer valid. Sign in again."
-            else -> "ChatGPT returned HTTP $status${code?.takeIf(String::isNotBlank)?.let { ": $it" }.orEmpty()}"
+            else -> buildString {
+                append("ChatGPT returned HTTP ").append(status)
+                val explanation = detail?.let(ChatGptOAuth::redact)?.take(300)
+                    ?: code ?: type
+                explanation?.takeIf(String::isNotBlank)?.let { append(": ").append(it) }
+                if (param != null) append(" (parameter ").append(param.take(100)).append(')')
+            }
         } + requestId?.let { " (request $it)" }.orEmpty()
-        return InferenceUnavailableException(message, outcomeAmbiguous = status !in setOf(400, 401, 403, 429, 503), providerCode = code)
+        return InferenceUnavailableException(message, outcomeAmbiguous = status !in setOf(400, 401, 403, 429, 503), providerCode = code ?: type)
     }
 
     private fun responseFailure(response: JSONObject?): InferenceUnavailableException {
-        val error = response?.optJSONObject("error")
-        val code = error?.optString("code")
-        return providerError(400, JSONObject().put("error", JSONObject().put("code", code)).toString(), null)
+        return providerError(400, response?.toString().orEmpty(), null)
     }
+    private fun JSONObject?.stringOrNull(key: String): String? = this?.takeIf { it.has(key) && !it.isNull(key) }
+        ?.optString(key)?.takeUnless { it.isBlank() || it == "null" }
     private fun safeProviderMessage(event: JSONObject) = "ChatGPT stream error: " + event.optString("code", "unknown_error").take(100)
     private fun elapsedMs(started: Long) = (System.nanoTime() - started) / 1_000_000
     private data class MutableCall(var itemId: String? = null, var callId: String? = null, var name: String? = null, val arguments: StringBuilder = StringBuilder())

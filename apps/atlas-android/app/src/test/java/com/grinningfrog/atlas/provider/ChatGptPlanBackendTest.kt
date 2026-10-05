@@ -154,6 +154,23 @@ class ChatGptPlanBackendTest {
         } finally { server.shutdown() }
     }
 
+    @Test fun streamedValidationFailurePreservesMessageWhenCodeIsNull() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+            "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":null,\"type\":\"invalid_request_error\",\"param\":\"input\",\"message\":\"No matching function call found for function_call_output.\"}}}\n\n",
+        ))
+        server.start()
+        try {
+            val backend = ChatGptPlanBackend(ChatGptTokenProvider { _ -> "token" }, responsesUrl = server.url("/v1/responses").toString())
+            val error = runCatching { backend.stream(endpoint(server.url("/v1").toString()), null, request()).toList() }.exceptionOrNull()
+                as InferenceUnavailableException
+            assertEquals("invalid_request_error", error.providerCode)
+            assertTrue(error.message!!.contains("No matching function call"))
+            assertTrue(error.message!!.contains("parameter input"))
+            assertFalse(error.message!!.contains(": null"))
+        } finally { server.shutdown() }
+    }
+
     private fun endpoint(base: String = "https://api.openai.com/v1") = ProviderEndpoint("chatgpt-plan", "ChatGPT plan", base, "gpt-test",
         supportsVision = true, supportsTools = true, supportsStreaming = true, kind = ProviderKind.CHATGPT_PLAN)
     private fun request() = InferenceRequest(sessionId = "session", capability = RouteCapability.FAST, systemPrompt = "You are Atlas", userText = "hello",
