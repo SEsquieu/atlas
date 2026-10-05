@@ -5,9 +5,9 @@ import com.grinningfrog.atlas.model.AtlasSession
 import com.grinningfrog.atlas.model.AtlasToolCall
 import com.grinningfrog.atlas.model.ToolCallProposal
 import com.grinningfrog.atlas.model.ToolDefinition
-import com.grinningfrog.atlas.model.ToolPolicyDecision
 import com.grinningfrog.atlas.model.ToolRisk
 import com.grinningfrog.atlas.runtime.AtlasToolAdapter
+import com.grinningfrog.atlas.runtime.ToolPolicyDecision
 import com.grinningfrog.atlas.runtime.ToolExecutionResult
 import org.json.JSONArray
 import org.json.JSONObject
