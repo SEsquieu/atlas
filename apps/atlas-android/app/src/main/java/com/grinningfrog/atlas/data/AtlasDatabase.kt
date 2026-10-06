@@ -668,6 +668,11 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     fun replaceWorkspaceDefinition(workspaceId: String, baseRevisionId: String, definitionJson: String, authorType: String, sourceSessionId: String?, sourceTurnId: String?, purpose: String, nowMs: Long = System.currentTimeMillis()): WorkspaceRevision {
         val validation = WorkspaceDefinitionValidator.validate(definitionJson)
         require(validation.valid) { validation.errors.joinToString("; ") }
+        val definition = JSONObject(definitionJson)
+        val persistedState = if (definition.optString("format") == WorkspaceRuntimeV2.FORMAT) {
+            listWorkspaceRecords(workspaceId, "AtlasRuntimeState", 1).firstOrNull()
+                ?.let { runCatching { JSONObject(it.dataJson).getJSONObject("state") }.getOrNull() }
+        } else null
         val revisionId = UUID.randomUUID().toString()
         val revision = WorkspaceRevision(revisionId, workspaceId, baseRevisionId, definitionJson, sha256(definitionJson), authorType, sourceSessionId, sourceTurnId, purpose.take(500), nowMs)
         writableDatabase.transaction {
@@ -675,6 +680,16 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 "composable_workspace_id = ? AND live_revision_id = ? AND status = 'ACTIVE'", arrayOf(workspaceId, baseRevisionId))
             check(changed == 1) { "Workspace revision changed; inspect it again before applying this update" }
             insertOrThrow("workspace_revisions", null, revisionValues(revisionId, workspaceId, baseRevisionId, definitionJson, authorType, sourceSessionId, sourceTurnId, purpose, nowMs))
+            if (definition.optString("format") == WorkspaceRuntimeV2.FORMAT) {
+                val migration = WorkspaceRuntimeV2.migrateState(definition, persistedState)
+                insertOrThrow("workspace_records", null, ContentValues().apply {
+                    put("record_id", UUID.randomUUID().toString()); put("composable_workspace_id", workspaceId); put("collection_name", "AtlasRuntimeState")
+                    put("data_json", JSONObject().put("state", migration.state).put("migration", JSONObject()
+                        .put("added", JSONArray(migration.addedKeys)).put("reset", JSONArray(migration.resetKeys)).put("removed", JSONArray(migration.removedKeys))).toString())
+                    put("created_at", nowMs); put("updated_at", nowMs)
+                })
+                execSQL("DELETE FROM workspace_records WHERE record_id IN (SELECT record_id FROM workspace_records WHERE composable_workspace_id = ? AND collection_name = 'AtlasRuntimeState' ORDER BY updated_at DESC LIMIT -1 OFFSET 50)", arrayOf(workspaceId))
+            }
         }
         return revision
     }
@@ -709,9 +724,12 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         }
     }
 
+    fun loadWorkspacePersistedState(workspaceId: String): JSONObject? =
+        listWorkspaceRecords(workspaceId, "AtlasRuntimeState", 1).firstOrNull()
+            ?.let { runCatching { JSONObject(it.dataJson).getJSONObject("state") }.getOrNull() }
+
     fun loadWorkspaceRuntimeState(workspaceId: String, definition: JSONObject): JSONObject =
-        listWorkspaceRecords(workspaceId, "AtlasRuntimeState", 1).firstOrNull()?.let { runCatching { JSONObject(it.dataJson).getJSONObject("state") }.getOrNull() }
-            ?: WorkspaceRuntimeV2.initialState(definition)
+        WorkspaceRuntimeV2.migrateState(definition, loadWorkspacePersistedState(workspaceId)).state
 
     @Synchronized
     fun applyWorkspaceAction(workspaceId: String, definition: JSONObject, actionId: String, nowMs: Long = System.currentTimeMillis()): WorkspaceExecutionResult {
@@ -804,9 +822,29 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             put("id", workspace.id); put("name", workspace.name); put("description", workspace.description)
             put("revisionId", revision.id); put("navigationSequence", sequence)
             val definition = JSONObject(revision.definitionJson)
-            put("definition", definition); put("recordCount", listWorkspaceRecords(id, limit = 200).size)
+            put("definitionSummary", compactWorkspaceDefinition(definition))
+            put("recordCount", readableDatabase.rawQuery("SELECT COUNT(*) FROM workspace_records WHERE composable_workspace_id = ? AND collection_name != 'AtlasRuntimeState'", arrayOf(id)).use {
+                it.moveToFirst(); it.getInt(0)
+            })
             if (definition.optString("format") == WorkspaceRuntimeV2.FORMAT) put("runtimeState", loadWorkspaceRuntimeState(id, definition))
+            put("editingHint", "Call workspace_inspect with mode=full before revising this workspace.")
         }.toString()
+    }
+
+    private fun compactWorkspaceDefinition(definition: JSONObject): JSONObject = JSONObject().apply {
+        put("format", definition.optString("format")); put("title", definition.optString("title")); put("entryView", definition.optString("entry_view"))
+        put("stateKeys", JSONArray(definition.optJSONObject("state")?.keys()?.asSequence()?.toList().orEmpty()))
+        put("collections", JSONArray(definition.optJSONObject("collections")?.keys()?.asSequence()?.toList().orEmpty()))
+        put("actions", JSONArray(definition.optJSONObject("actions")?.keys()?.asSequence()?.toList().orEmpty()))
+        val views = definition.optJSONArray("views") ?: JSONArray()
+        put("views", JSONArray().apply {
+            for (i in 0 until views.length()) views.optJSONObject(i)?.let { view ->
+                put(JSONObject().put("id", view.optString("id")).put("title", view.optString("title"))
+                    .put("components", JSONArray((0 until (view.optJSONArray("components")?.length() ?: 0)).mapNotNull { index ->
+                        view.optJSONArray("components")?.optJSONObject(index)?.let { "${it.optString("id")}:${it.optString("type")}" }
+                    })))
+            }
+        })
     }
 
     private fun revisionValues(id: String, workspaceId: String, parent: String?, definition: String, authorType: String, sourceSessionId: String?, sourceTurnId: String?, purpose: String, nowMs: Long) = ContentValues().apply {

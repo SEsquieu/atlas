@@ -16,7 +16,7 @@ object WorkspaceRuntimeV2 {
     const val MAX_EXPRESSION_DEPTH = 16
     private val identifier = Regex("[A-Za-z][A-Za-z0-9_-]{0,63}")
     private val stateTypes = setOf("string", "integer", "decimal", "boolean", "timestamp", "enum")
-    private val componentTypes = setOf("text", "status", "metric", "button", "input", "toggle", "list", "section", "divider", "progress")
+    private val componentTypes = setOf("text", "status", "metric", "button", "input", "toggle", "list", "section", "row", "grid", "divider", "progress")
     private val stepTypes = setOf("set", "increment", "toggle", "insert", "navigate", "sequence", "branch", "stop")
     private val expressionOps = setOf("eq", "ne", "gt", "gte", "lt", "lte", "and", "or", "not", "add", "subtract", "multiply", "divide", "concat", "if", "count")
 
@@ -54,6 +54,15 @@ object WorkspaceRuntimeV2 {
         actions.keys().forEach { id ->
             if (!id.matches(identifier)) errors += "Invalid action id: $id"
             validateSteps(actions.optJSONObject(id)?.optJSONArray("steps"), "actions.$id", state, collections, errors, 0)
+            actions.optJSONObject(id)?.opt("enabled_if")?.let { validateExpression(it, "actions.$id.enabled_if", state, collections, errors, 0) }
+        }
+
+        val invariants = root.optJSONArray("invariants") ?: JSONArray()
+        for (i in 0 until invariants.length()) {
+            val invariant = invariants.optJSONObject(i)
+            if (invariant == null) errors += "invariants[$i] must be an object"
+            else if (!invariant.has("assert")) errors += "invariants[$i].assert is required"
+            else validateExpression(invariant.opt("assert"), "invariants[$i].assert", state, collections, errors, 0)
         }
 
         val views = root.optJSONArray("views")
@@ -81,6 +90,19 @@ object WorkspaceRuntimeV2 {
             if (test?.optString("name").isNullOrBlank()) errors += "tests[$i].name is required"
             val action = test?.optString("action").orEmpty()
             if (action.isNotBlank() && !actions.has(action)) errors += "tests[$i] references unknown action: $action"
+            test?.optJSONArray("actions")?.let { sequence ->
+                for (actionIndex in 0 until sequence.length()) {
+                    val sequencedAction = sequence.optString(actionIndex)
+                    if (!actions.has(sequencedAction)) errors += "tests[$i].actions[$actionIndex] references unknown action: $sequencedAction"
+                }
+            }
+            test?.optJSONObject("initial_state")?.let { fixture ->
+                fixture.keys().forEach { key ->
+                    val field = state.optJSONObject(key)
+                    if (field == null) errors += "tests[$i].initial_state references unknown state: $key"
+                    else if (!valueMatchesType(fixture.opt(key), field.optString("type"), field.optJSONArray("values"))) errors += "tests[$i].initial_state.$key has the wrong type"
+                }
+            }
             test?.opt("assert")?.let { validateExpression(it, "tests[$i].assert", state, collections, errors, 0) }
         }
         return WorkspaceValidationResult(errors.isEmpty(), errors.distinct())
@@ -92,12 +114,44 @@ object WorkspaceRuntimeV2 {
         result.put("_view", root.optString("entry_view"))
     }
 
+    fun migrateState(root: JSONObject, persisted: JSONObject?): WorkspaceStateMigration {
+        val migrated = initialState(root)
+        val added = mutableListOf<String>()
+        val reset = mutableListOf<String>()
+        val removed = mutableListOf<String>()
+        val schema = root.optJSONObject("state") ?: JSONObject()
+        schema.keys().forEach { key ->
+            if (persisted?.has(key) != true) added += key
+            else {
+                val field = schema.getJSONObject(key)
+                val value = persisted.opt(key)
+                if (valueMatchesType(value, field.getString("type"), field.optJSONArray("values"))) migrated.put(key, deepCopy(value))
+                else reset += key
+            }
+        }
+        persisted?.keys()?.forEach { key ->
+            when {
+                key == "_view" -> {
+                    val requested = persisted.optString(key)
+                    val views = root.optJSONArray("views") ?: JSONArray()
+                    if ((0 until views.length()).any { views.optJSONObject(it)?.optString("id") == requested }) migrated.put(key, requested)
+                }
+                !schema.has(key) -> removed += key
+            }
+        }
+        return WorkspaceStateMigration(migrated, added, reset, removed)
+    }
+
     fun evaluate(expression: Any?, state: JSONObject, records: Map<String, List<JSONObject>> = emptyMap(), depth: Int = 0): Any? {
         require(depth <= MAX_EXPRESSION_DEPTH) { "Expression depth exceeded" }
         if (expression == null || expression == JSONObject.NULL || expression !is JSONObject) return expression
         expression.optString("var").takeIf(String::isNotBlank)?.let { path ->
             return when {
-                path.startsWith("state.") -> state.opt(path.removePrefix("state."))
+                path.startsWith("state.") -> {
+                    val key = path.removePrefix("state.")
+                    if (!state.has(key) || state.isNull(key)) throw WorkspaceRuntimeException("Missing state value: $key")
+                    state.opt(key)
+                }
                 path.startsWith("count.") -> records[path.removePrefix("count.")]?.size ?: 0
                 else -> null
             }
@@ -105,15 +159,26 @@ object WorkspaceRuntimeV2 {
         val op = expression.optString("op")
         val args = expression.optJSONArray("args") ?: JSONArray()
         fun arg(index: Int) = evaluate(args.opt(index), state, records, depth + 1)
-        fun number(value: Any?) = (value as? Number)?.toDouble() ?: value.toString().toDoubleOrNull() ?: 0.0
-        fun truth(value: Any?) = value as? Boolean ?: (value != null && value != false && value != 0 && value != "")
+        fun number(value: Any?) = (value as? Number)?.toDouble()
+            ?: value?.toString()?.toDoubleOrNull()
+            ?: throw WorkspaceRuntimeException("Expected a numeric value")
+        fun truth(value: Any?) = value as? Boolean ?: when (value) {
+            null, JSONObject.NULL -> false
+            is Number -> value.toDouble() != 0.0
+            is String -> value.isNotEmpty()
+            else -> true
+        }
         return when (op) {
             "eq" -> arg(0).jsonEqual(arg(1)); "ne" -> !arg(0).jsonEqual(arg(1))
             "gt" -> number(arg(0)) > number(arg(1)); "gte" -> number(arg(0)) >= number(arg(1))
             "lt" -> number(arg(0)) < number(arg(1)); "lte" -> number(arg(0)) <= number(arg(1))
             "and" -> (0 until args.length()).all { truth(arg(it)) }; "or" -> (0 until args.length()).any { truth(arg(it)) }
             "not" -> !truth(arg(0)); "add" -> number(arg(0)) + number(arg(1)); "subtract" -> number(arg(0)) - number(arg(1))
-            "multiply" -> number(arg(0)) * number(arg(1)); "divide" -> number(arg(0)) / number(arg(1))
+            "multiply" -> number(arg(0)) * number(arg(1)); "divide" -> {
+                val divisor = number(arg(1))
+                if (divisor == 0.0) throw WorkspaceRuntimeException("Cannot divide by zero")
+                (number(arg(0)) / divisor).also { if (!it.isFinite()) throw WorkspaceRuntimeException("Calculation produced a non-finite number") }
+            }
             "concat" -> (0 until args.length()).joinToString("") { arg(it)?.toString().orEmpty() }
             "if" -> if (truth(arg(0))) arg(1) else arg(2)
             "count" -> records[arg(0)?.toString()]?.size ?: 0
@@ -125,7 +190,11 @@ object WorkspaceRuntimeV2 {
         val validation = validate(root)
         require(validation.valid) { validation.errors.joinToString("; ") }
         val action = root.getJSONObject("actions").optJSONObject(actionId) ?: error("Unknown action: $actionId")
-        val next = JSONObject(state.toString())
+        val next = migrateState(root, state).state
+        val workingRecords = records.mapValuesTo(mutableMapOf()) { (_, rows) -> rows.mapTo(mutableListOf()) { JSONObject(it.toString()) } }
+        if (action.has("enabled_if") && !truth(evaluate(action.opt("enabled_if"), next, workingRecords))) {
+            throw WorkspaceActionRejected(action.optString("disabled_message", "That action is not available right now."))
+        }
         val mutations = mutableListOf<WorkspaceMutation>()
         var stopped = false
         var steps = 0
@@ -137,12 +206,17 @@ object WorkspaceRuntimeV2 {
                 val step = source.getJSONObject(i)
                 when (step.getString("type")) {
                     "set" -> {
-                        val key = step.getString("key"); val value = evaluate(step.opt("value"), next, records)
+                        val key = step.getString("key"); val value = evaluate(step.opt("value"), next, workingRecords)
                         requireStateValue(root, key, value)
                         next.put(key, value); mutations += WorkspaceMutation.SetState(key, value)
                     }
                     "increment" -> {
-                        val key = step.getString("key"); val value = next.optDouble(key, 0.0) + (evaluate(step.opt("by"), next, records) as? Number ?: 1).toDouble()
+                        val key = step.getString("key")
+                        val current = (next.opt(key) as? Number)?.toDouble() ?: throw WorkspaceRuntimeException("State $key is not numeric")
+                        val deltaValue = if (step.has("by")) evaluate(step.opt("by"), next, workingRecords) else 1
+                        val delta = (deltaValue as? Number)?.toDouble() ?: deltaValue?.toString()?.toDoubleOrNull() ?: throw WorkspaceRuntimeException("Increment for $key is not numeric")
+                        val value = current + delta
+                        if (!value.isFinite()) throw WorkspaceRuntimeException("Increment for $key produced a non-finite number")
                         val normalized: Number = if (value % 1.0 == 0.0) value.toLong() else value
                         requireStateValue(root, key, normalized)
                         next.put(key, normalized); mutations += WorkspaceMutation.SetState(key, normalized)
@@ -151,9 +225,9 @@ object WorkspaceRuntimeV2 {
                     "insert" -> {
                         val collection = step.getString("collection"); val data = JSONObject()
                         val sourceData = step.getJSONObject("data")
-                        sourceData.keys().forEach { key -> data.put(key, evaluate(sourceData.opt(key), next, records)) }
+                        sourceData.keys().forEach { key -> data.put(key, evaluate(sourceData.opt(key), next, workingRecords)) }
                         requireRecord(root, collection, data)
-                        records.getOrPut(collection) { mutableListOf() }.add(data); mutations += WorkspaceMutation.InsertRecord(collection, data)
+                        workingRecords.getOrPut(collection) { mutableListOf() }.add(data); mutations += WorkspaceMutation.InsertRecord(collection, data)
                     }
                     "navigate" -> {
                         val view = step.getString("view")
@@ -161,25 +235,43 @@ object WorkspaceRuntimeV2 {
                         next.put("_view", view); mutations += WorkspaceMutation.Navigate(view)
                     }
                     "sequence" -> run(step.optJSONArray("steps") ?: JSONArray(), depth + 1)
-                    "branch" -> run(if (truth(evaluate(step.opt("if"), next, records))) step.optJSONArray("then") ?: JSONArray() else step.optJSONArray("else") ?: JSONArray(), depth + 1)
+                    "branch" -> run(if (truth(evaluate(step.opt("if"), next, workingRecords))) step.optJSONArray("then") ?: JSONArray() else step.optJSONArray("else") ?: JSONArray(), depth + 1)
                     "stop" -> stopped = true
                 }
             }
         }
         run(action.getJSONArray("steps"), 0)
+        val invariants = root.optJSONArray("invariants") ?: JSONArray()
+        for (i in 0 until invariants.length()) {
+            val invariant = invariants.getJSONObject(i)
+            if (!truth(evaluate(invariant.opt("assert"), next, workingRecords))) {
+                throw WorkspaceRuntimeException(invariant.optString("message", "Workspace invariant ${invariant.optString("name", "#$i")} failed"))
+            }
+        }
         return WorkspaceExecutionResult(next, mutations)
     }
 
-    fun simulate(root: JSONObject): WorkspaceSimulationResult {
+    fun simulate(root: JSONObject): WorkspaceSimulationResult = simulate(root, null)
+
+    fun simulate(root: JSONObject, persistedState: JSONObject?): WorkspaceSimulationResult {
         val validation = validate(root)
         if (!validation.valid) return WorkspaceSimulationResult(false, validation.errors, 0)
         val failures = mutableListOf<String>()
         val tests = root.optJSONArray("tests") ?: JSONArray()
         for (i in 0 until tests.length()) {
-            val test = tests.getJSONObject(i); val state = initialState(root); val records = mutableMapOf<String, MutableList<JSONObject>>()
+            val test = tests.getJSONObject(i)
+            val base = test.optJSONObject("initial_state") ?: persistedState
+            val state = migrateState(root, base).state
+            test.optJSONObject("initial_state")?.keys()?.forEach { key -> state.put(key, test.getJSONObject("initial_state").opt(key)) }
+            val records = mutableMapOf<String, MutableList<JSONObject>>()
             runCatching {
-                test.optString("action").takeIf(String::isNotBlank)?.let { action ->
-                    val result = executeAction(root, action, state, records); result.state.keys().forEach { state.put(it, result.state.opt(it)) }
+                val actions = test.optJSONArray("actions") ?: JSONArray().also { test.optString("action").takeIf(String::isNotBlank)?.let(it::put) }
+                for (actionIndex in 0 until actions.length()) {
+                    val result = executeAction(root, actions.getString(actionIndex), state, records)
+                    result.state.keys().forEach { state.put(it, result.state.opt(it)) }
+                    result.mutations.filterIsInstance<WorkspaceMutation.InsertRecord>().forEach { mutation ->
+                        records.getOrPut(mutation.collection) { mutableListOf() }.add(JSONObject(mutation.data.toString()))
+                    }
                 }
                 if (!truth(evaluate(test.opt("assert"), state, records))) failures += "${test.optString("name", "test-$i")}: assertion failed"
             }.onFailure { failures += "${test.optString("name", "test-$i")}: ${it.message}" }
@@ -204,7 +296,8 @@ object WorkspaceRuntimeV2 {
             component.optString("action").takeIf(String::isNotBlank)?.let { if (!actions.has(it)) errors += "$path.$id references unknown action: $it" }
             component.optString("binding").takeIf(String::isNotBlank)?.let { if (!state.has(it)) errors += "$path.$id references unknown state: $it" }
             component.optString("collection").takeIf(String::isNotBlank)?.let { if (!collections.has(it)) errors += "$path.$id references unknown collection: $it" }
-            listOf("value", "visible", "enabled").forEach { key -> component.opt(key)?.takeIf { it is JSONObject }?.let { validateExpression(it, "$path.$id.$key", state, collections, errors, 0) } }
+            listOf("value", "visible", "enabled", "max").forEach { key -> component.opt(key)?.takeIf { it is JSONObject }?.let { validateExpression(it, "$path.$id.$key", state, collections, errors, 0) } }
+            if (type == "grid" && component.optInt("columns", 2) !in 1..6) errors += "$path.$id columns must be between 1 and 6"
             if (component.has("children")) count += validateComponents(component.optJSONArray("children"), "$path.$id", actions, state, collections, errors, depth + 1)
         }
         return count
@@ -265,7 +358,12 @@ object WorkspaceRuntimeV2 {
         }
     }
 
-    private fun truth(value: Any?) = value as? Boolean ?: (value != null && value != false && value != 0 && value != "")
+    private fun truth(value: Any?) = value as? Boolean ?: when (value) {
+        null, JSONObject.NULL -> false
+        is Number -> value.toDouble() != 0.0
+        is String -> value.isNotEmpty()
+        else -> true
+    }
     private fun deepCopy(value: Any?): Any? = when (value) { is JSONObject -> JSONObject(value.toString()); is JSONArray -> JSONArray(value.toString()); else -> value }
     private fun Any?.jsonEqual(other: Any?) = when { this is Number && other is Number -> this.toDouble() == other.toDouble(); else -> this == other || this?.toString() == other?.toString() }
 }
@@ -278,3 +376,6 @@ sealed interface WorkspaceMutation {
 
 data class WorkspaceExecutionResult(val state: JSONObject, val mutations: List<WorkspaceMutation>)
 data class WorkspaceSimulationResult(val passed: Boolean, val failures: List<String>, val testsRun: Int)
+data class WorkspaceStateMigration(val state: JSONObject, val addedKeys: List<String>, val resetKeys: List<String>, val removedKeys: List<String>)
+open class WorkspaceRuntimeException(message: String) : IllegalStateException(message)
+class WorkspaceActionRejected(message: String) : WorkspaceRuntimeException(message)

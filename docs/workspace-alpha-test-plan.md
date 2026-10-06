@@ -25,7 +25,7 @@ Status: live-device checklist for the first experimental implementation slice. T
 - Workspace-specific capability grant UI.
 - Background workspace Work runs and overnight iteration.
 - Import.
-- Automated schema migration between incompatible generated definitions.
+- Custom author-defined migration scripts between incompatible definitions. Core-owned safe reconciliation is automatic.
 
 ## Install and migration smoke test
 
@@ -115,6 +115,10 @@ Pass: active workspaces cannot be deleted directly; archived deletion is explici
 - Ask Atlas to revise a Workspace using an old revision ID; optimistic concurrency must reject it.
 - Revoke inference availability; deterministic Workspace controls must continue working.
 - Force-stop Atlas after saving data; saved records must remain.
+- Add a state field in a revision, then use it immediately; the initial value must be hydrated without clearing existing compatible state.
+- Change a state field to an incompatible type; it must reset to the new initial value and report the reset during validation.
+- Trigger divide-by-zero or a failed invariant; the workspace must show a controlled error and Atlas must remain running.
+- Guard an action with `enabled_if`; the button and interpreter must both fail closed when the guard is false.
 - Rotate the phone and change font scale; the Workspace must remain navigable and the composer reachable.
 
 ## Evidence to collect
