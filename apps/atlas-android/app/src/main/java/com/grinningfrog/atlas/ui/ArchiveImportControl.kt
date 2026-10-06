@@ -33,7 +33,8 @@ fun ArchiveImportControl(database: AtlasDatabase, kind: String, onImported: susp
                 }
                 require(parsed.kind == kind) { "Choose a $kind archive, rather than a ${parsed.kind} archive" }
                 preview = parsed
-            } catch (error: Exception) { status = "Import failed: ${error.message ?: error.javaClass.simpleName}" }
+            } catch (_: OutOfMemoryError) { status = "Import failed: not enough device memory. Try a smaller archive or restart Atlas." }
+            catch (error: Exception) { status = "Import failed: ${error.message ?: error.javaClass.simpleName}" }
             finally { busy = false }
         }
     }
@@ -56,7 +57,8 @@ fun ArchiveImportControl(database: AtlasDatabase, kind: String, onImported: susp
                         preview = null
                         status = if (result.duplicate) "Already imported; opened existing copy." else "Imported successfully."
                         try { onImported(result) } catch (error: Exception) { status = "Imported and saved, but could not open: ${error.message}" }
-                    } catch (error: Exception) { status = "Import failed; nothing was restored: ${error.message ?: error.javaClass.simpleName}"; preview = null }
+                    } catch (_: OutOfMemoryError) { status = "Import failed: not enough device memory. Restoration was rolled back."; preview = null }
+                    catch (error: Exception) { status = "Import failed; nothing was restored: ${error.message ?: error.javaClass.simpleName}"; preview = null }
                     finally { busy = false }
                 }
             }) { Text("Import") } },

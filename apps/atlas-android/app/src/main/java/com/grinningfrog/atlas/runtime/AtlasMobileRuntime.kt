@@ -928,12 +928,11 @@ class AtlasMobileRuntime(
         }
         val candidates = turns.dropLast(AgentLoopPolicy.RECENT_TURNS_AFTER_COMPACTION).flatten()
         if (candidates.isEmpty()) return
-        val transcript = candidates.joinToString("\n") { message ->
-            buildString {
-                append("${message.role.name.lowercase()}: ${message.content.ifBlank { "[tool proposal]" }}")
-                message.providerContextJson?.takeIf(String::isNotBlank)?.let { append(" [recorded provider evidence: ").append(it).append(']') }
-            }
-        }.take(24_000)
+        val batch = try { CheckpointPlanner.select(candidates) } catch (error: IllegalArgumentException) {
+            database.appendEvent(session.id, "memory.compaction_failed", JSONObject().put("stage", "context_budget").put("error", error.safeMessage()))
+            return
+        }
+        val transcript = batch.transcript
         val prompt = buildString {
             appendLine("Create a compact, factual checkpoint for a continuing conversation. Preserve user preferences, corrections, decisions, named entities, completed work, pending tasks, safety constraints, and unresolved references. Do not add facts. Do not describe the summarization process.")
             prior?.let { appendLine("Previous checkpoint:\n${it.summary}") }
@@ -950,22 +949,24 @@ class AtlasMobileRuntime(
             provenance = InferenceProvenance(
                 domain = InferenceDomain.MEMORY,
                 purpose = InferencePurpose.MEMORY_COMPACTION,
-                triggerEventId = candidates.last().id,
+                triggerEventId = batch.messages.last().id,
                 userInitiated = false,
             ),
         )
         database.appendEvent(session.id, "provider.requested", JSONObject().put("source", "memory_compaction").put("requestId", request.requestId).putProvenance(request.provenance))
         try {
             val response = router.route(request)
-            val through = candidates.last().sequence
-            database.saveSummary(SessionSummary(session.id, response.text.take(8_000), through, System.currentTimeMillis()))
+            val through = batch.messages.last().sequence
             database.appendEvent(session.id, "provider.responded", JSONObject().put("source", "memory_compaction").put("requestId", request.requestId)
                 .put("endpointId", response.endpointId).put("model", response.selectedModel).put("routingProfile", response.routingProfile)
                 .put("routingReason", response.routingReason).put("routingRevision", response.routingRevision)
                 .put("latencyMs", response.latencyMs).put("firstTokenLatencyMs", response.firstTokenLatencyMs)
                 .put("promptTokens", response.promptTokens).put("completionTokens", response.completionTokens)
                 .put("totalTokens", response.totalTokens).put("finishReason", response.finishReason)
-                .put("providerContinuationId", response.providerContinuationId).put("throughMessageSequence", through))
+                .put("providerContinuationId", response.providerContinuationId).put("candidateThroughMessageSequence", through))
+            CheckpointPlanner.validateResponse(response.text, response.finishReason)
+            database.saveSummary(SessionSummary(session.id, response.text, through, System.currentTimeMillis()))
+            database.appendEvent(session.id, "memory.compacted", JSONObject().put("throughMessageSequence", through).put("requestId", request.requestId))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {

@@ -55,7 +55,7 @@ object ArchiveCodec {
                 val definition = root.getJSONObject("revision").getJSONObject("definition")
                 val validation = WorkspaceDefinitionValidator.validate(definition.toString())
                 require(validation.valid) { "Workspace definition: ${validation.errors.joinToString("; ")}" }
-                val records = root.getJSONArray("records"); require(records.length() <= MAX_ROWS) { "Too many workspace records" }
+                val records = root.getJSONArray("records"); require(records.length() <= 5000) { "Workspace exceeds the 5,000 record import limit" }
                 val ids = mutableSetOf<String>()
                 for (i in 0 until records.length()) {
                     val record = records.getJSONObject(i); require(ids.add(record.getString("id"))) { "Duplicate workspace record ID" }

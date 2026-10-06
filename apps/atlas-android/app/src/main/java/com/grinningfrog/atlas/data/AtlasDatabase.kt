@@ -572,7 +572,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 if (cutoff != null && text.length <= 8000) saveSummary(SessionSummary(session.id, text, cutoff, now))
                 else warnings += "Checkpoint discarded: its cutoff was missing or its text exceeded 8,000 characters. Transcript retained."
             }
-            appendEventLocked(this, session.id, "session.imported", now, JSONObject().put("sourceSessionId", archive.sourceId).put("pendingWorkResumed", false).toString())
+            appendEventLocked(this, session.id, "session.imported", now, JSONObject().put("sourceSessionId", archive.sourceId).put("pendingWorkResumed", false).put("warnings", JSONArray(warnings)).toString())
             // Speech and observation metadata remain audit-only, never live sensor state.
             session.id
         }
@@ -607,12 +607,17 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     fun contextHistoryNotice(sessionId: String, afterSequence: Long, loadedCount: Int): String? {
         val total = readableDatabase.rawQuery("SELECT COUNT(*) FROM messages WHERE session_id=? AND sequence>?", arrayOf(sessionId, afterSequence.toString())).use { it.moveToFirst(); it.getInt(0) }
-        return if (total > loadedCount) "History page limit: ${total - loadedCount} earlier messages after the checkpoint are not supplied. Do not claim full recall; request missing details." else null
+        val notices = mutableListOf<String>()
+        if (total > loadedCount) notices += "History page limit: ${total - loadedCount} earlier messages after the checkpoint are not supplied. Do not claim full recall; request missing details."
+        readableDatabase.rawQuery("SELECT event_type,data_json FROM events WHERE session_id=? AND event_type IN ('memory.compaction_failed','memory.compacted') ORDER BY sequence DESC LIMIT 1", arrayOf(sessionId)).use {
+            if (it.moveToFirst() && it.getString(0) == "memory.compaction_failed") notices += "Checkpoint update failed: ${JSONObject(it.getString(1)).optString("error").take(500)}. Prior checkpoint and transcript remain saved; omitted history may not be summarized."
+        }
+        return notices.takeIf { it.isNotEmpty() }?.joinToString("\n")
     }
 
     fun archiveContextNotice(sessionId: String): String? = readableDatabase.rawQuery(
-        "SELECT payload FROM archive_imports WHERE kind='session' AND destination_id=? ORDER BY created_at DESC LIMIT 1", arrayOf(sessionId)
-    ).use { if (it.moveToFirst()) "Imported session. Historical tool calls and observations are audit-only; do not assume current effects or physical context. " + JSONObject(it.getString(0)).optJSONArray("importWarnings").toString() else null }
+        "SELECT data_json FROM events WHERE session_id=? AND event_type='session.imported' ORDER BY sequence DESC LIMIT 1", arrayOf(sessionId)
+    ).use { if (it.moveToFirst()) "Imported session. Historical tool calls and observations are audit-only; do not assume current effects or physical context. " + JSONObject(it.getString(0)).optJSONArray("warnings").toString() else null }
 
     @Synchronized
     fun saveClarification(clarification: PendingClarification) {
@@ -1505,7 +1510,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     fun loadPendingToolCalls(sessionId: String): List<AtlasToolCall> = readableDatabase.rawQuery(
         """SELECT tool_call_id,session_id,turn_id,name,arguments_json,status,risk,requires_confirmation,idempotency_key,reason,result_json,error,created_at,updated_at
-            FROM tool_calls WHERE session_id = ? AND status IN ('PROPOSED','WAITING_FOR_CONFIRMATION','APPROVED','RUNNING','UNKNOWN') ORDER BY created_at""".trimIndent(), arrayOf(sessionId)
+            FROM tool_calls WHERE session_id = ? AND idempotency_key NOT LIKE 'archive:%' AND status IN ('PROPOSED','WAITING_FOR_CONFIRMATION','APPROVED','RUNNING','UNKNOWN') ORDER BY created_at""".trimIndent(), arrayOf(sessionId)
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toToolCall()) } }
 
     fun loadTurnToolCalls(turnId: String): List<AtlasToolCall> = readableDatabase.rawQuery(

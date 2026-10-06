@@ -55,6 +55,17 @@ class ArchiveDatabaseTest {
         assertTrue(other.id != session.id)
         assertEquals(restored.id, db.loadSession(other.id)!!.activeComposableWorkspaceId)
     }
+    @Test fun runtimeStateRestoresLatestSnapshotWithoutExecutingActions() {
+        val definition = JSONObject("""{"format":"atlas.workspace.v2","title":"Counter","entry_view":"main","state":{"count":{"type":"integer","initial":0}},"collections":{},"actions":{},"views":[{"id":"main","title":"Counter","components":[{"id":"label","type":"text","text":"Counter"}]}]}""")
+        val original = db.createComposableWorkspace("Counter", "", definition.toString())
+        db.setWorkspaceStateValue(original.id, definition, "count", 1, 5)
+        db.setWorkspaceStateValue(original.id, definition, "count", 9, 5)
+        val imported = db.importArchive(ArchiveCodec.preview(db.exportComposableWorkspace(original.id)))
+        assertEquals(9L, db.loadWorkspaceRuntimeState(imported.id, definition).getLong("count"))
+        assertEquals(2, db.listWorkspaceRecords(imported.id, "AtlasRuntimeState").size)
+        assertEquals(9L, db.loadWorkspaceRuntimeState(original.id, definition).getLong("count"))
+    }
+
     @Test fun failureAfterEmbeddedWorkspaceRollsBackEverything() {
         val before = db.listComposableWorkspaces(true).size
         val bundle = workspace()

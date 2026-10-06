@@ -12,7 +12,7 @@ Imported sessions open **paused** in manual context mode with default permission
 
 Memory retains its confidence, status and original expiry. All imported memory is restricted to the recovered session, including formerly durable facts. Observation evidence is kept in the exported audit, not attached as a current sensor reading. Other sessions cannot use imported session facts automatically.
 
-A valid checkpoint is restored only if its exact message cutoff exists and its text is at most 8,000 characters. An invalid checkpoint is discarded with an explicit notice and the full transcript remains. Model requests identify omitted history and clipped checkpoints. An oversized current turn fails with a context-budget reason instead of sending an unbounded inference packet. Saved transcript and memory remain available for export.
+A valid checkpoint is restored only if its exact message cutoff exists and its text is at most 8,000 characters. An invalid checkpoint is discarded with an explicit notice and the full transcript remains. Model requests identify omitted history and clipped checkpoints. An oversized current turn fails with a context-budget reason instead of sending an unbounded inference packet. Saved transcript and memory remain available for export. Checkpoint updates include complete turns only and advance only through messages supplied to the summarizer. Empty, oversized and incomplete provider responses retain the previous checkpoint and emit a `memory.compaction_failed` event that is also supplied to Atlas on its next request.
 
 ## Boundaries
 
