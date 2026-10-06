@@ -17,11 +17,20 @@ class SessionArchive(
         val directory = File(context.cacheDir, "exports").apply { mkdirs() }
         directory.listFiles()?.forEach { if (System.currentTimeMillis() - it.lastModified() > DAY_MS) it.delete() }
         val file = File(directory, "atlas-session-${sessionId.take(8)}.zip")
-        val snapshot = database.exportSession(sessionId).toString(2).toByteArray()
+        val bundle = database.exportSession(sessionId)
+        val snapshot = bundle.toString(2).toByteArray()
         require(snapshot.size <= ArchiveCodec.MAX_BYTES) { "Session archive exceeds 32 MiB" }
         ZipOutputStream(file.outputStream().buffered()).use { zip ->
             zip.putNextEntry(ZipEntry("transcript.txt"))
-            zip.write(database.exportTranscript(sessionId).toByteArray())
+            zip.write(buildString {
+                val session = bundle.getJSONArray("session").getJSONObject(0)
+                appendLine(session.getString("name")); appendLine("Goal: ${session.optString("goal")}"); appendLine()
+                val messages = bundle.getJSONArray("messages")
+                for (index in 0 until messages.length()) {
+                    val message = messages.getJSONObject(index)
+                    if (message.getString("kind") == "DIALOGUE") appendLine("${if (message.getString("role") == "USER") "You" else "Atlas"}: ${message.getString("content")}")
+                }
+            }.toByteArray())
             zip.closeEntry()
             zip.putNextEntry(ZipEntry("session.json"))
             zip.write(snapshot)

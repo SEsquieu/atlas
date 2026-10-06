@@ -38,7 +38,7 @@ fun ArchiveImportControl(database: AtlasDatabase, kind: String, onImported: susp
         }
     }
     Column {
-        OutlinedButton(enabled = !busy, onClick = { picker.launch(arrayOf("application/json", "application/zip", "application/octet-stream", "text/plain")) }) {
+        OutlinedButton(enabled = !busy, onClick = { picker.launch(arrayOf("*/*")) }) {
             Text(if (busy) "Working…" else "Import $kind")
         }
         status?.let { Text(it) }

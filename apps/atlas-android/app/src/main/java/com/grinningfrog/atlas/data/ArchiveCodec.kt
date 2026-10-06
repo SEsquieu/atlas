@@ -51,6 +51,7 @@ object ArchiveCodec {
                 kind = "workspace"
                 val workspace = root.getJSONObject("workspace")
                 source = workspace.getString("id"); name = workspace.getString("name")
+                com.grinningfrog.atlas.workspace.WorkspaceStatus.valueOf(workspace.getString("status"))
                 val definition = root.getJSONObject("revision").getJSONObject("definition")
                 val validation = WorkspaceDefinitionValidator.validate(definition.toString())
                 require(validation.valid) { "Workspace definition: ${validation.errors.joinToString("; ")}" }
@@ -103,6 +104,8 @@ object ArchiveCodec {
                     val row = calls.getJSONObject(i)
                     require(row.getString("turn_id") in turnIds) { "Tool call references a missing turn" }
                     com.grinningfrog.atlas.model.ToolCallStatus.valueOf(row.getString("status"))
+                    com.grinningfrog.atlas.model.ToolRisk.valueOf(row.getString("risk"))
+                    row.getString("name"); row.getString("arguments_json"); row.getLong("created_at"); row.getLong("updated_at")
                 }
                 val checkpoints = rows(root, "summaries")
                 require(checkpoints.length() <= 1) { "Multiple session checkpoints" }
@@ -121,11 +124,15 @@ object ArchiveCodec {
                 }
                 val embedded = root.optJSONArray("workspaces") ?: JSONArray()
                 require(embedded.length() <= 100) { "Too many embedded workspaces" }
-                for (i in 0 until embedded.length()) require(preview(embedded.getJSONObject(i)).kind == "workspace") { "Embedded entry must be a workspace" }
+                for (i in 0 until embedded.length()) {
+                    val bundle = embedded.getJSONObject(i)
+                    require(bundle.optString("format") == "atlas.workspace.bundle.v1") { "Embedded entry must be a workspace" }
+                    preview(bundle)
+                }
                 warnings += "Session opens paused; pending turns are interrupted and tool calls cannot replay."
                 warnings += "Provider continuation tokens, live observations, permissions, and active clarification controls are not restored."
                 warnings += "Imported memory is session-scoped; expired memories remain expired."
-                warnings += "Images/audio are not included. Observation metadata remains in the historical audit."
+                warnings += "Images/audio are not included. Old events and tool outcomes are historical; observation metadata remains in the exported audit."
                 if (embedded.length() == 0 && !session.isNull("active_composable_workspace_id")) warnings += "Import the matching workspace separately to reconnect it."
                 count = messages.length()
             }

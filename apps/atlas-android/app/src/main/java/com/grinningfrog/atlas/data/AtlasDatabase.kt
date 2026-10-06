@@ -486,6 +486,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                     put("created_at", row.optLong("updated_at_ms", now)); put("updated_at", row.optLong("updated_at_ms", now))
                 })
             }
+            if (root.getJSONObject("workspace").getString("status") == "ARCHIVED") setComposableWorkspaceArchived(workspace.id, true)
             workspace.id
         } else {
             val source = root.getJSONArray("session").getJSONObject(0)
@@ -504,9 +505,36 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 insertOrThrow("turns", null, ContentValues().apply {
                     put("turn_id", turnId); put("session_id", session.id); put("trigger", row.getString("trigger"))
                     put("status", if (terminal) original.name else TurnStatus.INTERRUPTED.name)
-                    put("step_count", row.optInt("step_count")); put("created_at", row.getLong("created_at")); put("updated_at", now)
+                    put("step_count", row.optInt("step_count")); put("created_at", row.getLong("created_at")); put("updated_at", if (terminal) row.optLong("updated_at", now) else now)
                     put("error", if (terminal) row.optString("error").takeUnless { it == "null" } else "Imported interrupted turn; execution was not resumed")
                 })
+            }
+            val callIds = mutableMapOf<String, String>()
+            val calls = ArchiveCodec.rows(root, "toolCalls")
+            for (index in 0 until calls.length()) {
+                val row = calls.getJSONObject(index); val callId = UUID.randomUUID().toString()
+                callIds[row.getString("tool_call_id")] = callId
+                val original = ToolCallStatus.valueOf(row.getString("status"))
+                val terminal = original in setOf(ToolCallStatus.COMPLETED, ToolCallStatus.FAILED, ToolCallStatus.REJECTED, ToolCallStatus.UNKNOWN)
+                insertOrThrow("tool_calls", null, ContentValues().apply {
+                    put("tool_call_id", callId); put("session_id", session.id); put("turn_id", turns.getValue(row.getString("turn_id")))
+                    put("name", row.getString("name")); put("arguments_json", row.getString("arguments_json"))
+                    put("status", if (terminal) original.name else ToolCallStatus.UNKNOWN.name)
+                    put("risk", ToolRisk.valueOf(row.getString("risk")).name); put("requires_confirmation", 0)
+                    put("idempotency_key", "archive:$callId"); put("reason", row.optString("reason").takeUnless { it == "null" })
+                    if (!row.isNull("result_json")) put("result_json", row.getString("result_json"))
+                    put("error", if (terminal) row.optString("error").takeUnless { it == "null" } else "Imported unresolved tool call; effects are unknown and execution was not resumed")
+                    put("created_at", row.getLong("created_at")); put("updated_at", if (terminal) row.getLong("updated_at") else now)
+                })
+            }
+            val sourceEvents = ArchiveCodec.rows(root, "events")
+            for (index in 0 until sourceEvents.length()) {
+                val row = sourceEvents.getJSONObject(index)
+                val data = JSONObject(row.getString("data_json"))
+                turns[data.optString("turnId")]?.let { data.put("turnId", it) }
+                callIds[data.optString("toolCallId")]?.let { data.put("toolCallId", it) }
+                val type = row.getString("event_type")
+                appendEventLocked(this, session.id, if (type.startsWith("archive.")) type else "archive.$type", row.getLong("at_ms"), data.toString())
             }
             val sequenceMap = mutableMapOf<Long, Long>()
             val messages = ArchiveCodec.rows(root, "messages")
@@ -544,11 +572,21 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 if (cutoff != null && text.length <= 8000) saveSummary(SessionSummary(session.id, text, cutoff, now))
                 else warnings += "Checkpoint discarded: its cutoff was missing or its text exceeded 8,000 characters. Transcript retained."
             }
-            // Original tool calls, speech, observations and events are audit-only, never executable state.
+            appendEventLocked(this, session.id, "session.imported", now, JSONObject().put("sourceSessionId", archive.sourceId).put("pendingWorkResumed", false).toString())
+            // Speech and observation metadata remain audit-only, never live sensor state.
             session.id
         }
         delete("archive_imports", "kind=? AND source_id=? AND digest=?", arrayOf(archive.kind, archive.sourceId, archive.digest))
-        val audit = JSONObject(root.toString()).apply { remove("importAudit") }
+        val audit = JSONObject(root.toString()).apply {
+            val previous = optJSONArray("importAudit")
+            if (previous != null && previous.length() > 0) {
+                val payload = JSONObject(previous.getJSONObject(0).getString("payload"))
+                put("historicalAudit", payload.optJSONObject("historicalAudit") ?: JSONObject().apply {
+                    for (key in listOf("observations", "speechSegments", "clarifications", "session")) put(key, payload.optJSONArray(key) ?: JSONArray())
+                })
+            }
+            remove("importAudit")
+        }
         insertOrThrow("archive_imports", null, ContentValues().apply {
             put("kind", archive.kind); put("source_id", archive.sourceId); put("digest", archive.digest); put("destination_id", id)
             put("payload", audit.put("importWarnings", JSONArray(warnings)).toString()); put("requested_workspace_id", requestedWorkspace); put("created_at", now)
@@ -1009,6 +1047,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         })
         put("completeness", JSONObject().put("transcript", "all").put("media", false).put("workspaceRevisionHistory", false))
         put("importAudit", queryRows("archive_imports", "kind='session' AND destination_id=?", arrayOf(sessionId)))
+        for (key in listOf("turns", "messages", "memory", "summaries", "toolCalls", "observations", "speechSegments", "clarifications", "events")) require(getJSONArray(key).length() <= ArchiveCodec.MAX_ROWS) { "$key exceeds the ${ArchiveCodec.MAX_ROWS} row archive limit; no partial export was created" }
         require(toString().toByteArray().size <= ArchiveCodec.MAX_BYTES) { "Session exceeds the 32 MiB archive limit; no partial export was created" }
     } }
 

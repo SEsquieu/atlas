@@ -102,7 +102,12 @@ fun WorkspacePage(
 
     if (workspace == null || revision == null) {
         WorkspaceLibrary(
-            importControl = { com.grinningfrog.atlas.ui.ArchiveImportControl(database, "workspace") { result -> displayedId = result.id; refresh++ } },
+            importControl = { com.grinningfrog.atlas.ui.ArchiveImportControl(database, "workspace") { result ->
+                displayedId = result.id; refresh++
+                snapshot.session?.let { session ->
+                    val restoredLink = database.loadSession(session.id)?.activeComposableWorkspaceId
+                    if (restoredLink != session.activeComposableWorkspaceId) runtime.activateComposableWorkspace(restoredLink)
+                } } },
             workspaces = workspaces,
             error = error,
             onOpen = { selected ->
@@ -140,8 +145,10 @@ fun WorkspacePage(
                 database.setComposableWorkspaceArchived(workspace.id, true); displayedId = null
             } }) { Icon(Icons.Default.Archive, "Archive workspace") }
             IconButton(onClick = {
-                pendingExport = database.exportComposableWorkspace(workspace.id).toString(2)
-                exportLauncher.launch("${workspace.name.replace(Regex("[^A-Za-z0-9._-]+"), "-")}.atlas-workspace.json")
+                runCatching {
+                    pendingExport = database.exportComposableWorkspace(workspace.id).toString(2)
+                    exportLauncher.launch("${workspace.name.replace(Regex("[^A-Za-z0-9._-]+"), "-")}.atlas-workspace.json")
+                }.onFailure { error = it.message ?: "Export failed" }
             }) { Icon(Icons.Default.IosShare, "Export workspace") }
         }
         HorizontalDivider()

@@ -144,7 +144,8 @@ class AtlasMobileRuntime(
             val imported = requireNotNull(database.loadSession(sessionId)) { "Imported session is unavailable" }
             database.updateSessionStatus(sessionId, SessionStatus.PAUSED)
             publish(session = imported.copy(status = SessionStatus.PAUSED), observation = null, response = null,
-                error = null, phase = RuntimePhase.STOPPED, nextHeartbeatAt = null)
+                error = null, phase = RuntimePhase.STOPPED, nextHeartbeatAt = null,
+                listeningState = ListeningState.INACTIVE, partialTranscript = null, streamingResponse = null)
         }
     }
 
