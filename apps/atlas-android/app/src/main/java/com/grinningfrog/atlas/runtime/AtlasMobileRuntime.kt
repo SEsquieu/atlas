@@ -353,6 +353,7 @@ class AtlasMobileRuntime(
         val pending = database.loadPendingClarification(session.id)
         val turn = database.createTurn(session.id, if (voice) "voice" else "text")
         activeTurnId = turn.id
+        publish(error = null)
         database.insertMessage(AtlasMessage(sessionId = session.id, turnId = turn.id, role = MessageRole.USER, content = text, createdAtMs = System.currentTimeMillis()))
         pending?.let { database.appendEvent(session.id, "clarification.reply_candidate", JSONObject().put("turnId", turn.id).put("clarificationId", it.id)) }
 

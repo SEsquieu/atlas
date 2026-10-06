@@ -69,7 +69,7 @@ data class TurnDiagnostics(
                 when { evidence?.has("simulation_passed") == true -> if (evidence.optBoolean("simulation_passed")) "${evidence.optInt("tests_run")}/${evidence.optInt("tests_run")} passed" else "failed: ${evidence.optJSONArray("test_failures")}"; else -> "not reported" },
                 committed.map { it.second.getString("revision_id") },
                 own.filter { it.first.type == "provider.completed_late" }.sumOf { it.second.optInt("toolCallCount") },
-                (requested - finished).isNotEmpty() && !turn.status.let { it in setOf(TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.CANCELLED, TurnStatus.HARD_CANCELLED, TurnStatus.INTERRUPTED, TurnStatus.COMPLETED_LATE) })
+                (turn.status in setOf(TurnStatus.WAITING_FOR_MODEL, TurnStatus.SOFT_TIMED_OUT) || (requested - finished).isNotEmpty()) && !turn.status.let { it in setOf(TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.CANCELLED, TurnStatus.HARD_CANCELLED, TurnStatus.INTERRUPTED, TurnStatus.COMPLETED_LATE) })
         }
     }
 }
