@@ -12,7 +12,9 @@ android {
         applicationId = "com.grinningfrog.atlas"
         minSdk = 28
         targetSdk = 35
-        versionCode = 7
+        versionCode = providers.environmentVariable("ATLAS_ANDROID_VERSION_CODE").orElse("8").get().toInt().also {
+            require(it in 1..2_100_000_000) { "ATLAS_ANDROID_VERSION_CODE is outside Android limits" }
+        }
         versionName = "0.1.0-alpha.5"
 
         vectorDrawables.useSupportLibrary = true
@@ -47,7 +49,14 @@ android {
         }
     }
 
+    if (providers.environmentVariable("ATLAS_REQUIRE_STABLE_SIGNING").orNull == "true") {
+        require(signingConfigs.findByName("alpha") != null) { "Installable CI builds require the persistent alpha signing key" }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.findByName("alpha") ?: signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.findByName("alpha")
