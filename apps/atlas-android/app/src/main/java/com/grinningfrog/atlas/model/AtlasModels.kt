@@ -395,6 +395,7 @@ data class RuntimeSnapshot(
     val recentEvents: List<AtlasEvent> = emptyList(),
     val messages: List<AtlasMessage> = emptyList(),
     val activeTurn: AgentTurn? = null,
+    val turnDiagnostics: List<com.grinningfrog.atlas.runtime.TurnDiagnostics> = emptyList(),
     val pendingToolCalls: List<AtlasToolCall> = emptyList(),
     val memories: List<MemoryItem> = emptyList(),
     val sessionSummary: SessionSummary? = null,

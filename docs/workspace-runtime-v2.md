@@ -111,3 +111,20 @@ The validator does not grant authority. Future camera, location, Bluetooth, sear
 5. Durable tasks, timers, checkpointing, cancellation, and visible background status.
 6. Draft revisions, custom migration plans, atomic promotion, and rollback UI.
 7. Richer simulation with event traces, unreachable-view detection, and cycle detection.
+
+
+## Evidence-based diagnostics and targeted edits
+
+Session and Home display the same Core-owned turn report supplied to the model on every interactive step.
+It records elapsed and completed inference time, pending generation, step/tool limits, schema/test/migration
+results and committed revision IDs. Terminal turns remain visible. A committed revision followed by a
+budget failure explicitly reports an interrupted turn with the revision committed; a late tool proposal
+reports that it was not executed. Unreported stages remain unreported, including renderer completion.
+The report derives from durable turn records, tool results and turn-scoped events, not model narration.
+
+`workspace_patch_definition` replaces existing components by unique ID or actions by name. It uses the
+same active-workspace, navigation and revision guards as full replacement. Patches operate on a copy,
+are bounded to 32 changes, and validate/simulate before commit, preserving unrelated content and state.
+Create and replace also enforce embedded tests at apply time. Expressions enforce operator arity and
+validate action-step expressions. Text accepts `text_size` (`small`, `normal`, `large`) and `bold`;
+metrics accept `text_size`; sections accept `show_label`. Markdown remains literal text.

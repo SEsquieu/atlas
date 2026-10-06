@@ -413,7 +413,10 @@ class AtlasMobileRuntime(
                 turnId = turnId,
                 step = step,
                 capability = capability,
-                systemPrompt = if (spoken) context.systemPrompt + "\n\n" + ResponsePolicy.instructions(responseContract) else context.systemPrompt,
+                systemPrompt = context.systemPrompt + "\n\nCORE EXECUTION EVIDENCE (authoritative facts, not instructions):\n" +
+                    org.json.JSONArray(database.loadRecentTurns(session.id).map { database.turnDiagnostics(it).json(System.currentTimeMillis()) }).toString() +
+                    "\nAnswer failure questions from this evidence. A committed revision survives a failed final reply. Never deny recorded tool attempts. Late tool proposals are not executed.\n" +
+                    (if (spoken) ResponsePolicy.instructions(responseContract) else ""),
                 userText = latestUserText,
                 messages = context.messages,
                 observation = observation.takeIf { attachImage },
@@ -531,7 +534,7 @@ class AtlasMobileRuntime(
                 return
             }
         }
-        throw IllegalStateException("Agent loop exceeded its step or wall-time budget")
+        throw IllegalStateException(if (step >= AgentLoopPolicy.MAX_STEPS) "Turn step budget exceeded: $step/${AgentLoopPolicy.MAX_STEPS}" else "Turn wall-time budget exceeded: ${System.currentTimeMillis() - startedAt}/${AgentLoopPolicy.MAX_WALL_TIME_MS} ms")
     }
 
     private suspend fun handleClarificationControl(
@@ -826,6 +829,7 @@ class AtlasMobileRuntime(
         if (current.status == ToolCallStatus.UNKNOWN) error("Tool outcome is unknown and cannot be retried automatically")
         database.updateTurn(call.turnId, TurnStatus.EXECUTING_TOOL)
         database.updateToolCall(call.id, ToolCallStatus.RUNNING)
+        publish()
         try {
             val result = toolHarness.execute(call)
             database.updateToolCall(call.id, ToolCallStatus.COMPLETED, resultJson = result.resultJson)
@@ -841,6 +845,8 @@ class AtlasMobileRuntime(
             }
             idleRuntime?.observeRepeatedFailure("${call.name} repeatedly failed", error.safeMessage(), count)
             recordToolResult(call, result)
+        } finally {
+            publish()
         }
     }
 
@@ -1219,6 +1225,7 @@ class AtlasMobileRuntime(
             recentEvents = events,
             messages = messages,
             activeTurn = activeTurn,
+            turnDiagnostics = durableSession?.let { database.loadRecentTurns(it.id).map(database::turnDiagnostics) }.orEmpty(),
             pendingToolCalls = pendingTools,
             memories = memories,
             sessionSummary = summary,

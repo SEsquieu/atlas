@@ -12,11 +12,11 @@ import com.grinningfrog.atlas.runtime.ToolExecutionResult
 import org.json.JSONArray
 import org.json.JSONObject
 
-private const val AUTHORING_GUIDE = "Prefer atlas.workspace.v2 for interactive apps. V2 requires format,title,entry_view,state,collections,actions,views, and should include tests. State fields are {type:string|integer|decimal|boolean|timestamp|enum,initial,values?}; collection fields use the same types. Components: text(value), status/metric(value), button(action), input(binding), toggle(binding,action), progress(value,max), list(collection,primary_field,secondary_field), section(children,compact?), row(children), grid(children,columns:1..6), divider. Actions contain bounded steps: set(key,value), increment(key,by), toggle(key), insert(collection,data), navigate(view), sequence(steps), branch(if,then,else), stop; enabled_if and disabled_message guard actions. Root invariants are {name?,assert,message?}. Expressions are literals, {var:'state.key'}, {var:'count.collection'}, or {op:eq|ne|gt|gte|lt|lte|and|or|not|add|subtract|multiply|divide|concat|if|count,args:[...]}. Tests are {name,action|actions,initial_state?,assert}. Validate against the active workspace before replacing. V1 remains supported for static dashboards."
+private const val AUTHORING_GUIDE = "Prefer atlas.workspace.v2 for interactive apps. V2 requires format,title,entry_view,state,collections,actions,views, and should include tests. State fields are {type:string|integer|decimal|boolean|timestamp|enum,initial,values?}; collection fields use the same types. All components require a unique id. views is an array of {id,title,components}; collection schemas are {fields:{...}}. Text supports text_size:small|normal|large and bold:boolean; metric supports text_size; section supports show_label:boolean. Markdown is plain text. For small edits use workspace_patch_definition instead of rewriting the full definition. Components: text(value), status/metric(value), button(action), input(binding), toggle(binding,action), progress(value,max), list(collection,primary_field,secondary_field), section(children,compact?), row(children), grid(children,columns:1..6), divider. Actions contain bounded steps: set(key,value), increment(key,by), toggle(key), insert(collection,data), navigate(view), sequence(steps), branch(if,then,else), stop; enabled_if and disabled_message guard actions. Root invariants are {name?,assert,message?}. Expressions are literals, {var:'state.key'}, {var:'count.collection'}, or {op:eq|ne|gt|gte|lt|lte|and|or|not|add|subtract|multiply|divide|concat|if|count,args:[...]}. Tests are {name,action|actions,initial_state?,assert}. Validate against the active workspace before replacing. V1 remains supported for static dashboards."
 
 object WorkspaceTools {
     fun create(database: AtlasDatabase): List<AtlasToolAdapter> = listOf(
-        ListWorkspaces(database), ValidateDefinition(database), CreateWorkspace(database), InspectWorkspace(database), ReplaceDefinition(database), AddRecord(database),
+        ListWorkspaces(database), ValidateDefinition(database), CreateWorkspace(database), InspectWorkspace(database), ReplaceDefinition(database), PatchDefinition(database), AddRecord(database),
     )
 }
 
@@ -62,10 +62,14 @@ private class CreateWorkspace(database: AtlasDatabase) : WorkspaceAdapter(databa
         require(name.isNotBlank()) { "Workspace name is required" }
         val description = args.optString("description").trim()
         val definition = args.optJSONObject("definition")?.toString() ?: WorkspaceDefinitionValidator.starter(name, description)
+        val proposed = JSONObject(definition)
+        val simulation = if (proposed.optString("format") == WorkspaceRuntimeV2.FORMAT) WorkspaceRuntimeV2.simulate(proposed) else null
+        require(simulation?.passed != false) { simulation?.failures.orEmpty().joinToString("; ") }
         val workspace = database.createComposableWorkspace(name, description, definition, session.workspaceId, session.id, call.turnId)
         val sequence = database.activateComposableWorkspace(session.id, workspace.id)
         return ToolExecutionResult(JSONObject().apply {
-            put("ok", true); put("workspace_id", workspace.id); put("revision_id", workspace.liveRevisionId); put("navigation_sequence", sequence)
+            put("ok", true); put("workspace_id", workspace.id); put("revision_id", workspace.liveRevisionId); put("navigation_sequence", sequence); put("valid", true)
+            simulation?.let { put("simulation_passed", it.passed); put("tests_run", it.testsRun); put("test_failures", JSONArray(it.failures)) }
         }.toString())
     }
 }
@@ -134,7 +138,7 @@ private class InspectWorkspace(database: AtlasDatabase) : WorkspaceAdapter(datab
     }
 }
 
-private class ReplaceDefinition(database: AtlasDatabase) : WorkspaceAdapter(database) {
+private open class ReplaceDefinition(database: AtlasDatabase) : WorkspaceAdapter(database) {
     override val definition = ToolDefinition(
         "workspace_replace_definition", "Replace the active workspace definition. The base revision and navigation sequence prevent stale changes. $AUTHORING_GUIDE",
         """{"type":"object","properties":{"workspace_id":{"type":"string"},"base_revision_id":{"type":"string"},"navigation_sequence":{"type":"integer"},"purpose":{"type":"string","maxLength":500},"definition":{"type":"object"}},"required":["workspace_id","base_revision_id","navigation_sequence","purpose","definition"],"additionalProperties":false}""",
@@ -154,12 +158,34 @@ private class ReplaceDefinition(database: AtlasDatabase) : WorkspaceAdapter(data
         val migration = if (definition.optString("format") == WorkspaceRuntimeV2.FORMAT) {
             WorkspaceRuntimeV2.migrateState(definition, database.loadWorkspacePersistedState(id))
         } else null
+        val validation = WorkspaceDefinitionValidator.validate(definition.toString())
+        require(validation.valid) { validation.errors.joinToString("; ") }
+        val simulation = if (definition.optString("format") == WorkspaceRuntimeV2.FORMAT) WorkspaceRuntimeV2.simulate(definition, database.loadWorkspacePersistedState(id)) else null
+        require(simulation?.passed != false) { simulation?.failures.orEmpty().joinToString("; ") }
         val revision = database.replaceWorkspaceDefinition(
             id, args.getString("base_revision_id"), definition.toString(), "MODEL", session.id, call.turnId, args.getString("purpose"),
         )
         return ToolExecutionResult(JSONObject().put("ok", true).put("workspace_id", id).put("revision_id", revision.id).put("content_hash", revision.contentHash).apply {
+            put("valid", true)
+            simulation?.let { put("simulation_passed", it.passed); put("tests_run", it.testsRun); put("test_failures", JSONArray(it.failures)) }
             migration?.let { put("migration", JSONObject().put("added", JSONArray(it.addedKeys)).put("reset", JSONArray(it.resetKeys)).put("removed", JSONArray(it.removedKeys))) }
         }.toString())
+    }
+}
+
+private class PatchDefinition(database: AtlasDatabase) : ReplaceDefinition(database) {
+    override val definition = ToolDefinition(
+        "workspace_patch_definition", "Replace selected components by id or actions by name, preserving all other content. Changes are bounded, validated and simulated before a versioned commit. Component replacement must retain its id. $AUTHORING_GUIDE",
+        """{"type":"object","properties":{"workspace_id":{"type":"string"},"base_revision_id":{"type":"string"},"navigation_sequence":{"type":"integer"},"purpose":{"type":"string","maxLength":500},"changes":{"type":"array","maxItems":32,"items":{"type":"object","properties":{"kind":{"type":"string","enum":["component","action"]},"id":{"type":"string"},"replacement":{"type":"object"}},"required":["kind","id","replacement"],"additionalProperties":false}}},"required":["workspace_id","base_revision_id","navigation_sequence","purpose","changes"],"additionalProperties":false}""",
+        ToolRisk.SESSION_WRITE, maxCallsPerTurn = 3,
+    )
+    override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
+        val args = JSONObject(call.argumentsJson)
+        val revision = database.loadLiveWorkspaceRevision(args.getString("workspace_id")) ?: error("Workspace revision unavailable")
+        require(revision.id == args.getString("base_revision_id")) { "Workspace revision changed; inspect again" }
+        val patched = WorkspaceDefinitionPatch.apply(JSONObject(revision.definitionJson), args.getJSONArray("changes"))
+        args.put("definition", patched)
+        return super.execute(call.copy(argumentsJson = args.toString()))
     }
 }
 

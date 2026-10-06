@@ -9,6 +9,32 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class WorkspaceRuntimeV2Test {
+    @Test fun rejectsMalformedGuardArityBeforeApply() {
+        val app = dungeon()
+        app.getJSONObject("actions").getJSONObject("openDoor").put("enabled_if", JSONObject("""{"op":"eq","args":[{"op":"eq","args":[{"var":"state.location"},"cell"]}]}"""))
+        val result = WorkspaceRuntimeV2.validate(app)
+        assertFalse(result.valid)
+        assertTrue(result.errors.any { it.contains("requires exactly 2 arguments") })
+    }
+    @Test fun checksExpressionsInsideActionSteps() {
+        val app = dungeon()
+        app.getJSONObject("actions").getJSONObject("openDoor").getJSONArray("steps").getJSONObject(0).put("value", JSONObject("""{"op":"if","args":[true,{"var":"state.missing"}]}"""))
+        val errors = WorkspaceRuntimeV2.validate(app).errors
+        assertTrue(errors.any { it.contains("unknown state") })
+        assertTrue(errors.any { it.contains("requires exactly 3 arguments") })
+    }
+    @Test fun targetedPatchPreservesUnrelatedDefinitionAndOriginal() {
+        val app = dungeon(); val original = app.toString()
+        val replacement = JSONObject(app.getJSONObject("actions").getJSONObject("openDoor").toString()).put("disabled_message", "Closed")
+        val changes = JSONArray().put(JSONObject().put("kind", "action").put("id", "openDoor").put("replacement", replacement))
+        val patched = WorkspaceDefinitionPatch.apply(app, changes)
+        assertEquals(original, app.toString())
+        assertEquals(app.getJSONArray("views").toString(), patched.getJSONArray("views").toString())
+        assertEquals("Closed", patched.getJSONObject("actions").getJSONObject("openDoor").getString("disabled_message"))
+        assertTrue(WorkspaceRuntimeV2.simulate(patched).passed)
+        assertThrows(IllegalArgumentException::class.java) { WorkspaceDefinitionPatch.apply(app, JSONArray().put(JSONObject().put("kind", "action").put("id", "missing").put("replacement", replacement))) }
+    }
+
     @Test fun validatesAndRunsAStatefulApplication() {
         val app = dungeon()
         assertTrue(WorkspaceRuntimeV2.validate(app).errors.joinToString(), WorkspaceRuntimeV2.validate(app).valid)

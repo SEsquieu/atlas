@@ -434,6 +434,8 @@ private fun AtlasHomePage(
                 }
             }
 
+            snapshot.turnDiagnostics.firstOrNull()?.let { report -> item { TurnDiagnosticsCard(report) } }
+
             snapshot.activeTurn?.let { turn ->
                 item {
                     InstrumentCard(accent = if (turn.status == com.grinningfrog.atlas.model.TurnStatus.SOFT_TIMED_OUT) AtlasAmber else MaterialTheme.colorScheme.primary) {
@@ -894,6 +896,10 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
                     }
                 }
             }
+        }
+
+        snapshot.turnDiagnostics.forEach { report ->
+            item(key = "diagnostics-${report.turn.id}") { TurnDiagnosticsCard(report) }
         }
 
         if (session != null && session.status != SessionStatus.DONE) item {
@@ -1701,4 +1707,24 @@ private val AtlasTypography = Typography(
 @Composable
 private fun AtlasTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = AtlasColors, typography = AtlasTypography, shapes = AtlasShapes, content = content)
+}
+
+@Composable
+private fun TurnDiagnosticsCard(report: com.grinningfrog.atlas.runtime.TurnDiagnostics) {
+    var nowMs by remember(report.turn.id) { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(report.turn.id, report.terminal) {
+        while (!report.terminal) { kotlinx.coroutines.delay(1000); nowMs = System.currentTimeMillis() }
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(report.headline, fontWeight = FontWeight.Bold)
+            Text("Elapsed: ${"%.1f".format(java.util.Locale.US, report.elapsedMs(nowMs) / 1000.0)} s · inference: ${"%.1f".format(java.util.Locale.US, report.inferenceMs / 1000.0)} s${if (report.inferencePending) " + generating" else ""}", style = MaterialTheme.typography.bodySmall)
+            Text("Steps: ${report.turn.stepCount}/${com.grinningfrog.atlas.runtime.AgentLoopPolicy.MAX_STEPS} · tool calls: ${report.toolCalls}/${com.grinningfrog.atlas.runtime.AgentLoopPolicy.MAX_TOOL_CALLS}", style = MaterialTheme.typography.bodySmall)
+            report.runningTool?.let { Text("Running: $it", style = MaterialTheme.typography.bodySmall) }
+            Text("Schema: ${report.schema} · migration: ${report.migration}", style = MaterialTheme.typography.bodySmall)
+            Text("Tests: ${report.tests}", style = MaterialTheme.typography.bodySmall)
+            Text(if (report.revisionIds.isEmpty()) "Apply revision: NOT COMMITTED" else "Apply revision: COMMITTED (${report.revisionIds.last().take(8)})", style = MaterialTheme.typography.bodySmall)
+            report.turn.error?.let { Text("Reason: $it", style = MaterialTheme.typography.bodySmall) }
+        }
+    }
 }

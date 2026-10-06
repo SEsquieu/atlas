@@ -103,6 +103,7 @@ object WorkspaceRuntimeV2 {
                     else if (!valueMatchesType(fixture.opt(key), field.optString("type"), field.optJSONArray("values"))) errors += "tests[$i].initial_state.$key has the wrong type"
                 }
             }
+            if (test?.has("assert") != true) errors += "tests[$i].assert is required"
             test?.opt("assert")?.let { validateExpression(it, "tests[$i].assert", state, collections, errors, 0) }
         }
         return WorkspaceValidationResult(errors.isEmpty(), errors.distinct())
@@ -297,6 +298,9 @@ object WorkspaceRuntimeV2 {
             component.optString("binding").takeIf(String::isNotBlank)?.let { if (!state.has(it)) errors += "$path.$id references unknown state: $it" }
             component.optString("collection").takeIf(String::isNotBlank)?.let { if (!collections.has(it)) errors += "$path.$id references unknown collection: $it" }
             listOf("value", "visible", "enabled", "max").forEach { key -> component.opt(key)?.takeIf { it is JSONObject }?.let { validateExpression(it, "$path.$id.$key", state, collections, errors, 0) } }
+            if (component.has("text_size") && component.optString("text_size") !in setOf("small", "normal", "large")) errors += "$path.$id text_size must be small, normal, or large"
+            if (component.has("bold") && component.opt("bold") !is Boolean) errors += "$path.$id bold must be boolean"
+            if (component.has("show_label") && component.opt("show_label") !is Boolean) errors += "$path.$id show_label must be boolean"
             if (type == "grid" && component.optInt("columns", 2) !in 1..6) errors += "$path.$id columns must be between 1 and 6"
             if (component.has("children")) count += validateComponents(component.optJSONArray("children"), "$path.$id", actions, state, collections, errors, depth + 1)
         }
@@ -317,6 +321,9 @@ object WorkspaceRuntimeV2 {
             if (type !in stepTypes) errors += "$path.steps[$i] has unsupported type: $type"
             if (type in setOf("set", "increment", "toggle") && !state.has(step.optString("key"))) errors += "$path.steps[$i] references unknown state: ${step.optString("key")}" 
             if (type == "insert" && !collections.has(step.optString("collection"))) errors += "$path.steps[$i] references unknown collection: ${step.optString("collection")}" 
+            if (type == "set") validateExpression(step.opt("value"), "$path.steps[$i].value", state, collections, errors, 0)
+            if (type == "increment" && step.has("by")) validateExpression(step.opt("by"), "$path.steps[$i].by", state, collections, errors, 0)
+            if (type == "insert") step.optJSONObject("data")?.let { data -> data.keys().forEach { key -> validateExpression(data.opt(key), "$path.steps[$i].data.$key", state, collections, errors, 0) } }
             if (type == "branch") validateExpression(step.opt("if"), "$path.steps[$i].if", state, collections, errors, 0)
             if (type == "sequence") validateSteps(step.optJSONArray("steps"), "$path.steps[$i]", state, collections, errors, depth + 1)
             if (type == "branch") { validateSteps(step.optJSONArray("then") ?: JSONArray(), "$path.steps[$i].then", state, collections, errors, depth + 1); validateSteps(step.optJSONArray("else") ?: JSONArray(), "$path.steps[$i].else", state, collections, errors, depth + 1) }
@@ -333,7 +340,17 @@ object WorkspaceRuntimeV2 {
         }
         val op = expression.optString("op")
         if (op !in expressionOps && !expression.has("value")) errors += "$path uses unsupported expression op: $op"
-        val args = expression.optJSONArray("args") ?: return
+        if (op.isBlank() && expression.has("value")) return
+        val args = expression.optJSONArray("args")
+        val required = when (op) {
+            "not", "count" -> 1
+            "eq", "ne", "gt", "gte", "lt", "lte", "add", "subtract", "multiply", "divide" -> 2
+            "if" -> 3
+            else -> null
+        }
+        if (args == null) { errors += "$path.args must be an array"; return }
+        if (required != null && args.length() != required) errors += "$path.$op requires exactly $required arguments"
+        if (op in setOf("and", "or", "concat") && args.length() == 0) errors += "$path.$op requires at least one argument"
         for (i in 0 until args.length()) validateExpression(args.opt(i), "$path.args[$i]", state, collections, errors, depth + 1)
     }
 

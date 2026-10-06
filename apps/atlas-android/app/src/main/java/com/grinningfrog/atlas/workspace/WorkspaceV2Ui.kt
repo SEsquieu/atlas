@@ -89,11 +89,17 @@ private fun V2Component(component: JSONObject, state: JSONObject, records: Map<S
     fun value(key: String, fallback: Any? = ""): Any? = component.opt(key)?.let { WorkspaceRuntimeV2.evaluate(it, state, records) } ?: fallback
     if (!(value("visible", true) as? Boolean ?: true)) return
     val label = component.optString("label", component.optString("id"))
+    val textStyle = when (component.optString("text_size", "normal")) {
+        "small" -> MaterialTheme.typography.bodySmall
+        "large" -> MaterialTheme.typography.bodyLarge
+        else -> MaterialTheme.typography.bodyMedium
+    }
+    val textWeight = if (component.optBoolean("bold")) FontWeight.Bold else FontWeight.Normal
     when (component.optString("type")) {
-        "text" -> Text(value("value", component.optString("text")).toString(), style = MaterialTheme.typography.bodyLarge, modifier = modifier)
+        "text" -> Text(value("value", component.optString("text")).toString(), style = textStyle, fontWeight = textWeight, modifier = modifier)
         "status", "metric" -> Card(modifier) { Column(Modifier.padding(if (component.optBoolean("compact")) 8.dp else 14.dp)) {
-            Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value("value", "—").toString(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            if (component.optBoolean("show_label", true)) Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value("value", "—").toString(), style = if (component.has("text_size")) textStyle else MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         } }
         "button" -> {
             val action = component.optString("action")
@@ -127,7 +133,7 @@ private fun V2Component(component: JSONObject, state: JSONObject, records: Map<S
             } }
         }
         "section" -> Card(modifier) { Column(Modifier.padding(if (component.optBoolean("compact")) 8.dp else 14.dp), verticalArrangement = Arrangement.spacedBy(if (component.optBoolean("compact")) 6.dp else 10.dp)) {
-            if (label.isNotBlank()) Text(label, fontWeight = FontWeight.Bold)
+            if (component.optBoolean("show_label", component.has("label")) && label.isNotBlank()) Text(label, fontWeight = FontWeight.Bold)
             val children = component.optJSONArray("children") ?: JSONArray()
             for (i in 0 until children.length()) children.optJSONObject(i)?.let { V2Component(it, state, records, execute, actionEnabled, setState) }
         } }

@@ -1144,6 +1144,22 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         "SELECT turn_id,session_id,status,trigger,created_at,updated_at,step_count,error FROM turns WHERE turn_id = ?", arrayOf(turnId)
     ).use { cursor -> if (!cursor.moveToFirst()) null else cursor.toTurn() }
 
+    fun loadRecentTurns(sessionId: String, limit: Int = 3): List<AgentTurn> = readableDatabase.rawQuery(
+        "SELECT turn_id,session_id,status,trigger,created_at,updated_at,step_count,error FROM turns WHERE session_id = ? ORDER BY created_at DESC LIMIT ?",
+        arrayOf(sessionId, limit.coerceIn(1, 5).toString()),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toTurn()) } }
+
+    fun turnDiagnostics(turn: AgentTurn): com.grinningfrog.atlas.runtime.TurnDiagnostics {
+        // Scope by turn creation time rather than the UI's 80-event window. Bound pathological logs.
+        val events = readableDatabase.rawQuery(
+            "SELECT sequence,event_id,session_id,event_type,at_ms,data_json,workspace_id,task_run_id FROM events WHERE session_id = ? AND at_ms >= ? ORDER BY sequence DESC LIMIT 2000",
+            arrayOf(turn.sessionId, turn.createdAtMs.toString()),
+        ).use { cursor -> buildList {
+            while (cursor.moveToNext()) add(AtlasEvent(cursor.getLong(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5), cursor.getString(6), cursor.nullableString(7)))
+        }.reversed() }
+        return com.grinningfrog.atlas.runtime.TurnDiagnostics.project(turn, loadTurnToolCalls(turn.id), events)
+    }
+
     fun loadActiveTurn(sessionId: String): AgentTurn? = readableDatabase.rawQuery(
         "SELECT turn_id,session_id,status,trigger,created_at,updated_at,step_count,error FROM turns WHERE session_id = ? AND status NOT IN ('COMPLETED','COMPLETED_LATE','FAILED','CANCELLED','HARD_CANCELLED','INTERRUPTED') ORDER BY created_at DESC LIMIT 1",
         arrayOf(sessionId),
