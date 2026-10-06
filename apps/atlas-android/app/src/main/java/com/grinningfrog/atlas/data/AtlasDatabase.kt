@@ -617,7 +617,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     fun archiveContextNotice(sessionId: String): String? = readableDatabase.rawQuery(
         "SELECT data_json FROM events WHERE session_id=? AND event_type='session.imported' ORDER BY sequence DESC LIMIT 1", arrayOf(sessionId)
-    ).use { if (it.moveToFirst()) "Imported session. Historical tool calls and observations are audit-only; do not assume current effects or physical context. " + JSONObject(it.getString(0)).optJSONArray("warnings").toString() else null }
+    ).use { if (it.moveToFirst()) "Imported session. Historical tool calls and observations are audit-only; do not assume current effects or physical context. " + JSONObject(it.getString(0)).optJSONArray("warnings")?.toString().orEmpty() else null }
 
     @Synchronized
     fun saveClarification(clarification: PendingClarification) {

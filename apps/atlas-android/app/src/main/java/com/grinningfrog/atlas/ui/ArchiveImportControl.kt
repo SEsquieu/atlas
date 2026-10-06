@@ -3,6 +3,9 @@ package com.grinningfrog.atlas.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Modifier
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -48,7 +51,7 @@ fun ArchiveImportControl(database: AtlasDatabase, kind: String, onImported: susp
         AlertDialog(
             onDismissRequest = { if (!busy) preview = null },
             title = { Text("Import ${proposed.name}?") },
-            text = { Text("${proposed.itemCount} ${if (kind == "session") "messages" else "records"}. Creates a separate copy; an identical archive reuses its previous import.\n\n" + proposed.warnings.joinToString("\n\n")) },
+            text = { Text("${proposed.itemCount} ${if (kind == "session") "messages" else "records"}. Creates a separate copy; an identical archive reuses its previous import.\n\n" + proposed.warnings.joinToString("\n\n"), modifier = Modifier.verticalScroll(rememberScrollState())) },
             confirmButton = { TextButton(enabled = !busy, onClick = {
                 scope.launch {
                     busy = true

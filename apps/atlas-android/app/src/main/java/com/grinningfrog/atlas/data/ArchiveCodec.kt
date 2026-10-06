@@ -144,7 +144,9 @@ object ArchiveCodec {
         return ArchivePreview(kind, source, name, JSONObject(root.toString()), digest, warnings, count)
     }
     private fun canonicalJson(value: Any?): String = when (value) {
-        is JSONObject -> value.keys().asSequence().toList().sorted().joinToString(",", "{", "}") { JSONObject.quote(it) + ":" + canonicalJson(value.get(it)) }
+        is JSONObject -> value.keys().asSequence().filter { key ->
+            value.optString("format") !in setOf("atlas.session.v1", "atlas.workspace.bundle.v1") || key !in setOf("exportedAtMs", "exported_at_ms")
+        }.toList().sorted().joinToString(",", "{", "}") { JSONObject.quote(it) + ":" + canonicalJson(value.get(it)) }
         is JSONArray -> (0 until value.length()).joinToString(",", "[", "]") { canonicalJson(value.get(it)) }
         is String -> JSONObject.quote(value)
         null, JSONObject.NULL -> "null"

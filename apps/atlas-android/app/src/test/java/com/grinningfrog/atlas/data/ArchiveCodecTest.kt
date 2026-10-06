@@ -39,6 +39,17 @@ class ArchiveCodecTest {
         reversed.put("exportedAtMs", 2)
         assertEquals(ArchiveCodec.preview(first).digest, ArchiveCodec.preview(reversed).digest)
     }
+    @Test fun embeddedExportTimestampsDoNotCreateDuplicateSnapshots() {
+        val bundle = JSONObject().put("format", "atlas.workspace.bundle.v1").put("exported_at_ms", 1)
+            .put("workspace", JSONObject().put("id", "workspace").put("name", "Portable").put("status", "ACTIVE"))
+            .put("revision", JSONObject().put("definition", JSONObject(com.grinningfrog.atlas.workspace.WorkspaceDefinitionValidator.starter("Portable", ""))))
+            .put("records", JSONArray())
+        val first = session().put("workspaces", JSONArray().put(bundle))
+        val digest = ArchiveCodec.preview(first).digest
+        bundle.put("exported_at_ms", 2)
+        assertEquals(digest, ArchiveCodec.preview(first).digest)
+    }
+
     @Test fun rejectsMissingArraysRatherThanPretendingEmptyHistory() {
         val root = session(); root.remove("messages")
         assertTrue(runCatching { ArchiveCodec.preview(root) }.isFailure)
