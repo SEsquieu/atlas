@@ -12,11 +12,11 @@ import com.grinningfrog.atlas.runtime.ToolExecutionResult
 import org.json.JSONArray
 import org.json.JSONObject
 
-private const val AUTHORING_GUIDE = "Definition format atlas.workspace.v1 requires title and components. Supported component types: text(text), status(label,value), metric(label,value), notes(label), counter(label,initial), checklist(label,items string array), form(label,collection,fields [{key,label}],submit_label), list/gallery(label,collection,primary_field,secondary_field), button(label,collection,data object), section(label,children), divider, canvas. Every component and nested child requires a unique id."
+private const val AUTHORING_GUIDE = "Prefer atlas.workspace.v2 for interactive apps. V2 requires format,title,entry_view,state,collections,actions,views, and should include tests. State fields are {type:string|integer|decimal|boolean|timestamp|enum,initial,values?}; collection fields use the same types. Components: text(value), status/metric(value), button(action), input(binding), toggle(binding,action), progress(value,max), list(collection,primary_field,secondary_field), section(children), divider. Actions contain bounded steps: set(key,value), increment(key,by), toggle(key), insert(collection,data), navigate(view), sequence(steps), branch(if,then,else), stop. Expressions are literals, {var:'state.key'}, {var:'count.collection'}, or {op:eq|ne|gt|gte|lt|lte|and|or|not|add|subtract|multiply|divide|concat|if|count,args:[...]}. Tests are {name,action,assert}. Validate and simulate before creating or replacing. V1 remains supported for simple static dashboards."
 
 object WorkspaceTools {
     fun create(database: AtlasDatabase): List<AtlasToolAdapter> = listOf(
-        ListWorkspaces(database), CreateWorkspace(database), InspectWorkspace(database), ReplaceDefinition(database), AddRecord(database),
+        ListWorkspaces(database), ValidateDefinition(database), CreateWorkspace(database), InspectWorkspace(database), ReplaceDefinition(database), AddRecord(database),
     )
 }
 
@@ -52,7 +52,7 @@ private class CreateWorkspace(database: AtlasDatabase) : WorkspaceAdapter(databa
     override val definition = ToolDefinition(
         "workspace_create", "Create and open a persistent composable workspace. Supply a complete definition when the requested UI is known. $AUTHORING_GUIDE",
         """{"type":"object","properties":{"name":{"type":"string","maxLength":120},"description":{"type":"string","maxLength":1000},"definition":{"type":"object"}},"required":["name"],"additionalProperties":false}""",
-        ToolRisk.SESSION_WRITE, maxCallsPerTurn = 2,
+        ToolRisk.SESSION_WRITE, maxCallsPerTurn = 4,
     )
     override fun evaluate(session: AtlasSession, proposal: ToolCallProposal) = ToolPolicyDecision(true, false, ToolRisk.SESSION_WRITE, "Creates a reversible local workspace")
     override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
@@ -66,6 +66,25 @@ private class CreateWorkspace(database: AtlasDatabase) : WorkspaceAdapter(databa
         val sequence = database.activateComposableWorkspace(session.id, workspace.id)
         return ToolExecutionResult(JSONObject().apply {
             put("ok", true); put("workspace_id", workspace.id); put("revision_id", workspace.liveRevisionId); put("navigation_sequence", sequence)
+        }.toString())
+    }
+}
+
+private class ValidateDefinition(database: AtlasDatabase) : WorkspaceAdapter(database) {
+    override val definition = ToolDefinition(
+        "workspace_validate_definition", "Validate and deterministically simulate a proposed workspace definition before creating or replacing it. Returns precise schema/test failures. $AUTHORING_GUIDE",
+        """{"type":"object","properties":{"definition":{"type":"object"}},"required":["definition"],"additionalProperties":false}""",
+        ToolRisk.READ_ONLY, maxCallsPerTurn = 6,
+    )
+    override fun evaluate(session: AtlasSession, proposal: ToolCallProposal) = ToolPolicyDecision(true, false, ToolRisk.READ_ONLY, "Pure bounded workspace validation")
+    override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
+        val proposed = JSONObject(call.argumentsJson).getJSONObject("definition")
+        val validation = WorkspaceDefinitionValidator.validate(proposed.toString())
+        val simulation = if (validation.valid && proposed.optString("format") == WorkspaceRuntimeV2.FORMAT) WorkspaceRuntimeV2.simulate(proposed) else null
+        return ToolExecutionResult(JSONObject().apply {
+            put("valid", validation.valid); put("errors", JSONArray(validation.errors)); put("format", proposed.optString("format"))
+            simulation?.let { put("simulation_passed", it.passed); put("tests_run", it.testsRun); put("test_failures", JSONArray(it.failures)) }
+            put("ready_to_apply", validation.valid && (simulation?.passed != false))
         }.toString())
     }
 }
@@ -92,7 +111,9 @@ private class InspectWorkspace(database: AtlasDatabase) : WorkspaceAdapter(datab
         }
         return ToolExecutionResult(JSONObject().apply {
             put("workspace_id", id); put("name", workspace.name); put("revision_id", revision.id)
-            put("definition", JSONObject(revision.definitionJson)); put("records", records)
+            val definition = JSONObject(revision.definitionJson)
+            put("definition", definition); put("records", records)
+            if (definition.optString("format") == WorkspaceRuntimeV2.FORMAT) put("runtime_state", database.loadWorkspaceRuntimeState(id, definition))
             put("navigation_sequence", session.workspaceNavigationSequence)
         }.toString())
     }

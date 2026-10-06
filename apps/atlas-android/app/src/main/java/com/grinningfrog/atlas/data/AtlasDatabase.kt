@@ -42,8 +42,11 @@ import com.grinningfrog.atlas.model.TurnStatus
 import com.grinningfrog.atlas.model.VisualObservation
 import com.grinningfrog.atlas.workspace.ComposableWorkspace
 import com.grinningfrog.atlas.workspace.WorkspaceDefinitionValidator
+import com.grinningfrog.atlas.workspace.WorkspaceExecutionResult
+import com.grinningfrog.atlas.workspace.WorkspaceMutation
 import com.grinningfrog.atlas.workspace.WorkspaceRecord
 import com.grinningfrog.atlas.workspace.WorkspaceRevision
+import com.grinningfrog.atlas.workspace.WorkspaceRuntimeV2
 import com.grinningfrog.atlas.workspace.WorkspaceStatus
 import org.json.JSONObject
 import org.json.JSONArray
@@ -701,9 +704,60 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     fun listWorkspaceRecords(workspaceId: String, collection: String? = null, limit: Int = 100): List<WorkspaceRecord> {
         val where = if (collection == null) "composable_workspace_id = ?" else "composable_workspace_id = ? AND collection_name = ?"
         val args = if (collection == null) arrayOf(workspaceId) else arrayOf(workspaceId, collection)
-        return readableDatabase.query("workspace_records", arrayOf("record_id","composable_workspace_id","collection_name","data_json","created_at","updated_at"), where, args, null, null, "updated_at DESC", limit.coerceIn(1, 200).toString()).use { cursor ->
+        return readableDatabase.query("workspace_records", arrayOf("record_id","composable_workspace_id","collection_name","data_json","created_at","updated_at"), where, args, null, null, "updated_at DESC, rowid DESC", limit.coerceIn(1, 5_000).toString()).use { cursor ->
             buildList { while (cursor.moveToNext()) add(WorkspaceRecord(cursor.getString(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getLong(5))) }
         }
+    }
+
+    fun loadWorkspaceRuntimeState(workspaceId: String, definition: JSONObject): JSONObject =
+        listWorkspaceRecords(workspaceId, "AtlasRuntimeState", 1).firstOrNull()?.let { runCatching { JSONObject(it.dataJson).getJSONObject("state") }.getOrNull() }
+            ?: WorkspaceRuntimeV2.initialState(definition)
+
+    @Synchronized
+    fun applyWorkspaceAction(workspaceId: String, definition: JSONObject, actionId: String, nowMs: Long = System.currentTimeMillis()): WorkspaceExecutionResult {
+        check(loadComposableWorkspace(workspaceId)?.status == WorkspaceStatus.ACTIVE) { "Workspace is not active" }
+        val current = loadWorkspaceRuntimeState(workspaceId, definition)
+        val records = mutableMapOf<String, MutableList<JSONObject>>()
+        definition.optJSONObject("collections")?.keys()?.forEach { collection ->
+            records[collection] = listWorkspaceRecords(workspaceId, collection, 5_000).map { JSONObject(it.dataJson) }.toMutableList()
+        }
+        val result = WorkspaceRuntimeV2.executeAction(definition, actionId, current, records)
+        writableDatabase.transaction {
+            result.mutations.filterIsInstance<WorkspaceMutation.InsertRecord>().groupingBy { it.collection }.eachCount().forEach { (collection, additions) ->
+                val existing = rawQuery("SELECT COUNT(*) FROM workspace_records WHERE composable_workspace_id = ? AND collection_name = ?", arrayOf(workspaceId, collection)).use { cursor ->
+                    cursor.moveToFirst(); cursor.getInt(0)
+                }
+                require(existing + additions <= 5_000) { "Collection $collection exceeds 5,000 records" }
+            }
+            result.mutations.filterIsInstance<WorkspaceMutation.InsertRecord>().forEach { mutation ->
+                insertOrThrow("workspace_records", null, ContentValues().apply {
+                    put("record_id", UUID.randomUUID().toString()); put("composable_workspace_id", workspaceId); put("collection_name", mutation.collection)
+                    put("data_json", mutation.data.toString()); put("created_at", nowMs); put("updated_at", nowMs)
+                })
+            }
+            insertOrThrow("workspace_records", null, ContentValues().apply {
+                put("record_id", UUID.randomUUID().toString()); put("composable_workspace_id", workspaceId); put("collection_name", "AtlasRuntimeState")
+                put("data_json", JSONObject().put("state", result.state).toString()); put("created_at", nowMs); put("updated_at", nowMs)
+            })
+            execSQL("DELETE FROM workspace_records WHERE record_id IN (SELECT record_id FROM workspace_records WHERE composable_workspace_id = ? AND collection_name = 'AtlasRuntimeState' ORDER BY updated_at DESC LIMIT -1 OFFSET 50)", arrayOf(workspaceId))
+        }
+        return result
+    }
+
+    @Synchronized
+    fun setWorkspaceStateValue(workspaceId: String, definition: JSONObject, key: String, value: Any?, nowMs: Long = System.currentTimeMillis()) {
+        val schema = definition.optJSONObject("state")?.optJSONObject(key) ?: error("Unknown state key: $key")
+        val normalized: Any = when (schema.getString("type")) {
+            "string", "enum" -> value?.toString().orEmpty()
+            "integer", "timestamp" -> value?.toString()?.toLongOrNull() ?: error("$key requires an integer")
+            "decimal" -> value?.toString()?.toDoubleOrNull() ?: error("$key requires a number")
+            "boolean" -> value as? Boolean ?: value?.toString()?.toBooleanStrictOrNull() ?: error("$key requires true or false")
+            else -> error("Unsupported state type")
+        }
+        if (schema.getString("type") == "enum") require((0 until schema.getJSONArray("values").length()).any { schema.getJSONArray("values").optString(it) == normalized }) { "Invalid value for $key" }
+        val state = loadWorkspaceRuntimeState(workspaceId, definition).put(key, normalized)
+        addWorkspaceRecord(workspaceId, "AtlasRuntimeState", JSONObject().put("state", state).toString(), nowMs)
+        writableDatabase.execSQL("DELETE FROM workspace_records WHERE record_id IN (SELECT record_id FROM workspace_records WHERE composable_workspace_id = ? AND collection_name = 'AtlasRuntimeState' ORDER BY updated_at DESC LIMIT -1 OFFSET 50)", arrayOf(workspaceId))
     }
 
     fun exportComposableWorkspace(workspaceId: String): JSONObject {
@@ -749,7 +803,9 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         JSONObject().apply {
             put("id", workspace.id); put("name", workspace.name); put("description", workspace.description)
             put("revisionId", revision.id); put("navigationSequence", sequence)
-            put("definition", JSONObject(revision.definitionJson)); put("recordCount", listWorkspaceRecords(id, limit = 200).size)
+            val definition = JSONObject(revision.definitionJson)
+            put("definition", definition); put("recordCount", listWorkspaceRecords(id, limit = 200).size)
+            if (definition.optString("format") == WorkspaceRuntimeV2.FORMAT) put("runtimeState", loadWorkspaceRuntimeState(id, definition))
         }.toString()
     }
 

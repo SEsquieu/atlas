@@ -231,6 +231,10 @@ private fun WorkspaceRenderer(
     modifier: Modifier,
 ) {
     val definition = remember(revision.id) { JSONObject(revision.definitionJson) }
+    if (definition.optString("format") == WorkspaceRuntimeV2.FORMAT) {
+        WorkspaceV2Renderer(workspace, definition, database, refresh, onChanged, modifier)
+        return
+    }
     val components = definition.optJSONArray("components") ?: JSONArray()
     LazyColumn(modifier.fillMaxWidth(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {

@@ -52,6 +52,8 @@ object WorkspaceDefinitionValidator {
     )
 
     fun validate(raw: String): WorkspaceValidationResult {
+        val parsed = runCatching { JSONObject(raw) }.getOrNull()
+        if (parsed?.optString("format") == WorkspaceRuntimeV2.FORMAT) return WorkspaceRuntimeV2.validate(parsed)
         val errors = mutableListOf<String>()
         if (raw.toByteArray().size > MAX_DEFINITION_BYTES) errors += "Definition exceeds 32 KiB"
         val root = runCatching { JSONObject(raw) }.getOrElse {
