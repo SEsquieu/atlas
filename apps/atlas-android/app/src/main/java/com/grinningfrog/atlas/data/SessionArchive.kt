@@ -10,19 +10,21 @@ import java.util.zip.ZipOutputStream
 
 class SessionArchive(
     private val context: Context,
-    private val database: AtlasDatabase,
+    val database: AtlasDatabase,
     private val mediaRepository: MediaRepository,
 ) {
     fun share(sessionId: String) {
         val directory = File(context.cacheDir, "exports").apply { mkdirs() }
         directory.listFiles()?.forEach { if (System.currentTimeMillis() - it.lastModified() > DAY_MS) it.delete() }
         val file = File(directory, "atlas-session-${sessionId.take(8)}.zip")
+        val snapshot = database.exportSession(sessionId).toString(2).toByteArray()
+        require(snapshot.size <= ArchiveCodec.MAX_BYTES) { "Session archive exceeds 32 MiB" }
         ZipOutputStream(file.outputStream().buffered()).use { zip ->
             zip.putNextEntry(ZipEntry("transcript.txt"))
             zip.write(database.exportTranscript(sessionId).toByteArray())
             zip.closeEntry()
             zip.putNextEntry(ZipEntry("session.json"))
-            zip.write(database.exportSession(sessionId).toString(2).toByteArray())
+            zip.write(snapshot)
             zip.closeEntry()
         }
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.exports", file)

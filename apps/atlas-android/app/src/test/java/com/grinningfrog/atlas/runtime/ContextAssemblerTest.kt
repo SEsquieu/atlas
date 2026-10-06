@@ -18,6 +18,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ContextAssemblerTest {
+    @Test fun oversizedCurrentTurnFailsWithRecoveryEvidence() {
+        val error = runCatching { ContextAssembler(ContextBudget(maxConversationCharacters = 10)).assemble(
+            session(), listOf(message(1, "turn", MessageRole.USER, "x".repeat(11))), emptyList(), null, null, 1)
+        }.exceptionOrNull()
+        assertTrue(error is IllegalArgumentException)
+        assertTrue(error!!.message!!.contains("transcript and memory remain saved"))
+    }
+
+    @Test fun omittedHistoryIsExplicitAndExpiredMemoryIsExcluded() {
+        val expired = memory(MemoryKind.TASK, "expired secret").copy(expiresAtMs = 9)
+        val context = ContextAssembler(ContextBudget(maxMessages = 1)).assemble(session(), listOf(
+            message(1, "old", MessageRole.USER, "old"), message(2, "new", MessageRole.USER, "new")),
+            listOf(expired), null, null, 10, archiveNotice = "Recovered paused session")
+        assertTrue(context.systemPrompt.contains("1 transcript messages are omitted"))
+        assertTrue(context.systemPrompt.contains("Recovered paused session"))
+        assertFalse(context.systemPrompt.contains("expired secret"))
+    }
+
     @Test fun reconstructsConversationSummaryAndAdmittedMemory() {
         val context = ContextAssembler().assemble(
             session = session(),
@@ -38,7 +56,7 @@ class ContextAssemblerTest {
     }
 
     @Test fun truncationKeepsToolProtocolOnWholeTurnBoundaries() {
-        val context = ContextAssembler(ContextBudget(maxConversationCharacters = 10_000, maxMessages = 2)).assemble(
+        val context = ContextAssembler(ContextBudget(maxConversationCharacters = 10_000, maxMessages = 4)).assemble(
             session = session(),
             messages = listOf(
                 message(1, "old", MessageRole.USER, "Old question"),

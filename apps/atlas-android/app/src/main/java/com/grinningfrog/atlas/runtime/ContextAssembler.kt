@@ -41,6 +41,7 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
         toolsAvailable: Boolean = true,
         pendingClarification: PendingClarification? = null,
         workspaceContextJson: String? = null,
+        archiveNotice: String? = null,
     ): AssembledContext {
         val eligible = messages.filter { it.kind != MessageKind.INTERNAL }
         val protocolSafe = sanitizeToolProtocol(eligible)
@@ -67,10 +68,14 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
                 appendLine("Reason: ${pendingClarification.reason}")
                 appendLine("Treat a short fragment as a possible answer. Call atlas_clarification with resolve, defer, or abandon. Until then, do not propose physical tools when blocking=true.")
             }
+            archiveNotice?.let { appendLine("RECOVERY NOTICE (Core-owned): $it") }
+            val omitted = eligible.size - selected.size
+            if (omitted > 0) appendLine("CONTEXT LIMIT: $omitted transcript messages are omitted from this request. A checkpoint is partial evidence, not full recall. Ask for missing details rather than inventing them.")
             if (summary != null) {
                 appendLine()
                 appendLine("CONVERSATION CHECKPOINT (derived from earlier turns):")
-                appendLine(summary.summary)
+                appendLine(summary.summary.take(8000))
+                if (summary.summary.length > 8000) appendLine("CHECKPOINT TRUNCATED at 8,000 characters; remaining summary is unavailable in this request.")
             }
             if (memoryBlock.isNotBlank()) {
                 appendLine()
@@ -114,6 +119,9 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
         }
         for (turn in turns.asReversed()) {
             val cost = turn.sumOf { it.content.length + (it.toolCallsJson?.length ?: 0) + (it.providerContextJson?.length ?: 0) }
+            require(selected.isNotEmpty() || (turn.size <= budget.maxMessages && cost <= budget.maxConversationCharacters)) {
+                "Context budget exceeded: latest turn has ${turn.size} messages and $cost characters (limits ${budget.maxMessages}/${budget.maxConversationCharacters}). Shorten the current request or start a new session; transcript and memory remain saved."
+            }
             if (selected.isNotEmpty() && (messageCount + turn.size > budget.maxMessages || characters + cost > budget.maxConversationCharacters)) break
             selected.addFirst(turn)
             messageCount += turn.size
@@ -169,14 +177,15 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
         var remaining = budget.maxMemoryCharacters
         return buildString {
             MemoryKind.entries.forEach kindLoop@ { kind ->
-                val items = memories.filter { it.kind == kind }
+                val items = memories.filter { it.kind == kind && it.status == com.grinningfrog.atlas.model.MemoryStatus.ACTIVE && (it.expiresAtMs == null || it.expiresAtMs > nowMs) }
                 if (items.isEmpty() || remaining <= 0) return@kindLoop
                 appendLine("${kind.name}:")
                 items.forEach itemLoop@ { item ->
                     if (remaining <= 0) return@itemLoop
                     val evidence = item.evidenceObservationId?.let { "; evidence=$it" }.orEmpty()
                     val expiry = item.expiresAtMs?.let { "; expiresInMs=${(it - nowMs).coerceAtLeast(0)}" }.orEmpty()
-                    val line = "- [${item.id}; confidence=${item.confidence}$evidence$expiry] ${item.content}".take(remaining)
+                    val line = "- [${item.id}; confidence=${item.confidence}$evidence$expiry] ${item.content}"
+                    if (line.length > remaining) { appendLine("[Memory omitted: budget exhausted; do not assume complete recall.]"); remaining = 0; return@itemLoop }
                     appendLine(line)
                     remaining -= line.length
                 }

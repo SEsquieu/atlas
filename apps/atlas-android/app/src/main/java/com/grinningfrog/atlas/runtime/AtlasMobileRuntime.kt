@@ -132,6 +132,22 @@ class AtlasMobileRuntime(
         publish(session = session.copy(activeComposableWorkspaceId = workspaceId, workspaceNavigationSequence = sequence))
     }
 
+    suspend fun openImportedSession(sessionId: String) {
+        cancelActiveTurn("opening imported session")
+        compactionJob?.cancel(); compactionJob = null
+        operations.withLock {
+            heartbeatJob?.cancel(); heartbeatJob = null
+            onLiveContextChanged(false); speech.stopSpeaking(); stopDevices()
+            mutableState.value.session?.takeIf { it.status != SessionStatus.DONE }?.let {
+                database.updateSessionStatus(it.id, SessionStatus.PAUSED)
+            }
+            val imported = requireNotNull(database.loadSession(sessionId)) { "Imported session is unavailable" }
+            database.updateSessionStatus(sessionId, SessionStatus.PAUSED)
+            publish(session = imported.copy(status = SessionStatus.PAUSED), observation = null, response = null,
+                error = null, phase = RuntimePhase.STOPPED, nextHeartbeatAt = null)
+        }
+    }
+
     suspend fun resumeSession() = operations.withLock {
         val session = requireSession()
         if (session.status == SessionStatus.DONE) throw IllegalStateException("Completed sessions cannot be resumed")
@@ -402,7 +418,7 @@ class AtlasMobileRuntime(
             val toolsAvailable = router.hasToolCapableRoute(capability, requiresVision = attachImage)
             val context = contextAssembler.assemble(
                 turnSession, messages, memories, summary, observation, System.currentTimeMillis(), toolsAvailable, pendingClarification,
-                database.workspaceContextForSession(session.id),
+                database.workspaceContextForSession(session.id), listOfNotNull(database.archiveContextNotice(session.id), database.contextHistoryNotice(session.id, summary?.throughMessageSequence ?: 0, messages.size)).joinToString("\n").takeIf { it.isNotBlank() },
             )
             val spoken = voice || turnSession.permissions.speakResponses
             val latestUserText = messages.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()

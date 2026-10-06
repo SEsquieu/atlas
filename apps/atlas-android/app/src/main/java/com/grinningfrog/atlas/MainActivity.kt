@@ -1576,7 +1576,8 @@ private fun EventsPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, s
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     Text("Session controls", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("Exports contain a readable transcript and the complete machine-readable Atlas state bundle. Provider credentials are never included.", style = MaterialTheme.typography.bodySmall)
+                    Text("Exports contain the transcript, session state and related live workspaces. Images, audio, revision history and credentials are excluded.", style = MaterialTheme.typography.bodySmall)
+                    com.grinningfrog.atlas.ui.ArchiveImportControl(archive.database, "session") { result -> runtime.openImportedSession(result.id) }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(enabled = snapshot.session != null, onClick = {
                             snapshot.session?.let { runCatching { archive.share(it.id) }.onFailure { error -> actionMessage = error.message } }

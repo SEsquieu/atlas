@@ -89,7 +89,7 @@ fun WorkspacePage(
     var pendingExport by remember { mutableStateOf<String?>(null) }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) runCatching {
-            context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(pendingExport.orEmpty()) }
+            requireNotNull(context.contentResolver.openOutputStream(uri)) { "Cannot open export destination" }.bufferedWriter().use { it.write(pendingExport.orEmpty()) }
         }.onFailure { error = it.message ?: it.javaClass.simpleName }
         pendingExport = null
     }
@@ -102,6 +102,7 @@ fun WorkspacePage(
 
     if (workspace == null || revision == null) {
         WorkspaceLibrary(
+            importControl = { com.grinningfrog.atlas.ui.ArchiveImportControl(database, "workspace") { result -> displayedId = result.id; refresh++ } },
             workspaces = workspaces,
             error = error,
             onOpen = { selected ->
@@ -152,6 +153,7 @@ fun WorkspacePage(
 
 @Composable
 private fun WorkspaceLibrary(
+    importControl: @Composable () -> Unit,
     workspaces: List<ComposableWorkspace>,
     error: String?,
     onOpen: (ComposableWorkspace) -> Unit,
@@ -181,6 +183,7 @@ private fun WorkspaceLibrary(
                     Text("Workspaces", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                     Text("Persistent tools and artifacts Atlas can build with you.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                importControl()
                 IconButton(onClick = { creating = !creating }) { Icon(Icons.Default.Add, "Create workspace") }
             }
         }

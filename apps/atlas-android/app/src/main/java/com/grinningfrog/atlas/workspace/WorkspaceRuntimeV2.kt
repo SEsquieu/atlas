@@ -366,6 +366,8 @@ object WorkspaceRuntimeV2 {
         require(valueMatchesType(value, schema.getString("type"), schema.optJSONArray("values"))) { "Value for $key does not match ${schema.getString("type")}" }
     }
 
+    fun validateRecord(root: JSONObject, collection: String, data: JSONObject) = requireRecord(root, collection, data)
+
     private fun requireRecord(root: JSONObject, collection: String, data: JSONObject) {
         val fields = root.getJSONObject("collections").getJSONObject(collection).getJSONObject("fields")
         data.keys().forEach { require(fields.has(it)) { "Unknown field: $collection.$it" } }
