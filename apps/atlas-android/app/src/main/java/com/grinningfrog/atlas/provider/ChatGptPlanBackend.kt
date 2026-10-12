@@ -97,7 +97,7 @@ class ChatGptPlanBackend(
                 var completed = false
                 val citations = linkedMapOf<String, ProviderCitation>()
                 val providerToolUses = mutableListOf<ProviderToolUse>()
-                if (hostedSearchUnavailable) providerToolUses += ProviderToolUse("web_search", status = "unsupported")
+                if (hostedSearchUnavailable) providerToolUses += ProviderToolUse("web_search", status = "unsupported", readOnlyResearch = true)
                 try {
                     while (true) {
                         val line = source.readUtf8Line() ?: break
@@ -184,7 +184,7 @@ class ChatGptPlanBackend(
                 emit(InferenceStreamEvent.Completed(InferenceResponse(request.requestId, endpoint.id, finalText, elapsedMs(started),
                     selectedModel = model ?: endpoint.model, toolCalls = proposals, finishReason = "completed", providerContinuationId = responseId,
                     firstTokenLatencyMs = firstTokenMs, promptTokens = inputTokens, completionTokens = outputTokens, totalTokens = totalTokens,
-                    citations = citations.values.toList(), providerToolUses = providerToolUses.distinct())))
+                    citations = citations.values.toList(), providerToolUses = coalesceResearchUses(providerToolUses))))
             } } finally { invalidation.close() }
             return@flow
         }
@@ -196,6 +196,7 @@ class ChatGptPlanBackend(
         put("stream", true)
         put("instructions", request.systemPrompt)
         put("input", input(request))
+        if (includeHostedSearch) put("include", JSONArray().put("web_search_call.action.sources"))
         put("tools", JSONArray().apply {
             if (includeHostedSearch) put(JSONObject().put("type", "web_search"))
             if (request.tools.isNotEmpty()) put(JSONObject().apply {
@@ -247,9 +248,28 @@ class ChatGptPlanBackend(
                 for (index in 0 until values.length()) values.optString(index)
                     .takeIf { it.startsWith("https://") || it.startsWith("http://") }?.let(::add)
             }
+            action?.optJSONArray("sources")?.let { sources ->
+                for (index in 0 until sources.length()) sources.optJSONObject(index)?.optString("url")
+                    ?.takeIf { it.startsWith("https://") || it.startsWith("http://") }?.let(::add)
+            }
         }
         return ProviderToolUse("web_search", action?.optString("type")?.takeIf(String::isNotBlank),
-            item.optString("status").takeIf(String::isNotBlank), queries.distinct(), urls.distinct())
+            item.optString("status").takeIf(String::isNotBlank), queries.distinct(), urls.distinct(),
+            readOnlyResearch = true, id = item.optString("id").takeIf(String::isNotBlank))
+    }
+
+    private fun coalesceResearchUses(uses: List<ProviderToolUse>): List<ProviderToolUse> {
+        val result = mutableListOf<ProviderToolUse>()
+        uses.forEach { use ->
+            val index = use.id?.let { id -> result.indexOfFirst { it.id == id } } ?: -1
+            if (index < 0) { if (use !in result) result += use }
+            else {
+                val prior = result[index]
+                result[index] = use.copy(status = use.status ?: prior.status,
+                    queries = (prior.queries + use.queries).distinct(), urls = (prior.urls + use.urls).distinct())
+            }
+        }
+        return result
     }
 
     private fun appendSources(text: String, citations: List<ProviderCitation>): String {

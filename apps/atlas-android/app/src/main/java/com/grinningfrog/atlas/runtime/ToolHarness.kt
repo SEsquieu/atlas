@@ -146,13 +146,15 @@ class ToolHarness(
         }
         if (call.name == CapabilityDiscovery.TOOL) return discovery.record(call, arguments)
         val adapter = additionalTools.firstOrNull { it.definition.name == call.name }
-        if (researching && adapter != null) {
+        val trustedResearch = adapter?.supportsCapabilityDiscovery == true && adapter.definition.risk == ToolRisk.READ_ONLY
+        if (trustedResearch) {
+            val researchAdapter = requireNotNull(adapter)
             val session = requireNotNull(database.loadSession(call.sessionId)) { "Session is unavailable" }
-            val policy = adapter.evaluate(session, ToolCallProposal(call.id, call.name, call.argumentsJson))
+            val policy = researchAdapter.evaluate(session, ToolCallProposal(call.id, call.name, call.argumentsJson))
             require(policy.allowed && policy.risk == ToolRisk.READ_ONLY && !policy.requiresConfirmation) { "Discovery research is unavailable under the current permissions" }
             discovery.searchAttempt(call)
             try {
-                val result = adapter.execute(call)
+                val result = researchAdapter.execute(call)
                 discovery.searchResult(call, result.resultJson)
                 return result
             } catch (error: Exception) {

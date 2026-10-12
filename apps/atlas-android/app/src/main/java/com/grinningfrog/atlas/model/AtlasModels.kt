@@ -192,6 +192,9 @@ data class ProviderToolUse(
     val status: String? = null,
     val queries: List<String> = emptyList(),
     val urls: List<String> = emptyList(),
+    /** Set only by a trusted backend normalizer for an executed read-only research mechanism. */
+    val readOnlyResearch: Boolean = false,
+    val id: String? = null,
 )
 
 data class AtlasToolCall(

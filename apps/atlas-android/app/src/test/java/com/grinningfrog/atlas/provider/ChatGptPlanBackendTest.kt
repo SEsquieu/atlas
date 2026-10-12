@@ -29,9 +29,32 @@ class ChatGptPlanBackendTest {
         assertFalse(json.getBoolean("store")); assertTrue(json.getBoolean("stream"))
         assertFalse(json.has("temperature")); assertFalse(json.has("max_output_tokens")); assertFalse(json.has("previous_response_id"))
         assertEquals("web_search", json.getJSONArray("tools").getJSONObject(0).getString("type"))
+        assertEquals("web_search_call.action.sources", json.getJSONArray("include").getString(0))
         val namespace = json.getJSONArray("tools").getJSONObject(1)
         assertEquals("namespace", namespace.getString("type")); assertEquals("atlas", namespace.getString("name"))
         assertEquals("function", namespace.getJSONArray("tools").getJSONObject(0).getString("type"))
+    }
+
+    @Test fun researchSourcesAreRetainedWithoutInlineCitationsAndDeduplicatedAcrossStreamEvents() = runTest {
+        val server = MockWebServer()
+        val done = """{"id":"research-1","type":"web_search_call","status":"completed","action":{"type":"search","query":"converter documentation"}}"""
+        val withSources = """{"id":"research-1","type":"web_search_call","status":"completed","action":{"type":"search","query":"converter documentation","sources":[{"type":"url","url":"https://example.org/docs"}]}}"""
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+            "data: {\"type\":\"response.output_item.done\",\"item\":$done}\n\n" +
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"response-sources\",\"output\":[$withSources]}}\n\n"))
+        server.start()
+        try {
+            val backend = ChatGptPlanBackend(ChatGptTokenProvider { _ -> "token" }, responsesUrl = server.url("/v1/responses").toString())
+            val completed = backend.stream(endpoint(server.url("/v1").toString()), null, request()).toList()
+                .filterIsInstance<InferenceStreamEvent.Completed>().single().response
+            assertTrue(completed.citations.isEmpty())
+            val research = completed.providerToolUses.single()
+            assertTrue(research.readOnlyResearch)
+            assertEquals("research-1", research.id)
+            assertEquals(listOf("https://example.org/docs"), research.urls)
+            assertEquals("web_search_call.action.sources", JSONObject(server.takeRequest().body.readUtf8()).getJSONArray("include").getString(0))
+            assertFalse(backend.requestJson(endpoint(), request(), includeHostedSearch = false).has("include"))
+        } finally { server.shutdown() }
     }
 
     @Test fun hostedSearchIsNormalizedWithVisibleSources() = runTest {

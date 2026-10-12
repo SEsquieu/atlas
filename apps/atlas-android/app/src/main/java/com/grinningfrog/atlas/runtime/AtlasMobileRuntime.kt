@@ -487,6 +487,7 @@ class AtlasMobileRuntime(
                 put("text", response.text); put("toolCallCount", response.toolCalls.size)
                 put("providerToolUses", org.json.JSONArray(response.providerToolUses.map { use -> JSONObject().apply {
                     put("type", use.type); put("action", use.action); put("status", use.status)
+                    put("readOnlyResearch", use.readOnlyResearch); put("id", use.id)
                     put("queries", org.json.JSONArray(use.queries))
                     put("urls", org.json.JSONArray(use.urls))
                 } }))
@@ -893,6 +894,7 @@ class AtlasMobileRuntime(
         return JSONObject().apply {
             put("providerToolUses", org.json.JSONArray(response.providerToolUses.map { use -> JSONObject().apply {
                 put("type", use.type); put("action", use.action); put("status", use.status)
+                    put("readOnlyResearch", use.readOnlyResearch); put("id", use.id)
                 put("queries", org.json.JSONArray(use.queries)); put("urls", org.json.JSONArray(use.urls))
             } }))
             put("citations", org.json.JSONArray(response.citations.map { citation -> JSONObject()
