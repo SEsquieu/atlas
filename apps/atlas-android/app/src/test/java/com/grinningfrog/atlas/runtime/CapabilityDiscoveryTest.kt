@@ -125,7 +125,9 @@ class CapabilityDiscoveryTest {
     @Test fun streamedResearchSourcesReachCoreCandidateValidationEndToEnd() = runTest {
         val server = MockWebServer()
         server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
-            """data: {"type":"response.completed","response":{"id":"proof-response","output":[{"id":"proof-search","type":"web_search_call","status":"completed","action":{"type":"search","query":"format conversion documentation","sources":[{"type":"url","url":"https://example.org/docs"}]}}]}}
+            """data: {"type":"response.output_text.delta","delta":"Found public format documentation."}
+
+data: {"type":"response.completed","response":{"id":"proof-response","output":[{"id":"proof-search","type":"web_search_call","status":"completed","action":{"type":"search","query":"format conversion documentation","sources":[{"type":"url","url":"https://example.org/docs"}]}}]}}
 
 """))
         server.start()
@@ -189,7 +191,7 @@ class CapabilityDiscoveryTest {
         val h = harness(adapter("web_search", ToolRisk.READ_ONLY, true), adapter("mutate", ToolRisk.SESSION_WRITE))
         val root = JSONObject(h.execute(call(CapabilityDiscovery.TOOL, blocked)).resultJson)
         val childArgs = JSONObject().put("stage", "blocked").put("objective", "Obtain access to a format converter")
-            .put("missing_capability", "Locate an accessible converter").put("parent_blocker_id", root.getString("blocker_id"))
+            .put("missing_capability", "Format conversion").put("parent_blocker_id", root.getString("blocker_id"))
         val child = JSONObject(h.execute(call(CapabilityDiscovery.TOOL, childArgs.toString())).resultJson)
         val grandchild = JSONObject(h.execute(call(CapabilityDiscovery.TOOL, JSONObject().put("stage", "blocked")
             .put("objective", "Find converter documentation").put("missing_capability", "Document lookup").toString())).resultJson)
