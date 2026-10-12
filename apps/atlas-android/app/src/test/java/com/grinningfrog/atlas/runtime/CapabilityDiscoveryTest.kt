@@ -94,7 +94,7 @@ class CapabilityDiscoveryTest {
         h.execute(call(CapabilityDiscovery.TOOL, blocked))
         CapabilityDiscovery(db).hostedResearch(session.id, turn.id, InferenceResponse("request", "provider", "", 1,
             citations = listOf(ProviderCitation("Docs", "https://example.org/docs")),
-            providerToolUses = listOf(ProviderToolUse("web_search", status = "completed", queries = listOf("conversion documentation"), readOnlyResearch = true)))))
+            providerToolUses = listOf(ProviderToolUse("web_search", status = "completed", queries = listOf("conversion documentation"), readOnlyResearch = true))))
         h.execute(call(CapabilityDiscovery.TOOL, candidate))
         val attempt = db.loadRecentEvents(session.id).last { it.type == "capability.search_attempted" }
         assertTrue(JSONObject(attempt.dataJson).getBoolean("observed_after_response"))
