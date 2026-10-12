@@ -1185,7 +1185,6 @@ class AtlasMobileRuntime(
         Goal: ${session.goal.ifBlank { "Help the user with their present physical context." }}
         Be concise for speech. Never claim an observation is current beyond the supplied timing metadata.
         Do not invent tool results or imply an external action occurred.
-        ${CapabilityDiscovery.instructions}
         When describing capabilities, name only tools actually supplied on this request. Do not invent
         parallel-call wrappers, orchestration helpers, browsers, or provider tools that were not declared.
     """.trimIndent()

@@ -18,6 +18,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ContextAssemblerTest {
+    @Test fun discoveryPolicyIsSuppliedOnlyWhenCoreToolsAreAvailable() {
+        val available = ContextAssembler().assemble(session(), emptyList(), emptyList(), null, null, 1, toolsAvailable = true)
+        val unavailable = ContextAssembler().assemble(session(), emptyList(), emptyList(), null, null, 1, toolsAvailable = false)
+        assertTrue(available.systemPrompt.contains("Discovery is read-only"))
+        assertTrue(available.systemPrompt.contains("atlas_capability_discovery"))
+        assertFalse(unavailable.systemPrompt.contains("atlas_capability_discovery"))
+    }
+
     @Test fun oversizedCurrentTurnFailsWithRecoveryEvidence() {
         val error = runCatching { ContextAssembler(ContextBudget(maxConversationCharacters = 10)).assemble(
             session(), listOf(message(1, "turn", MessageRole.USER, "x".repeat(11))), emptyList(), null, null, 1)
