@@ -12,10 +12,10 @@ android {
         applicationId = "com.grinningfrog.atlas"
         minSdk = 28
         targetSdk = 35
-        versionCode = providers.environmentVariable("ATLAS_ANDROID_VERSION_CODE").orElse("9").get().toInt().also {
+        versionCode = providers.environmentVariable("ATLAS_ANDROID_VERSION_CODE").orElse("10").get().toInt().also {
             require(it in 1..2_100_000_000) { "ATLAS_ANDROID_VERSION_CODE is outside Android limits" }
         }
-        versionName = "0.1.0-alpha.6"
+        versionName = "0.1.0-alpha.7"
 
         vectorDrawables.useSupportLibrary = true
         buildConfigField("String", "ATLAS_GATEWAY_URL", "\"${providers.gradleProperty("ATLAS_GATEWAY_URL").orElse("").get()}\"")

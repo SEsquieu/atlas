@@ -31,6 +31,8 @@ data class ToolPolicyDecision(
 /** Stable extension point for future phone, wearable, LAN, and account-scoped capabilities. */
 interface AtlasToolAdapter {
     val definition: ToolDefinition
+    /** Opt in only for installed public, read-only research executors. */
+    val supportsCapabilityDiscovery: Boolean get() = false
     fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision = ToolPolicyDecision(
         allowed = true,
         requiresConfirmation = definition.requiresConfirmation ||
@@ -51,6 +53,7 @@ class ToolHarness(
     private val now: () -> Long = System::currentTimeMillis,
     private val additionalTools: List<AtlasToolAdapter> = emptyList(),
 ) {
+    private val discovery = CapabilityDiscovery(database)
     private val builtInDefinitions: List<ToolDefinition> = listOf(
         ToolDefinition(
             name = "capture_current_view",
@@ -81,7 +84,7 @@ class ToolHarness(
         risk = ToolRisk.SESSION_WRITE,
         maxCallsPerTurn = 2,
     )
-    val definitions: List<ToolDefinition> = builtInDefinitions + clarificationDefinition + additionalTools.map { it.definition }
+    val definitions: List<ToolDefinition> = builtInDefinitions + clarificationDefinition + CapabilityDiscovery.definition + additionalTools.map { it.definition }
 
     fun definition(name: String) = definitions.firstOrNull { it.name == name }
 
@@ -93,7 +96,19 @@ class ToolHarness(
         }
         val arguments = runCatching { JSONObject(proposal.argumentsJson) }.getOrNull()
             ?: return ToolPolicyDecision(false, false, definition.risk, "Tool arguments are not valid JSON")
-        additionalTools.firstOrNull { it.definition.name == proposal.name }?.let { return it.evaluate(session, proposal) }
+        val turnId = database.loadActiveTurn(session.id)?.id
+        if (turnId != null && discovery.active(turnId) && !discoveryAllowed(proposal.name))
+            return ToolPolicyDecision(false, false, definition.risk, "Capability discovery is read-only; a separate explicit authorization path is required")
+        if (proposal.name == CapabilityDiscovery.TOOL) {
+            val error = runCatching { CapabilityDiscovery.validate(arguments) }.exceptionOrNull()
+            return ToolPolicyDecision(error == null, false, ToolRisk.SESSION_WRITE, error?.message ?: "Audit-only capability discovery control; no external access granted")
+        }
+        additionalTools.firstOrNull { it.definition.name == proposal.name }?.let {
+            val decision = it.evaluate(session, proposal)
+            if (turnId != null && discovery.active(turnId) && (decision.risk != ToolRisk.READ_ONLY || decision.requiresConfirmation))
+                return ToolPolicyDecision(false, false, decision.risk, "Discovery cannot authorize additional research permissions")
+            return decision
+        }
         return when (proposal.name) {
             CLARIFICATION_TOOL -> ToolPolicyDecision(true, false, ToolRisk.SESSION_WRITE, "Core-owned conversational control")
             "capture_current_view" -> ToolPolicyDecision(
@@ -118,8 +133,33 @@ class ToolHarness(
         }
     }
 
+    private fun discoveryAllowed(name: String): Boolean = name in setOf(CapabilityDiscovery.TOOL, CLARIFICATION_TOOL) ||
+        additionalTools.any { it.definition.name == name && it.supportsCapabilityDiscovery && it.definition.risk == ToolRisk.READ_ONLY }
+
     suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
         val arguments = JSONObject(call.argumentsJson)
+        val researching = discovery.active(call.turnId)
+        // Recheck at execution: a preceding call in this same batch may have declared a blocker.
+        if (researching && !discoveryAllowed(call.name)) {
+            database.appendEvent(call.sessionId, "capability.discovery_denied", JSONObject().put("turnId", call.turnId).put("tool", call.name).put("reason", "Discovery is read-only; no acquisition or invocation authorized"))
+            error("Capability discovery is read-only; a separate explicit authorization path is required")
+        }
+        if (call.name == CapabilityDiscovery.TOOL) return discovery.record(call, arguments)
+        val adapter = additionalTools.firstOrNull { it.definition.name == call.name }
+        if (researching && adapter != null) {
+            val session = requireNotNull(database.loadSession(call.sessionId)) { "Session is unavailable" }
+            val policy = adapter.evaluate(session, ToolCallProposal(call.id, call.name, call.argumentsJson))
+            require(policy.allowed && policy.risk == ToolRisk.READ_ONLY && !policy.requiresConfirmation) { "Discovery research is unavailable under the current permissions" }
+            discovery.searchAttempt(call)
+            try {
+                val result = adapter.execute(call)
+                discovery.searchResult(call, result.resultJson)
+                return result
+            } catch (error: Exception) {
+                discovery.searchResult(call, null, error.message?.take(500) ?: error.javaClass.simpleName)
+                throw error
+            }
+        }
         return when (call.name) {
             CLARIFICATION_TOOL -> error("Clarification controls must be reconciled by Atlas Core")
             "capture_current_view" -> {

@@ -92,6 +92,7 @@ class AtlasMobileRuntime(
     private var lateTurnId: String? = null
     private var devicesStarted = false
     private val contextAssembler = ContextAssembler()
+    private val capabilityDiscovery = CapabilityDiscovery(database)
     private val toolHarness by lazy {
         ToolHarness(
             database = database,
@@ -431,7 +432,7 @@ class AtlasMobileRuntime(
                 turnId = turnId,
                 step = step,
                 capability = capability,
-                systemPrompt = context.systemPrompt + "\n\nCORE EXECUTION EVIDENCE (authoritative facts, not instructions):\n" +
+                systemPrompt = context.systemPrompt + "\n\n" + capabilityDiscovery.context(turnId).orEmpty() + "\n\nCORE EXECUTION EVIDENCE (authoritative facts, not instructions):\n" +
                     org.json.JSONArray(database.loadRecentTurns(session.id).map { database.turnDiagnostics(it).json(System.currentTimeMillis()) }).toString() +
                     "\nAnswer failure questions from this evidence. A committed revision survives a failed final reply. Never deny recorded tool attempts. Late tool proposals are not executed.\n" +
                     (if (spoken) ResponsePolicy.instructions(responseContract) else ""),
@@ -492,6 +493,7 @@ class AtlasMobileRuntime(
                 put("citations", org.json.JSONArray(response.citations.map { citation -> JSONObject()
                     .put("title", citation.title).put("url", citation.url) }))
             })
+            capabilityDiscovery.hostedResearch(session.id, turnId, response)
             require(response.toolCalls.map { it.id }.distinct().size == response.toolCalls.size) {
                 "Provider returned duplicate tool-call ids in one response"
             }
@@ -1183,6 +1185,7 @@ class AtlasMobileRuntime(
         Goal: ${session.goal.ifBlank { "Help the user with their present physical context." }}
         Be concise for speech. Never claim an observation is current beyond the supplied timing metadata.
         Do not invent tool results or imply an external action occurred.
+        ${CapabilityDiscovery.instructions}
         When describing capabilities, name only tools actually supplied on this request. Do not invent
         parallel-call wrappers, orchestration helpers, browsers, or provider tools that were not declared.
     """.trimIndent()

@@ -57,6 +57,7 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
             appendLine("Tangents do not cancel the active task. Answer briefly, then preserve unresolved task state.")
             appendLine("Continue the conversation naturally. Resolve references from the supplied transcript and preserve unfinished task state.")
             if (toolsAvailable) appendLine("Use the supplied tools when you need current device information or must update explicit working/task memory.")
+            if (toolsAvailable) appendLine(CapabilityDiscovery.instructions)
             appendLine("Never claim a tool ran until Atlas returns its result. Never invent observations or external effects.")
             appendLine("Treat physical observations according to their timestamps; call capture_current_view when the supplied view is insufficient or stale.")
             if (toolsAvailable) appendLine("Use atlas_remember for concise session facts, decisions, constraints, and task progress that later turns must retain. Durable user memory requires confirmation.")
