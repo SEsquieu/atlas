@@ -28,7 +28,7 @@ Candidate source URLs must have appeared in this turn's successful recorded rese
 
 ## Recursive blockers
 
-An unavailable capability is not automatically terminal: researching how it might be obtained can expose a child blocker and another research step. `stage=blocked` returns `blocker_id`, `parent_blocker_id` and `root_objective`. A subsequent blocker can supply `parent_blocker_id`; if omitted, the latest blocker becomes its parent. Candidate and no-candidate controls can specify `blocker_id`, otherwise they target the latest blocker. Logs retain node depth and the original objective. Repeated ancestor dependencies and existing step/tool budgets bound recursion. No budget is enlarged, and no dependency node grants access or invokes a candidate.
+An unavailable capability is not automatically terminal: researching how it might be obtained can expose a child blocker and another research step. `stage=blocked` returns `blocker_id`, `parent_blocker_id` and `root_objective`. A subsequent blocker can supply `parent_blocker_id`; if omitted, the latest blocker becomes its parent. Candidate and no-candidate controls can specify `blocker_id`, otherwise they target the latest blocker. Logs retain node depth and the original objective. A child may research access to the same missing capability under a new objective. Repeating an ancestor's objective/capability pair, and existing step/tool budgets, bound recursion. No budget is enlarged, and no dependency node grants access or invokes a candidate.
 
 ## Execution boundary
 
