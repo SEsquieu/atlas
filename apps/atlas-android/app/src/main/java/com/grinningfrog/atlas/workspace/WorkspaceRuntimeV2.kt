@@ -17,7 +17,7 @@ object WorkspaceRuntimeV2 {
     private val identifier = Regex("[A-Za-z][A-Za-z0-9_-]{0,63}")
     private val stateTypes = setOf("string", "integer", "decimal", "boolean", "timestamp", "enum")
     private val componentTypes = setOf("text", "status", "metric", "button", "input", "toggle", "list", "section", "row", "grid", "divider", "progress")
-    private val stepTypes = setOf("set", "increment", "toggle", "insert", "navigate", "sequence", "branch", "stop")
+    private val stepTypes = setOf("set", "increment", "toggle", "insert", "update_record", "toggle_record", "navigate", "sequence", "branch", "stop")
     private val expressionOps = setOf("eq", "ne", "gt", "gte", "lt", "lte", "and", "or", "not", "add", "subtract", "multiply", "divide", "concat", "if", "count")
 
     fun validate(root: JSONObject): WorkspaceValidationResult {
@@ -103,6 +103,22 @@ object WorkspaceRuntimeV2 {
                     else if (!valueMatchesType(fixture.opt(key), field.optString("type"), field.optJSONArray("values"))) errors += "tests[$i].initial_state.$key has the wrong type"
                 }
             }
+            test?.optJSONObject("initial_records")?.let { fixture ->
+                fixture.keys().forEach { collection ->
+                    val rows = fixture.optJSONArray(collection)
+                    if (rows == null || rows.length() > 500) errors += "tests[$i].initial_records.$collection must be an array of at most 500 records"
+                    else {
+                        val ids = mutableSetOf<String>()
+                        for (j in 0 until rows.length()) {
+                            val row = rows.optJSONObject(j)
+                            val id = row?.optString("_id").orEmpty()
+                            if (id.isBlank() || !ids.add(id)) errors += "tests[$i].initial_records.$collection[$j] requires a unique _id"
+                            runCatching { requireRecord(root, collection, JSONObject(row.toString()).apply { remove("_id") }) }
+                                .onFailure { errors += "tests[$i].initial_records.$collection[$j]: ${it.message}" }
+                        }
+                    }
+                }
+            }
             if (test?.has("assert") != true) errors += "tests[$i].assert is required"
             test?.opt("assert")?.let { validateExpression(it, "tests[$i].assert", state, collections, errors, 0) }
         }
@@ -143,7 +159,7 @@ object WorkspaceRuntimeV2 {
         return WorkspaceStateMigration(migrated, added, reset, removed)
     }
 
-    fun evaluate(expression: Any?, state: JSONObject, records: Map<String, List<JSONObject>> = emptyMap(), depth: Int = 0): Any? {
+    fun evaluate(expression: Any?, state: JSONObject, records: Map<String, List<JSONObject>> = emptyMap(), depth: Int = 0, row: JSONObject? = null): Any? {
         require(depth <= MAX_EXPRESSION_DEPTH) { "Expression depth exceeded" }
         if (expression == null || expression == JSONObject.NULL || expression !is JSONObject) return expression
         expression.optString("var").takeIf(String::isNotBlank)?.let { path ->
@@ -154,12 +170,17 @@ object WorkspaceRuntimeV2 {
                     state.opt(key)
                 }
                 path.startsWith("count.") -> records[path.removePrefix("count.")]?.size ?: 0
-                else -> null
+                path.startsWith("row.") -> {
+                    val key = path.removePrefix("row.").let { if (it == "id") "_id" else it }
+                    if (row == null || !row.has(key)) throw WorkspaceRuntimeException("Missing row value: $path")
+                    row.opt(key)
+                }
+                else -> throw WorkspaceRuntimeException("Unknown variable: $path")
             }
         }
         val op = expression.optString("op")
         val args = expression.optJSONArray("args") ?: JSONArray()
-        fun arg(index: Int) = evaluate(args.opt(index), state, records, depth + 1)
+        fun arg(index: Int) = evaluate(args.opt(index), state, records, depth + 1, row)
         fun number(value: Any?) = (value as? Number)?.toDouble()
             ?: value?.toString()?.toDoubleOrNull()
             ?: throw WorkspaceRuntimeException("Expected a numeric value")
@@ -187,13 +208,18 @@ object WorkspaceRuntimeV2 {
         }
     }
 
-    fun executeAction(root: JSONObject, actionId: String, state: JSONObject, records: MutableMap<String, MutableList<JSONObject>> = mutableMapOf()): WorkspaceExecutionResult {
+    fun executeAction(root: JSONObject, actionId: String, state: JSONObject, records: MutableMap<String, MutableList<JSONObject>> = mutableMapOf(), rowCollection: String? = null, rowId: String? = null): WorkspaceExecutionResult {
         val validation = validate(root)
         require(validation.valid) { validation.errors.joinToString("; ") }
         val action = root.getJSONObject("actions").optJSONObject(actionId) ?: error("Unknown action: $actionId")
         val next = migrateState(root, state).state
         val workingRecords = records.mapValuesTo(mutableMapOf()) { (_, rows) -> rows.mapTo(mutableListOf()) { JSONObject(it.toString()) } }
-        if (action.has("enabled_if") && !truth(evaluate(action.opt("enabled_if"), next, workingRecords))) {
+        val row = if (rowId == null) null else {
+            workingRecords[rowCollection]?.singleOrNull { it.optString("_id") == rowId }
+                ?: throw WorkspaceRuntimeException("Selected record is unavailable")
+        }
+        fun eval(value: Any?) = evaluate(value, next, workingRecords, row = row)
+        if (action.has("enabled_if") && !truth(eval(action.opt("enabled_if")))) {
             throw WorkspaceActionRejected(action.optString("disabled_message", "That action is not available right now."))
         }
         val mutations = mutableListOf<WorkspaceMutation>()
@@ -207,14 +233,14 @@ object WorkspaceRuntimeV2 {
                 val step = source.getJSONObject(i)
                 when (step.getString("type")) {
                     "set" -> {
-                        val key = step.getString("key"); val value = evaluate(step.opt("value"), next, workingRecords)
+                        val key = step.getString("key"); val value = eval(step.opt("value"))
                         requireStateValue(root, key, value)
                         next.put(key, value); mutations += WorkspaceMutation.SetState(key, value)
                     }
                     "increment" -> {
                         val key = step.getString("key")
                         val current = (next.opt(key) as? Number)?.toDouble() ?: throw WorkspaceRuntimeException("State $key is not numeric")
-                        val deltaValue = if (step.has("by")) evaluate(step.opt("by"), next, workingRecords) else 1
+                        val deltaValue = if (step.has("by")) eval(step.opt("by")) else 1
                         val delta = (deltaValue as? Number)?.toDouble() ?: deltaValue?.toString()?.toDoubleOrNull() ?: throw WorkspaceRuntimeException("Increment for $key is not numeric")
                         val value = current + delta
                         if (!value.isFinite()) throw WorkspaceRuntimeException("Increment for $key produced a non-finite number")
@@ -226,9 +252,29 @@ object WorkspaceRuntimeV2 {
                     "insert" -> {
                         val collection = step.getString("collection"); val data = JSONObject()
                         val sourceData = step.getJSONObject("data")
-                        sourceData.keys().forEach { key -> data.put(key, evaluate(sourceData.opt(key), next, workingRecords)) }
+                        sourceData.keys().forEach { key -> data.put(key, eval(sourceData.opt(key))) }
                         requireRecord(root, collection, data)
                         workingRecords.getOrPut(collection) { mutableListOf() }.add(data); mutations += WorkspaceMutation.InsertRecord(collection, data)
+                    }
+                    "update_record", "toggle_record" -> {
+                        val collection = step.getString("collection")
+                        val recordId = eval(step.opt("record_id")) as? String ?: throw WorkspaceRuntimeException("record_id must be a string")
+                        val target = workingRecords[collection]?.singleOrNull { it.optString("_id") == recordId }
+                            ?: throw WorkspaceRuntimeException("Record is unavailable in $collection: $recordId")
+                        val data = JSONObject(target.toString()).apply { remove("_id") }
+                        if (step.getString("type") == "toggle_record") {
+                            val field = step.getString("field")
+                            val previous = data.opt(field) as? Boolean ?: throw WorkspaceRuntimeException("$collection.$field is not boolean")
+                            data.put(field, !previous)
+                        } else {
+                            val patch = step.getJSONObject("data")
+                            require(patch.length() > 0) { "Record update requires at least one field" }
+                            patch.keys().forEach { key -> data.put(key, eval(patch.opt(key))) }
+                        }
+                        requireRecord(root, collection, data)
+                        require(data.toString().toByteArray().size <= 32 * 1024) { "Record exceeds 32 KiB" }
+                        data.keys().forEach { key -> target.put(key, data.opt(key)) }
+                        mutations += WorkspaceMutation.UpdateRecord(collection, recordId, data)
                     }
                     "navigate" -> {
                         val view = step.getString("view")
@@ -236,7 +282,7 @@ object WorkspaceRuntimeV2 {
                         next.put("_view", view); mutations += WorkspaceMutation.Navigate(view)
                     }
                     "sequence" -> run(step.optJSONArray("steps") ?: JSONArray(), depth + 1)
-                    "branch" -> run(if (truth(evaluate(step.opt("if"), next, workingRecords))) step.optJSONArray("then") ?: JSONArray() else step.optJSONArray("else") ?: JSONArray(), depth + 1)
+                    "branch" -> run(if (truth(eval(step.opt("if")))) step.optJSONArray("then") ?: JSONArray() else step.optJSONArray("else") ?: JSONArray(), depth + 1)
                     "stop" -> stopped = true
                 }
             }
@@ -245,11 +291,21 @@ object WorkspaceRuntimeV2 {
         val invariants = root.optJSONArray("invariants") ?: JSONArray()
         for (i in 0 until invariants.length()) {
             val invariant = invariants.getJSONObject(i)
-            if (!truth(evaluate(invariant.opt("assert"), next, workingRecords))) {
+            if (!truth(eval(invariant.opt("assert")))) {
                 throw WorkspaceRuntimeException(invariant.optString("message", "Workspace invariant ${invariant.optString("name", "#$i")} failed"))
             }
         }
         return WorkspaceExecutionResult(next, mutations)
+    }
+
+    /** A conversational patch uses the same interpreter, type checks and invariants as a UI action. */
+    fun executeRecordUpdate(root: JSONObject, state: JSONObject, records: MutableMap<String, MutableList<JSONObject>>, collection: String, recordId: String, data: JSONObject): WorkspaceExecutionResult {
+        val proposed = JSONObject(root.toString())
+        val action = "AtlasRecordUpdate"
+        val actions = proposed.optJSONObject("actions") ?: JSONObject().also { proposed.put("actions", it) }
+        actions.put(action, JSONObject().put("steps", JSONArray().put(JSONObject()
+            .put("type", "update_record").put("collection", collection).put("record_id", recordId).put("data", data))))
+        return executeAction(proposed, action, state, records)
     }
 
     fun simulate(root: JSONObject): WorkspaceSimulationResult = simulate(root, null)
@@ -266,15 +322,30 @@ object WorkspaceRuntimeV2 {
             test.optJSONObject("initial_state")?.keys()?.forEach { key -> state.put(key, test.getJSONObject("initial_state").opt(key)) }
             val records = mutableMapOf<String, MutableList<JSONObject>>()
             runCatching {
-                val actions = test.optJSONArray("actions") ?: JSONArray().also { test.optString("action").takeIf(String::isNotBlank)?.let(it::put) }
-                for (actionIndex in 0 until actions.length()) {
-                    val result = executeAction(root, actions.getString(actionIndex), state, records)
-                    result.state.keys().forEach { state.put(it, result.state.opt(it)) }
-                    result.mutations.filterIsInstance<WorkspaceMutation.InsertRecord>().forEach { mutation ->
-                        records.getOrPut(mutation.collection) { mutableListOf() }.add(JSONObject(mutation.data.toString()))
+                test.optJSONObject("initial_records")?.let { fixture ->
+                    fixture.keys().forEach { collection ->
+                        val rows = fixture.getJSONArray(collection)
+                        records[collection] = (0 until rows.length()).map { JSONObject(rows.getJSONObject(it).toString()) }.toMutableList()
                     }
                 }
-                if (!truth(evaluate(test.opt("assert"), state, records))) failures += "${test.optString("name", "test-$i")}: assertion failed"
+                val rowCollection = test.optString("row_collection").takeIf(String::isNotBlank)
+                val rowId = test.optString("row_id").takeIf(String::isNotBlank)
+                val actions = test.optJSONArray("actions") ?: JSONArray().also { test.optString("action").takeIf(String::isNotBlank)?.let(it::put) }
+                for (actionIndex in 0 until actions.length()) {
+                    val result = executeAction(root, actions.getString(actionIndex), state, records, rowCollection, rowId)
+                    result.state.keys().forEach { state.put(it, result.state.opt(it)) }
+                    result.mutations.filterIsInstance<WorkspaceMutation.InsertRecord>().forEach { mutation ->
+                        val rows = records.getOrPut(mutation.collection) { mutableListOf() }
+                        rows.add(JSONObject(mutation.data.toString()).put("_id", "insert-${rows.size}"))
+                    }
+                    result.mutations.filterIsInstance<WorkspaceMutation.UpdateRecord>().forEach { mutation ->
+                        val rows = records.getValue(mutation.collection)
+                        val index = rows.indexOfFirst { it.optString("_id") == mutation.recordId }
+                        rows[index] = JSONObject(mutation.data.toString()).put("_id", mutation.recordId)
+                    }
+                }
+                val row = records[rowCollection]?.firstOrNull { it.optString("_id") == rowId }
+                if (!truth(evaluate(test.opt("assert"), state, records, row = row))) failures += "${test.optString("name", "test-$i")}: assertion failed"
             }.onFailure { failures += "${test.optString("name", "test-$i")}: ${it.message}" }
         }
         return WorkspaceSimulationResult(failures.isEmpty(), failures, tests.length())
@@ -297,6 +368,18 @@ object WorkspaceRuntimeV2 {
             component.optString("action").takeIf(String::isNotBlank)?.let { if (!actions.has(it)) errors += "$path.$id references unknown action: $it" }
             component.optString("binding").takeIf(String::isNotBlank)?.let { if (!state.has(it)) errors += "$path.$id references unknown state: $it" }
             component.optString("collection").takeIf(String::isNotBlank)?.let { if (!collections.has(it)) errors += "$path.$id references unknown collection: $it" }
+            if (type == "list") {
+                val fields = collections.optJSONObject(component.optString("collection"))?.optJSONObject("fields")
+                for (key in listOf("primary_field", "secondary_field", "checked_field")) {
+                    component.optString(key).takeIf(String::isNotBlank)?.let { field ->
+                        if (fields?.has(field) != true) errors += "$path.$id.$key references unknown collection field: $field"
+                        else if (key == "checked_field" && fields.getJSONObject(field).optString("type") != "boolean") errors += "$path.$id.checked_field must be boolean"
+                    }
+                }
+                val rowAction = component.optString("row_action")
+                if (rowAction.isNotBlank() && !actions.has(rowAction)) errors += "$path.$id references unknown row_action: $rowAction"
+                if (component.has("checked_field") && rowAction.isBlank()) errors += "$path.$id.checked_field requires row_action"
+            }
             listOf("value", "visible", "enabled", "max").forEach { key -> component.opt(key)?.takeIf { it is JSONObject }?.let { validateExpression(it, "$path.$id.$key", state, collections, errors, 0) } }
             if (component.has("text_size") && component.optString("text_size") !in setOf("small", "normal", "large")) errors += "$path.$id text_size must be small, normal, or large"
             if (component.has("bold") && component.opt("bold") !is Boolean) errors += "$path.$id bold must be boolean"
@@ -318,12 +401,30 @@ object WorkspaceRuntimeV2 {
                 continue
             }
             val type = step.optString("type")
-            if (type !in stepTypes) errors += "$path.steps[$i] has unsupported type: $type"
+            if (type !in stepTypes) errors += "$path.steps[$i] has unsupported type: ${type.ifBlank { "<blank>; steps require type (for example {type:set,key:name,value:...})" }}"
             if (type in setOf("set", "increment", "toggle") && !state.has(step.optString("key"))) errors += "$path.steps[$i] references unknown state: ${step.optString("key")}" 
             if (type == "insert" && !collections.has(step.optString("collection"))) errors += "$path.steps[$i] references unknown collection: ${step.optString("collection")}" 
             if (type == "set") validateExpression(step.opt("value"), "$path.steps[$i].value", state, collections, errors, 0)
             if (type == "increment" && step.has("by")) validateExpression(step.opt("by"), "$path.steps[$i].by", state, collections, errors, 0)
             if (type == "insert") step.optJSONObject("data")?.let { data -> data.keys().forEach { key -> validateExpression(data.opt(key), "$path.steps[$i].data.$key", state, collections, errors, 0) } }
+            if (type in setOf("update_record", "toggle_record")) {
+                val collection = step.optString("collection")
+                val fields = collections.optJSONObject(collection)?.optJSONObject("fields")
+                if (fields == null) errors += "$path.steps[$i] references unknown collection: $collection"
+                if (!step.has("record_id")) errors += "$path.steps[$i].record_id is required"
+                else validateExpression(step.opt("record_id"), "$path.steps[$i].record_id", state, collections, errors, 0)
+                if (type == "toggle_record") {
+                    val field = step.optString("field")
+                    if (fields?.optJSONObject(field)?.optString("type") != "boolean") errors += "$path.steps[$i].field must reference a boolean collection field"
+                } else {
+                    val data = step.optJSONObject("data")
+                    if (data == null || data.length() == 0) errors += "$path.steps[$i].data requires at least one field"
+                    data?.keys()?.forEach { field ->
+                        if (fields?.has(field) != true) errors += "$path.steps[$i].data references unknown field: $collection.$field"
+                        validateExpression(data.opt(field), "$path.steps[$i].data.$field", state, collections, errors, 0)
+                    }
+                }
+            }
             if (type == "branch") validateExpression(step.opt("if"), "$path.steps[$i].if", state, collections, errors, 0)
             if (type == "sequence") validateSteps(step.optJSONArray("steps"), "$path.steps[$i]", state, collections, errors, depth + 1)
             if (type == "branch") { validateSteps(step.optJSONArray("then") ?: JSONArray(), "$path.steps[$i].then", state, collections, errors, depth + 1); validateSteps(step.optJSONArray("else") ?: JSONArray(), "$path.steps[$i].else", state, collections, errors, depth + 1) }
@@ -336,6 +437,7 @@ object WorkspaceRuntimeV2 {
         expression.optString("var").takeIf(String::isNotBlank)?.let { variable ->
             if (variable.startsWith("state.") && !state.has(variable.removePrefix("state."))) errors += "$path references unknown state: $variable"
             if (variable.startsWith("count.") && !collections.has(variable.removePrefix("count."))) errors += "$path references unknown collection: $variable"
+            if (!variable.startsWith("state.") && !variable.startsWith("count.") && !variable.matches(Regex("row\\.[A-Za-z][A-Za-z0-9_-]{0,63}"))) errors += "$path uses unsupported variable: $variable"
             return
         }
         val op = expression.optString("op")
@@ -390,6 +492,7 @@ object WorkspaceRuntimeV2 {
 sealed interface WorkspaceMutation {
     data class SetState(val key: String, val value: Any?) : WorkspaceMutation
     data class InsertRecord(val collection: String, val data: JSONObject) : WorkspaceMutation
+    data class UpdateRecord(val collection: String, val recordId: String, val data: JSONObject) : WorkspaceMutation
     data class Navigate(val view: String) : WorkspaceMutation
 }
 

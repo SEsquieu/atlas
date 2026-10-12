@@ -875,6 +875,12 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         require(dataJson.toByteArray().size <= 32 * 1024) { "Record exceeds 32 KiB" }
         JSONObject(dataJson)
         check(loadComposableWorkspace(workspaceId)?.status == WorkspaceStatus.ACTIVE) { "Workspace is not active" }
+        val definition = loadLiveWorkspaceRevision(workspaceId)?.let { JSONObject(it.definitionJson) }
+        if (definition?.optString("format") == WorkspaceRuntimeV2.FORMAT && collection != "AtlasRuntimeState") {
+            WorkspaceRuntimeV2.validateRecord(definition, collection, JSONObject(dataJson))
+            val count = readableDatabase.rawQuery("SELECT COUNT(*) FROM workspace_records WHERE composable_workspace_id = ? AND collection_name = ?", arrayOf(workspaceId, collection)).use { it.moveToFirst(); it.getInt(0) }
+            require(count < 5_000) { "Collection $collection exceeds 5,000 records" }
+        }
         val record = WorkspaceRecord(UUID.randomUUID().toString(), workspaceId, collection, dataJson, nowMs, nowMs)
         writableDatabase.insertOrThrow("workspace_records", null, ContentValues().apply {
             put("record_id", record.id); put("composable_workspace_id", workspaceId); put("collection_name", collection)
@@ -898,15 +904,56 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     fun loadWorkspaceRuntimeState(workspaceId: String, definition: JSONObject): JSONObject =
         WorkspaceRuntimeV2.migrateState(definition, loadWorkspacePersistedState(workspaceId)).state
 
-    @Synchronized
-    fun applyWorkspaceAction(workspaceId: String, definition: JSONObject, actionId: String, nowMs: Long = System.currentTimeMillis()): WorkspaceExecutionResult {
-        check(loadComposableWorkspace(workspaceId)?.status == WorkspaceStatus.ACTIVE) { "Workspace is not active" }
-        val current = loadWorkspaceRuntimeState(workspaceId, definition)
-        val records = mutableMapOf<String, MutableList<JSONObject>>()
-        definition.optJSONObject("collections")?.keys()?.forEach { collection ->
-            records[collection] = listWorkspaceRecords(workspaceId, collection, 5_000).map { JSONObject(it.dataJson) }.toMutableList()
+    private fun workspaceExecutionRecords(workspaceId: String, definition: JSONObject): MutableMap<String, MutableList<JSONObject>> =
+        mutableMapOf<String, MutableList<JSONObject>>().apply {
+            definition.optJSONObject("collections")?.keys()?.forEach { collection ->
+                put(collection, listWorkspaceRecords(workspaceId, collection, 5_000).map { JSONObject(it.dataJson).put("_id", it.id) }.toMutableList())
+            }
         }
-        val result = WorkspaceRuntimeV2.executeAction(definition, actionId, current, records)
+
+    private fun requireCurrentWorkspaceDefinition(workspaceId: String, definition: JSONObject) {
+        check(loadComposableWorkspace(workspaceId)?.status == WorkspaceStatus.ACTIVE) { "Workspace is not active" }
+        require(loadLiveWorkspaceRevision(workspaceId)?.definitionJson?.let { JSONObject(it).toString() } == definition.toString()) { "Workspace revision changed; inspect again" }
+    }
+
+    private fun requireExpectedRecord(records: Map<String, List<JSONObject>>, collection: String, recordId: String, expected: JSONObject) {
+        val actual = records[collection]?.singleOrNull { it.optString("_id") == recordId }
+            ?: error("Record is unavailable in this workspace collection")
+        require(actual.length() == expected.length() + 1 && expected.keys().asSequence().all { key ->
+            val a = actual.opt(key); val b = expected.opt(key)
+            key != "_id" && actual.has(key) && (a == b || (a is Number && b is Number && a.toDouble() == b.toDouble()))
+        }) { "Record changed; inspect again before editing" }
+    }
+
+    @Synchronized
+    fun applyWorkspaceAction(workspaceId: String, definition: JSONObject, actionId: String, nowMs: Long = System.currentTimeMillis(), rowCollection: String? = null, rowId: String? = null, expectedData: JSONObject? = null, source: String = "UI"): WorkspaceExecutionResult {
+        requireCurrentWorkspaceDefinition(workspaceId, definition)
+        val records = workspaceExecutionRecords(workspaceId, definition)
+        if (rowId != null && expectedData != null) requireExpectedRecord(records, rowCollection ?: error("row_collection is required"), rowId, expectedData)
+        val result = WorkspaceRuntimeV2.executeAction(definition, actionId, loadWorkspaceRuntimeState(workspaceId, definition), records, rowCollection, rowId)
+        persistWorkspaceExecution(workspaceId, result, nowMs, source, actionId)
+        return result
+    }
+
+    @Synchronized
+    fun updateWorkspaceRecord(workspaceId: String, baseRevisionId: String, collection: String, recordId: String, patch: JSONObject, expectedData: JSONObject, nowMs: Long = System.currentTimeMillis(), sessionId: String? = null, navigationSequence: Long? = null): WorkspaceExecutionResult {
+        if (sessionId != null) {
+            val session = loadSession(sessionId) ?: error("Session is unavailable")
+            require(session.activeComposableWorkspaceId == workspaceId && session.workspaceNavigationSequence == navigationSequence && loadComposableWorkspace(workspaceId)?.realmId == session.workspaceId) { "Workspace context changed; inspect again" }
+        }
+        val revision = loadLiveWorkspaceRevision(workspaceId) ?: error("Workspace is unavailable")
+        require(revision.id == baseRevisionId) { "Workspace revision changed; inspect again" }
+        val definition = JSONObject(revision.definitionJson)
+        requireCurrentWorkspaceDefinition(workspaceId, definition)
+        require(definition.optString("format") == WorkspaceRuntimeV2.FORMAT) { "Record editing requires atlas.workspace.v2" }
+        val records = workspaceExecutionRecords(workspaceId, definition)
+        requireExpectedRecord(records, collection, recordId, expectedData)
+        val result = WorkspaceRuntimeV2.executeRecordUpdate(definition, loadWorkspaceRuntimeState(workspaceId, definition), records, collection, recordId, patch)
+        persistWorkspaceExecution(workspaceId, result, nowMs, "MODEL", "record_update")
+        return result
+    }
+
+    private fun persistWorkspaceExecution(workspaceId: String, result: WorkspaceExecutionResult, nowMs: Long, source: String, actionId: String) {
         writableDatabase.transaction {
             result.mutations.filterIsInstance<WorkspaceMutation.InsertRecord>().groupingBy { it.collection }.eachCount().forEach { (collection, additions) ->
                 val existing = rawQuery("SELECT COUNT(*) FROM workspace_records WHERE composable_workspace_id = ? AND collection_name = ?", arrayOf(workspaceId, collection)).use { cursor ->
@@ -920,13 +967,26 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                     put("data_json", mutation.data.toString()); put("created_at", nowMs); put("updated_at", nowMs)
                 })
             }
+            result.mutations.filterIsInstance<WorkspaceMutation.UpdateRecord>().forEach { mutation ->
+                check(update("workspace_records", ContentValues().apply {
+                    put("data_json", mutation.data.toString()); put("updated_at", nowMs)
+                }, "record_id = ? AND composable_workspace_id = ? AND collection_name = ?", arrayOf(mutation.recordId, workspaceId, mutation.collection)) == 1) { "Record changed or is unavailable" }
+            }
             insertOrThrow("workspace_records", null, ContentValues().apply {
                 put("record_id", UUID.randomUUID().toString()); put("composable_workspace_id", workspaceId); put("collection_name", "AtlasRuntimeState")
                 put("data_json", JSONObject().put("state", result.state).toString()); put("created_at", nowMs); put("updated_at", nowMs)
             })
             execSQL("DELETE FROM workspace_records WHERE record_id IN (SELECT record_id FROM workspace_records WHERE composable_workspace_id = ? AND collection_name = 'AtlasRuntimeState' ORDER BY updated_at DESC LIMIT -1 OFFSET 50)", arrayOf(workspaceId))
+            val data = JSONObject().put("workspace_id", workspaceId).put("source", source).put("action", actionId)
+                .put("record_updates", JSONArray().apply {
+                    result.mutations.filterIsInstance<WorkspaceMutation.UpdateRecord>().forEach { mutation ->
+                        put(JSONObject().put("record_id", mutation.recordId).put("collection", mutation.collection).put("fields", JSONArray(mutation.data.keys().asSequence().toList())))
+                    }
+                })
+            rawQuery("SELECT session_id FROM sessions WHERE active_composable_workspace_id = ?", arrayOf(workspaceId)).use { cursor ->
+                while (cursor.moveToNext()) appendEventLocked(this, cursor.getString(0), "workspace.action_applied", nowMs, data.toString())
+            }
         }
-        return result
     }
 
     @Synchronized

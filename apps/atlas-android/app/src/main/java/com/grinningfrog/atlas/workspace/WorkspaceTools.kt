@@ -12,11 +12,11 @@ import com.grinningfrog.atlas.runtime.ToolExecutionResult
 import org.json.JSONArray
 import org.json.JSONObject
 
-private const val AUTHORING_GUIDE = "Prefer atlas.workspace.v2 for interactive apps. V2 requires format,title,entry_view,state,collections,actions,views, and should include tests. State fields are {type:string|integer|decimal|boolean|timestamp|enum,initial,values?}; collection fields use the same types. All components require a unique id. views is an array of {id,title,components}; collection schemas are {fields:{...}}. Text supports text_size:small|normal|large and bold:boolean; metric supports text_size; section supports show_label:boolean. Markdown is plain text. For small edits use workspace_patch_definition instead of rewriting the full definition. Components: text(value), status/metric(value), button(action), input(binding), toggle(binding,action), progress(value,max), list(collection,primary_field,secondary_field), section(children,compact?), row(children), grid(children,columns:1..6), divider. Actions contain bounded steps: set(key,value), increment(key,by), toggle(key), insert(collection,data), navigate(view), sequence(steps), branch(if,then,else), stop; enabled_if and disabled_message guard actions. Root invariants are {name?,assert,message?}. Expressions are literals, {var:'state.key'}, {var:'count.collection'}, or {op:eq|ne|gt|gte|lt|lte|and|or|not|add|subtract|multiply|divide|concat|if|count,args:[...]}. Tests are {name,action|actions,initial_state?,assert}. Validate against the active workspace before replacing. V1 remains supported for static dashboards."
+private const val AUTHORING_GUIDE = "Prefer atlas.workspace.v2 for interactive apps. V2 requires format,title,entry_view,state,collections,actions,views, and should include tests. State fields are {type:string|integer|decimal|boolean|timestamp|enum,initial,values?}; collection fields use the same types. All components require a unique id. views is an array of {id,title,components}; collection schemas are {fields:{...}}. Text supports text_size:small|normal|large and bold:boolean; metric supports text_size; section supports show_label:boolean. Markdown is plain text. For small edits use workspace_patch_definition instead of rewriting the full definition. Components: text(value), status/metric(value), button(action), input(binding), toggle(binding,action), progress(value,max), list(collection,primary_field,secondary_field,checked_field?,row_action?,row_action_label?), section(children,compact?), row(children), grid(children,columns:1..6), divider. Input and toggle bindings are bare state keys (binding:item_name, not state.item_name). Every action step is an object with type, for example {type:set,key:item_name,value:bread}; never use step or a nested set object. Actions contain bounded steps: set(key,value), increment(key,by), toggle(key), insert(collection,data), update_record(collection,record_id,data), toggle_record(collection,record_id,field), navigate(view), sequence(steps), branch(if,then,else), stop; enabled_if and disabled_message guard actions. Root invariants are {name?,assert,message?}. Expressions are literals, {var:'state.key'}, {var:'count.collection'}, {var:'row.id'} for the stable selected record ID and {var:'row.field'} for its data (row variables require row context), or {op:eq|ne|gt|gte|lt|lte|and|or|not|add|subtract|multiply|divide|concat|if|count,args:[...]}. A list checked_field must be a boolean collection field and requires row_action. Wire row_action to a toggle_record step with record_id:{var:row.id}; row controls and conversational workspace_update_record edits both persist validated record changes. Chat can add items with workspace_add_record; no separate input binding is required. Tests are {name,action|actions,initial_state?,initial_records?,row_collection?,row_id?,assert}; initial_records maps collections to arrays of schema-valid data with unique _id metadata for testing existing records. Use row_id and row_collection to select a fixture record. Example: {type:toggle_record,collection:items,record_id:{var:row.id},field:found}. Validate against the active workspace before replacing. V1 remains supported for static dashboards."
 
 object WorkspaceTools {
     fun create(database: AtlasDatabase): List<AtlasToolAdapter> = listOf(
-        ListWorkspaces(database), ValidateDefinition(database), CreateWorkspace(database), InspectWorkspace(database), ReplaceDefinition(database), PatchDefinition(database), AddRecord(database),
+        ListWorkspaces(database), ValidateDefinition(database), CreateWorkspace(database), InspectWorkspace(database), ReplaceDefinition(database), PatchDefinition(database), AddRecord(database), UpdateRecord(database),
     )
 }
 
@@ -202,7 +202,35 @@ private class AddRecord(database: AtlasDatabase) : WorkspaceAdapter(database) {
     }
     override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
         val args = JSONObject(call.argumentsJson)
+        val session = database.loadSession(call.sessionId) ?: error("Session is unavailable")
+        require(args.getString("workspace_id") == session.activeComposableWorkspaceId && allowedWorkspace(session, args.getString("workspace_id")) != null) { "Workspace context changed; inspect again" }
+        val revision = database.loadLiveWorkspaceRevision(args.getString("workspace_id")) ?: error("Workspace is unavailable")
+        val root = JSONObject(revision.definitionJson)
+        require(args.getString("collection") != "AtlasRuntimeState") { "Runtime state is not a user collection" }
+        if (root.optString("format") == WorkspaceRuntimeV2.FORMAT) WorkspaceRuntimeV2.validateRecord(root, args.getString("collection"), args.getJSONObject("data"))
         val record = database.addWorkspaceRecord(args.getString("workspace_id"), args.getString("collection"), args.getJSONObject("data").toString())
         return ToolExecutionResult(JSONObject().put("ok", true).put("record_id", record.id).toString())
+    }
+}
+
+private class UpdateRecord(database: AtlasDatabase) : WorkspaceAdapter(database) {
+    override val definition = ToolDefinition(
+        "workspace_update_record", "Patch fields on exactly one existing record in the active v2 workspace, including conversational edits. First inspect records to obtain the stable record_id, base_revision_id, navigation_sequence and full expected_data. Preserve unspecified fields. Rejects stale context, changed records, invalid types and failed invariants; returns committed data. Do not guess an ID from an item name.",
+        """{"type":"object","properties":{"workspace_id":{"type":"string"},"base_revision_id":{"type":"string"},"navigation_sequence":{"type":"integer"},"collection":{"type":"string"},"record_id":{"type":"string"},"expected_data":{"type":"object"},"data":{"type":"object"}},"required":["workspace_id","base_revision_id","navigation_sequence","collection","record_id","expected_data","data"],"additionalProperties":false}""",
+        ToolRisk.SESSION_WRITE, maxCallsPerTurn = 6,
+    )
+    override fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision {
+        val args = runCatching { JSONObject(proposal.argumentsJson) }.getOrNull()
+        val allowed = args != null && args.optString("workspace_id") == session.activeComposableWorkspaceId &&
+            args.optLong("navigation_sequence", -1) == session.workspaceNavigationSequence && allowedWorkspace(session, args.optString("workspace_id")) != null
+        return ToolPolicyDecision(allowed, false, ToolRisk.SESSION_WRITE, if (allowed) "Validated reversible record update" else "Workspace context changed; inspect again")
+    }
+    override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
+        val args = JSONObject(call.argumentsJson)
+        val session = database.loadSession(call.sessionId) ?: error("Session is unavailable")
+        require(evaluate(session, ToolCallProposal(call.id, call.name, call.argumentsJson)).allowed) { "Workspace context changed; inspect again" }
+        val result = database.updateWorkspaceRecord(args.getString("workspace_id"), args.getString("base_revision_id"), args.getString("collection"), args.getString("record_id"), args.getJSONObject("data"), args.getJSONObject("expected_data"), sessionId = session.id, navigationSequence = args.getLong("navigation_sequence"))
+        val mutation = result.mutations.filterIsInstance<WorkspaceMutation.UpdateRecord>().single()
+        return ToolExecutionResult(JSONObject().put("ok", true).put("workspace_id", args.getString("workspace_id")).put("record_id", mutation.recordId).put("collection", mutation.collection).put("data", mutation.data).toString())
     }
 }

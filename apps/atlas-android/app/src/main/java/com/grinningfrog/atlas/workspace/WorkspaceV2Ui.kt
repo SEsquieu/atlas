@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -47,13 +49,13 @@ internal fun WorkspaceV2Renderer(
     val records = remember(workspace.id, refresh) {
         buildMap<String, List<JSONObject>> {
             definition.optJSONObject("collections")?.keys()?.forEach { collection ->
-                put(collection, database.listWorkspaceRecords(workspace.id, collection, 200).map { JSONObject(it.dataJson) })
+                put(collection, database.listWorkspaceRecords(workspace.id, collection, 200).map { JSONObject(it.dataJson).put("_id", it.id) })
             }
         }
     }
-    fun execute(action: String) {
+    fun execute(action: String, collection: String? = null, row: JSONObject? = null) {
         runCatching {
-            if (action.isNotBlank()) database.applyWorkspaceAction(workspace.id, definition, action)
+            if (action.isNotBlank()) database.applyWorkspaceAction(workspace.id, definition, action, rowCollection = collection, rowId = row?.getString("_id"), expectedData = row?.let { JSONObject(it.toString()).apply { remove("_id") } })
         }.onSuccess {
             runtimeError = null
             onChanged()
@@ -61,9 +63,9 @@ internal fun WorkspaceV2Renderer(
             runtimeError = it.message ?: "The workspace action could not be completed."
         }
     }
-    fun actionEnabled(actionId: String): Boolean {
+    fun actionEnabled(actionId: String, row: JSONObject?): Boolean {
         val action = definition.optJSONObject("actions")?.optJSONObject(actionId) ?: return false
-        return !action.has("enabled_if") || (runCatching { WorkspaceRuntimeV2.evaluate(action.opt("enabled_if"), state, records) }.getOrNull() as? Boolean == true)
+        return !action.has("enabled_if") || (runCatching { WorkspaceRuntimeV2.evaluate(action.opt("enabled_if"), state, records, row = row) }.getOrNull() as? Boolean == true)
     }
     LazyColumn(modifier.fillMaxWidth(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -74,7 +76,7 @@ internal fun WorkspaceV2Renderer(
         val components = view.optJSONArray("components") ?: JSONArray()
         for (index in 0 until components.length()) {
             val component = components.optJSONObject(index) ?: continue
-            item(key = component.optString("id", "v2-$index")) { V2Component(component, state, records, ::execute, ::actionEnabled, { key, value ->
+            item(key = component.optString("id", "v2-$index")) { V2Component(component, state, records, { execute(it) }, ::actionEnabled, { action, collection, row -> execute(action, collection, row) }, { key, value ->
                 runCatching { database.setWorkspaceStateValue(workspace.id, definition, key, value) }
                     .onSuccess { runtimeError = null; onChanged() }
                     .onFailure { runtimeError = it.message ?: "The value could not be saved." }
@@ -85,7 +87,7 @@ internal fun WorkspaceV2Renderer(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun V2Component(component: JSONObject, state: JSONObject, records: Map<String, List<JSONObject>>, execute: (String) -> Unit, actionEnabled: (String) -> Boolean, setState: (String, Any?) -> Unit, modifier: Modifier = Modifier) {
+private fun V2Component(component: JSONObject, state: JSONObject, records: Map<String, List<JSONObject>>, execute: (String) -> Unit, actionEnabled: (String, JSONObject?) -> Boolean, executeRow: (String, String, JSONObject) -> Unit, setState: (String, Any?) -> Unit, modifier: Modifier = Modifier) {
     fun value(key: String, fallback: Any? = ""): Any? = component.opt(key)?.let { WorkspaceRuntimeV2.evaluate(it, state, records) } ?: fallback
     if (!(value("visible", true) as? Boolean ?: true)) return
     val label = component.optString("label", component.optString("id"))
@@ -103,7 +105,7 @@ private fun V2Component(component: JSONObject, state: JSONObject, records: Map<S
         } }
         "button" -> {
             val action = component.optString("action")
-            Button(onClick = { execute(action) }, enabled = (value("enabled", true) as? Boolean ?: true) && actionEnabled(action), modifier = modifier.fillMaxWidth()) { Text(label) }
+            Button(onClick = { execute(action) }, enabled = (value("enabled", true) as? Boolean ?: true) && actionEnabled(action, null), modifier = modifier.fillMaxWidth()) { Text(label) }
         }
         "input" -> {
             val binding = component.optString("binding")
@@ -126,27 +128,42 @@ private fun V2Component(component: JSONObject, state: JSONObject, records: Map<S
             Card(modifier) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(label, fontWeight = FontWeight.Bold)
                 if (items.isEmpty()) Text(component.optString("empty_text", "Nothing here yet."), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                items.take(component.optInt("limit", 50)).forEach { row ->
-                    Text(row.optString(component.optString("primary_field", "name"), row.toString()))
-                    component.optString("secondary_field").takeIf(String::isNotBlank)?.let { Text(row.optString(it), style = MaterialTheme.typography.bodySmall) }
+                items.take(component.optInt("limit", 50).coerceIn(1, 200)).forEach { row ->
+                    val rowAction = component.optString("row_action")
+                    val checkedField = component.optString("checked_field")
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        if (checkedField.isNotBlank()) Checkbox(
+                            checked = row.optBoolean(checkedField),
+                            onCheckedChange = { executeRow(rowAction, component.getString("collection"), row) },
+                            enabled = actionEnabled(rowAction, row),
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(row.optString(component.optString("primary_field", "name"), row.toString()))
+                            component.optString("secondary_field").takeIf(String::isNotBlank)?.let { Text(row.optString(it), style = MaterialTheme.typography.bodySmall) }
+                        }
+                        if (rowAction.isNotBlank() && checkedField.isBlank()) TextButton(
+                            onClick = { executeRow(rowAction, component.getString("collection"), row) },
+                            enabled = actionEnabled(rowAction, row),
+                        ) { Text(component.optString("row_action_label", "Edit")) }
+                    }
                 }
             } }
         }
         "section" -> Card(modifier) { Column(Modifier.padding(if (component.optBoolean("compact")) 8.dp else 14.dp), verticalArrangement = Arrangement.spacedBy(if (component.optBoolean("compact")) 6.dp else 10.dp)) {
             if (component.optBoolean("show_label", component.has("label")) && label.isNotBlank()) Text(label, fontWeight = FontWeight.Bold)
             val children = component.optJSONArray("children") ?: JSONArray()
-            for (i in 0 until children.length()) children.optJSONObject(i)?.let { V2Component(it, state, records, execute, actionEnabled, setState) }
+            for (i in 0 until children.length()) children.optJSONObject(i)?.let { V2Component(it, state, records, execute, actionEnabled, executeRow, setState) }
         } }
         "row" -> Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             val children = component.optJSONArray("children") ?: JSONArray()
-            for (i in 0 until children.length()) children.optJSONObject(i)?.let { V2Component(it, state, records, execute, actionEnabled, setState, Modifier.weight(1f)) }
+            for (i in 0 until children.length()) children.optJSONObject(i)?.let { V2Component(it, state, records, execute, actionEnabled, executeRow, setState, Modifier.weight(1f)) }
         }
         "grid" -> {
             val columns = component.optInt("columns", 2).coerceIn(1, 6)
             FlowRow(modifier.fillMaxWidth(), maxItemsInEachRow = columns, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 val children = component.optJSONArray("children") ?: JSONArray()
                 for (i in 0 until children.length()) children.optJSONObject(i)?.let {
-                    V2Component(it, state, records, execute, actionEnabled, setState, Modifier.weight(1f))
+                    V2Component(it, state, records, execute, actionEnabled, executeRow, setState, Modifier.weight(1f))
                 }
             }
         }

@@ -42,7 +42,14 @@ class CapabilityDiscovery(private val database: AtlasDatabase) {
                     require(sources.length() in 1..5) { "Candidate requires 1–5 research sources" }
                     for (i in 0 until sources.length()) require(publicUrl(sources.getString(i))) { "Candidate source must be an HTTP(S) evidence URL" }
                 }
-                "no_candidate" -> text("reason", 1000)
+                "no_candidate" -> {
+                    text("reason", 1000)
+                    if (args.has("sources")) {
+                        val sources = args.getJSONArray("sources")
+                        require(sources.length() <= 5) { "Discovery allows at most 5 research sources" }
+                        for (i in 0 until sources.length()) require(publicUrl(sources.getString(i))) { "Discovery source must be an HTTP(S) evidence URL" }
+                    }
+                }
                 else -> error("Unknown discovery stage")
             }
         }
@@ -93,6 +100,20 @@ class CapabilityDiscovery(private val database: AtlasDatabase) {
     fun record(call: AtlasToolCall, args: JSONObject): ToolExecutionResult {
         validate(args)
         val data = JSONObject(args.toString()).put("reported_by", "model")
+        if (args.getString("stage") in setOf("candidate", "no_candidate") && args.optJSONArray("sources")?.length()?.let { it > 0 } == true) {
+            val research = events(call.turnId).filter { it.first == "capability.search_completed" && it.second.optBoolean("ok", it.second.optString("status") == "completed") }
+            val observed = research.flatMap { evidenceUrls(it.second) }.toSet()
+            val requested = args.getJSONArray("sources")
+            require((0 until requested.length()).all { requested.getString(it) in observed }) { if (args.getString("stage") == "candidate") "Candidate sources must come from recorded research in this turn" else "Discovery sources must come from recorded research in this turn" }
+            data.put("source_provenance", JSONArray().apply {
+                for (i in 0 until requested.length()) {
+                    val url = requested.getString(i)
+                    val proof = research.first { url in evidenceUrls(it.second) }.second
+                    put(JSONObject().put("url", url).put("research_id", proof.opt("research_id"))
+                        .put("requestId", proof.opt("requestId")).put("toolCallId", proof.opt("toolCallId")))
+                }
+            })
+        }
         when (args.getString("stage")) {
             "blocked" -> {
                 val all = blockers(call.turnId)
@@ -124,18 +145,6 @@ class CapabilityDiscovery(private val database: AtlasDatabase) {
             "candidate" -> {
                 val blocker = targetBlocker(call.turnId, args)
                 data.put("blocker_id", blockerId(blocker)).put("parent_blocker_id", blocker.opt("parent_blocker_id")).put("depth", blocker.optInt("depth")).put("root_objective", blocker.optString("root_objective"))
-                val research = events(call.turnId).filter { it.first == "capability.search_completed" && it.second.optBoolean("ok", it.second.optString("status") == "completed") }
-                val observed = research.flatMap { evidenceUrls(it.second) }.toSet()
-                val requested = args.getJSONArray("sources")
-                require((0 until requested.length()).all { requested.getString(it) in observed }) { "Candidate sources must come from recorded research in this turn" }
-                data.put("source_provenance", JSONArray().apply {
-                    for (i in 0 until requested.length()) {
-                        val url = requested.getString(i)
-                        val proof = research.first { url in evidenceUrls(it.second) }.second
-                        put(JSONObject().put("url", url).put("research_id", proof.opt("research_id"))
-                            .put("requestId", proof.opt("requestId")).put("toolCallId", proof.opt("toolCallId")))
-                    }
-                })
                 event(call, "capability.candidate_evaluated", data)
                 if (args.getString("assessment") != "unsuitable") event(call, "capability.candidate_proposed", JSONObject(data.toString()))
             }

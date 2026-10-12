@@ -46,6 +46,21 @@ class CapabilityDiscoveryTest {
     private fun call(name: String, args: String = "{}", turnId: String = turn.id) = AtlasToolCall(UUID.randomUUID().toString(), session.id, turnId, name, args, ToolCallStatus.PROPOSED, ToolRisk.SESSION_WRITE, false, UUID.randomUUID().toString(), createdAtMs = 0, updatedAtMs = 0)
     private val blocked = """{"stage":"blocked","objective":"Analyze this unsupported format","missing_capability":"Format conversion"}"""
     private val candidate = """{"stage":"candidate","candidate":"Example converter","sources":["https://example.org/docs"],"assessment":"unverified","applicability":"Documentation describes conversion of the requested format","requirements":"Availability, access and cost remain unverified"}"""
+    @Test fun noCandidateCannotLaunderUnrecordedSources() = runTest {
+        val h = harness(adapter("web_search", ToolRisk.READ_ONLY, true))
+        h.execute(call(CapabilityDiscovery.TOOL, blocked))
+        val args = JSONObject().put("stage", "no_candidate").put("reason", "No suitable candidate")
+            .put("sources", org.json.JSONArray().put("https://example.org/docs"))
+        assertTrue(runCatching { h.execute(call(CapabilityDiscovery.TOOL, args.toString())) }.isFailure)
+        h.execute(call("web_search"))
+        h.execute(call(CapabilityDiscovery.TOOL, args.toString()))
+        val event = db.loadRecentEvents(session.id).last { it.type == "capability.no_candidate" }
+        assertEquals("https://example.org/docs", JSONObject(event.dataJson).getJSONArray("source_provenance").getJSONObject(0).getString("url"))
+        val other = db.createTurn(session.id, "user")
+        h.execute(call(CapabilityDiscovery.TOOL, blocked, other.id))
+        assertTrue(runCatching { h.execute(call(CapabilityDiscovery.TOOL, args.toString(), other.id)) }.isFailure)
+        h.execute(call(CapabilityDiscovery.TOOL, """{"stage":"no_candidate","reason":"No recorded evidence"}""", other.id))
+    }
     @Test fun recordsFullDiscoveryTraceWithoutInvokingCandidate() = runTest {
         val h = harness(adapter("web_search", ToolRisk.READ_ONLY, true))
         h.execute(call(CapabilityDiscovery.TOOL, blocked))
