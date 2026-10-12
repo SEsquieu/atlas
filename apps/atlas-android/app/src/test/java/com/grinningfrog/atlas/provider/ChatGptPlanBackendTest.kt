@@ -40,6 +40,7 @@ class ChatGptPlanBackendTest {
         val done = """{"id":"research-1","type":"web_search_call","status":"completed","action":{"type":"search","query":"converter documentation"}}"""
         val withSources = """{"id":"research-1","type":"web_search_call","status":"completed","action":{"type":"search","query":"converter documentation","sources":[{"type":"url","url":"https://example.org/docs"}]}}"""
         server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Found public format documentation.\"}\n\n" +
             "data: {\"type\":\"response.output_item.done\",\"item\":$done}\n\n" +
                 "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"response-sources\",\"output\":[$withSources]}}\n\n"))
         server.start()
