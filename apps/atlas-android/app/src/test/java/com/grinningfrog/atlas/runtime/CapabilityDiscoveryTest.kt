@@ -142,7 +142,7 @@ class CapabilityDiscoveryTest {
             h.execute(call(CapabilityDiscovery.TOOL, candidate))
             val proof = JSONObject(db.loadRecentEvents(session.id).last { it.type == "capability.candidate_proposed" }.dataJson)
                 .getJSONArray("source_provenance").getJSONObject(0)
-            assertEquals("proof-response", proof.getString("requestId"))
+            assertEquals(request.requestId, proof.getString("requestId"))
             assertEquals("proof-search", proof.getString("research_id"))
             assertTrue(response.citations.isEmpty())
         } finally { server.shutdown() }
