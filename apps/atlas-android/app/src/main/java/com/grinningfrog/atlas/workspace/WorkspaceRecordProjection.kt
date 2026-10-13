@@ -29,6 +29,7 @@ object WorkspaceRecordProjection {
         val views = root.optJSONArray("views") ?: JSONArray()
         val view = (0 until views.length()).mapNotNull(views::optJSONObject).firstOrNull { it.optString("id") == viewId }
         val lists = JSONArray()
+        val charts = JSONArray()
         val errors = JSONArray()
         fun visit(array: JSONArray?) {
             if (array == null) return
@@ -48,10 +49,11 @@ object WorkspaceRecordProjection {
                         .put("total_records", rows.size).put("limit", component.optInt("limit", 50).coerceIn(1, 200))
                         .put("ordered_record_ids", JSONArray(project(component, rows).map { it.getString("_id") })))
                 }
+                if (component.optString("type") == "chart") charts.put(WorkspaceChart.diagnostics(component, records))
                 visit(component.optJSONArray("children"))
             }
         }
         visit(view?.optJSONArray("components"))
-        return JSONObject().put("view_id", viewId).put("lists", lists).put("expression_errors", errors)
+        return JSONObject().put("view_id", viewId).put("lists", lists).put("charts", charts).put("expression_errors", errors)
     }
 }

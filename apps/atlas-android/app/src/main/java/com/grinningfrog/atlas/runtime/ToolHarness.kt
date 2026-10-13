@@ -35,6 +35,8 @@ interface AtlasToolAdapter {
     val supportsCapabilityDiscovery: Boolean get() = false
     /** Installed, scoped, read-only local diagnostics; never grants access to a discovered capability. */
     val supportsLocalDiagnostics: Boolean get() = false
+    /** Core-approved installed local mutations only; never external access or permission acquisition. */
+    val supportsLocalMutation: Boolean get() = false
     fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision = ToolPolicyDecision(
         allowed = true,
         requiresConfirmation = definition.requiresConfirmation ||
@@ -99,7 +101,7 @@ class ToolHarness(
         val arguments = runCatching { JSONObject(proposal.argumentsJson) }.getOrNull()
             ?: return ToolPolicyDecision(false, false, definition.risk, "Tool arguments are not valid JSON")
         val turnId = database.loadActiveTurn(session.id)?.id
-        if (turnId != null && discovery.active(turnId) && !discoveryAllowed(proposal.name))
+        if (turnId != null && discovery.active(turnId) && !discoveryAllowed(proposal.name, turnId))
             return ToolPolicyDecision(false, false, definition.risk, "Capability discovery is read-only; a separate explicit authorization path is required")
         if (proposal.name == CapabilityDiscovery.TOOL) {
             val error = runCatching { CapabilityDiscovery.validate(arguments) }.exceptionOrNull()
@@ -107,7 +109,7 @@ class ToolHarness(
         }
         additionalTools.firstOrNull { it.definition.name == proposal.name }?.let {
             val decision = it.evaluate(session, proposal)
-            if (turnId != null && discovery.active(turnId) && (decision.risk != ToolRisk.READ_ONLY || decision.requiresConfirmation))
+            if (turnId != null && discovery.active(turnId) && (decision.requiresConfirmation || (decision.risk != ToolRisk.READ_ONLY && !(discovery.localWorkResumed(turnId) && it.supportsLocalMutation && decision.risk == ToolRisk.SESSION_WRITE))))
                 return ToolPolicyDecision(false, false, decision.risk, "Discovery cannot authorize additional research permissions")
             return decision
         }
@@ -135,19 +137,25 @@ class ToolHarness(
         }
     }
 
-    private fun discoveryAllowed(name: String): Boolean = name in setOf(CapabilityDiscovery.TOOL, CLARIFICATION_TOOL) ||
-        additionalTools.any { it.definition.name == name && (it.supportsCapabilityDiscovery || it.supportsLocalDiagnostics) && it.definition.risk == ToolRisk.READ_ONLY }
+    private fun discoveryAllowed(name: String, turnId: String): Boolean = name in setOf(CapabilityDiscovery.TOOL, CLARIFICATION_TOOL) ||
+        additionalTools.any { it.definition.name == name && (it.supportsCapabilityDiscovery || it.supportsLocalDiagnostics) && it.definition.risk == ToolRisk.READ_ONLY } ||
+        (discovery.localWorkResumed(turnId) && additionalTools.any { it.definition.name == name && it.supportsLocalMutation && it.definition.risk == ToolRisk.SESSION_WRITE })
 
     suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
         val arguments = JSONObject(call.argumentsJson)
         val researching = discovery.active(call.turnId)
         // Recheck at execution: a preceding call in this same batch may have declared a blocker.
-        if (researching && !discoveryAllowed(call.name)) {
+        if (researching && !discoveryAllowed(call.name, call.turnId)) {
             database.appendEvent(call.sessionId, "capability.discovery_denied", JSONObject().put("turnId", call.turnId).put("tool", call.name).put("reason", "Discovery is read-only; no acquisition or invocation authorized"))
             error("Capability discovery is read-only; a separate explicit authorization path is required")
         }
         if (call.name == CapabilityDiscovery.TOOL) return discovery.record(call, arguments)
         val adapter = additionalTools.firstOrNull { it.definition.name == call.name }
+        if (researching && adapter?.supportsLocalMutation == true && adapter.definition.risk == ToolRisk.SESSION_WRITE) {
+            val session = requireNotNull(database.loadSession(call.sessionId)) { "Session is unavailable" }
+            val policy = adapter.evaluate(session, ToolCallProposal(call.id, call.name, call.argumentsJson))
+            require(policy.allowed && policy.risk == ToolRisk.SESSION_WRITE && !policy.requiresConfirmation) { "Local mutation is unavailable under its current policy" }
+        }
         val trustedResearch = adapter?.supportsCapabilityDiscovery == true && adapter.definition.risk == ToolRisk.READ_ONLY
         if (trustedResearch) {
             val researchAdapter = requireNotNull(adapter)

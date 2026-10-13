@@ -52,6 +52,18 @@ object WorkspaceDefinitionValidator {
     )
 
     fun supportedComponents(): List<String> = componentTypes.sorted()
+    /** Properties consumed by the legacy renderer; V1 validation remains permissive for old archives. */
+    fun renderedProperties(type: String): Set<String> = setOf("id", "type", "label", "title") + when (type) {
+        "text" -> setOf("text")
+        "status", "metric" -> setOf("value")
+        "counter" -> setOf("initial")
+        "checklist" -> setOf("items")
+        "button" -> setOf("collection", "data")
+        "form" -> setOf("collection", "fields", "submit_label")
+        "list", "gallery" -> setOf("collection", "limit", "primary_field", "secondary_field", "empty_text")
+        "section" -> setOf("children")
+        else -> emptySet()
+    }
 
     fun validate(raw: String): WorkspaceValidationResult {
         val parsed = runCatching { JSONObject(raw) }.getOrNull()

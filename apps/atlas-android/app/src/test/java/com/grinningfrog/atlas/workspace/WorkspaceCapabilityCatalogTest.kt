@@ -8,7 +8,7 @@ import org.junit.Test
 class WorkspaceCapabilityCatalogTest {
     @Test fun catalogMembershipAndPropertiesMatchValidatorTables() {
         val catalog = WorkspaceCapabilityCatalog.describe(full = true)
-        assertEquals(1, catalog.getInt("catalog_version"))
+        assertEquals(2, catalog.getInt("catalog_version"))
         val formats = catalog.getJSONArray("formats")
         val v1 = formats.getJSONObject(0); val v2 = formats.getJSONObject(1)
         fun strings(array: JSONArray) = (0 until array.length()).map(array::getString)

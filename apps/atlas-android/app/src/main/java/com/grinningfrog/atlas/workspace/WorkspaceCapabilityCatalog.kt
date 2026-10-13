@@ -6,7 +6,7 @@ import org.json.JSONObject
 
 /** Format membership and V2 property contracts come from the same tables used by validation. */
 object WorkspaceCapabilityCatalog {
-    const val VERSION = 1
+    const val VERSION = 2
     private val formats = listOf(WorkspaceDefinitionValidator.FORMAT, WorkspaceRuntimeV2.FORMAT)
 
     fun describe(format: String? = null, component: String? = null, full: Boolean = false, examples: Boolean = false): JSONObject {
@@ -24,6 +24,7 @@ object WorkspaceCapabilityCatalog {
             }
             if (id == WorkspaceRuntimeV2.FORMAT) {
                 contract.put("required_structure", "format,title,entry_view,state,collections,actions,views; views contain id/title/components; action steps use type")
+                    .put("charts", JSONObject().put("support", "native").put("kind", "horizontal_bar").put("data", "points:[{label,value}] or collection with label_field/string and value_field/numeric").put("interaction", "Tap bars to inspect exact values; selection is ephemeral").put("limits", "50 points, finite numeric values, zero-inclusive auto scale; no line/scatter/zoom/pan"))
                     .put("action_steps", JSONArray(WorkspaceRuntimeV2.supportedSteps())).put("expression_ops", JSONArray(WorkspaceRuntimeV2.supportedExpressions()))
                     .put("field_types", JSONArray(WorkspaceRuntimeV2.supportedFieldTypes()))
                     .put("collapsible_sections", JSONObject().put("support", "composable").put("recipe", "Boolean state + toggle action + section.visible:{var:state.expanded}; no dedicated accordion component"))
@@ -40,17 +41,22 @@ object WorkspaceCapabilityCatalog {
                         .put("input", "basic pointer-drag strokes").put("storage", "Saved strokes persist locally under the component id; saving is explicit")
                         .put("limitations", JSONArray().put("Fixed white canvas and black strokes").put("No dedicated pressure, eraser, color or palm-rejection controls").put("Saved record limit is 32 KiB")))
                     .put("theme_tokens", JSONObject().put("support", "unsupported"))
-                if (component == "canvas") contract.put("component_properties", JSONObject().put("canvas", JSONArray().put("id").put("type").put("label")))
+                if (full || component != null) contract.put("component_properties", JSONObject().apply {
+                    components.filter { component == null || it == component }.forEach { put(it, JSONArray(WorkspaceDefinitionValidator.renderedProperties(it).sorted())) }
+                }).put("property_contract", "Properties consumed by the V1 renderer; legacy validation remains permissive")
             }
             if (examples) {
-                val candidates = if (id == WorkspaceRuntimeV2.FORMAT && (component == null || component in setOf("section", "button"))) listOf(collapsibleExample())
-                    else if (id == WorkspaceDefinitionValidator.FORMAT && (component == null || component == "canvas")) listOf(canvasExample()) else emptyList()
+                val candidates = if (id == WorkspaceRuntimeV2.FORMAT && component == "chart") listOf(chartExample())
+                    else if (id == WorkspaceRuntimeV2.FORMAT && (component == null || component in setOf("section", "button"))) listOf(collapsibleExample(), chartExample())
+                    else if (id == WorkspaceDefinitionValidator.FORMAT && (component == null || component == "canvas")) listOf(canvasExample()) else if (id == WorkspaceDefinitionValidator.FORMAT && component == "section") listOf(JSONObject("""{"format":"atlas.workspace.v1","title":"Section","components":[{"id":"details","type":"section","label":"Details","children":[{"id":"text","type":"text","text":"Section content"}]}]}""")) else emptyList()
                 contract.put("examples", JSONArray(candidates))
             }
             contracts.put(contract)
         }
         return result.put("formats", contracts)
     }
+
+    fun chartExample() = JSONObject("""{"format":"atlas.workspace.v2","title":"Sample chart","entry_view":"main","state":{},"collections":{},"actions":{},"views":[{"id":"main","title":"Sample chart","components":[{"id":"comparison","type":"chart","label":"Comparison","value_label":"Units","points":[{"label":"First","value":12},{"label":"Second","value":-4},{"label":"Third","value":0}]}]}]}""")
 
     fun canvasExample() = JSONObject("""{"format":"atlas.workspace.v1","title":"Drawing pad","components":[{"id":"drawing","type":"canvas","label":"Draw here"}]}""")
 

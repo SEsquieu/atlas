@@ -16,7 +16,7 @@ object WorkspaceRuntimeV2 {
     const val MAX_EXPRESSION_DEPTH = 16
     private val identifier = Regex("[A-Za-z][A-Za-z0-9_-]{0,63}")
     private val stateTypes = setOf("string", "integer", "decimal", "boolean", "timestamp", "enum")
-    private val componentTypes = setOf("text", "status", "metric", "button", "input", "toggle", "list", "section", "row", "grid", "divider", "progress")
+    private val componentTypes = setOf("text", "status", "metric", "button", "input", "toggle", "list", "section", "row", "grid", "divider", "progress", "chart")
     private val stepTypes = setOf("set", "increment", "toggle", "insert", "update_record", "toggle_record", "remove_record", "navigate", "sequence", "branch", "stop")
     private val expressionOps = setOf("eq", "ne", "gt", "gte", "lt", "lte", "and", "or", "not", "add", "subtract", "multiply", "divide", "concat", "if", "count")
 
@@ -392,6 +392,7 @@ object WorkspaceRuntimeV2 {
             "button" -> setOf("action", "enabled")
             "input" -> setOf("binding", "action", "submit_label")
             "toggle" -> setOf("binding", "action")
+            "chart" -> setOf("points", "collection", "label_field", "value_field", "value_label", "sort_by", "sort_direction", "limit", "empty_text")
             "progress" -> setOf("value", "max")
             "list" -> setOf("collection", "primary_field", "secondary_field", "checked_field", "row_action", "row_action_label", "remove_action", "remove_label", "sort_by", "sort_direction", "limit", "empty_text")
             "section" -> setOf("children", "compact", "show_label")
@@ -421,6 +422,7 @@ object WorkspaceRuntimeV2 {
             component.optString("action").takeIf(String::isNotBlank)?.let { if (!actions.has(it)) errors += "$path.$id references unknown action: $it" }
             component.optString("binding").takeIf(String::isNotBlank)?.let { if (!state.has(it)) errors += "$path.$id references unknown state: $it" }
             component.optString("collection").takeIf(String::isNotBlank)?.let { if (!collections.has(it)) errors += "$path.$id references unknown collection: $it" }
+            if (type == "chart") WorkspaceChart.validate(component, collections, errors, "$path.$id")
             if (type == "list") {
                 val fields = collections.optJSONObject(component.optString("collection"))?.optJSONObject("fields")
                 for (key in listOf("primary_field", "secondary_field", "checked_field", "sort_by")) {

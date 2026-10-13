@@ -38,6 +38,35 @@ class WorkspaceRendererTest {
     @Before fun setup() { RuntimeEnvironment.getApplication().deleteDatabase("atlas.db"); db = AtlasDatabase(RuntimeEnvironment.getApplication()); db.writableDatabase }
     @After fun cleanup() { db.close() }
 
+    @Test fun nativeChartDrawsSignedBarsAndTapSelectionResetsWithNewData() {
+        val initial = WorkspaceCapabilityCatalog.chartExample()
+        val session = db.createSession("Chart", "Test")
+        val workspace = db.createComposableWorkspace("Chart", "", initial.toString(), session.workspaceId)
+        db.activateComposableWorkspace(session.id, workspace.id)
+        val root = mutableStateOf(initial)
+        val refresh = mutableIntStateOf(0)
+        compose.setContent { MaterialTheme { WorkspaceV2Renderer(workspace, root.value, db, refresh.intValue, {}, Modifier.fillMaxSize()) } }
+        compose.waitForIdle()
+        compose.onNodeWithText("Second: -4.0").performClick()
+        compose.onNodeWithText("Selected: Second = -4.0").assertExists()
+        compose.runOnIdle {
+            val view = compose.activity.findViewById<android.view.View>(android.R.id.content)
+            val target = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+            try { view.draw(Canvas(target)) } finally { target.recycle() }
+        }
+        val chart = WorkspaceRenderSurface.diagnostics(workspace.id, workspace.liveRevisionId)!!.getJSONObject("projection").getJSONArray("charts").getJSONObject(0)
+        assertEquals(-4.0, chart.getDouble("minimum"), 0.0)
+        assertEquals(3, chart.getJSONArray("points").length())
+        compose.runOnIdle {
+            val updated = JSONObject(initial.toString())
+            updated.getJSONArray("views").getJSONObject(0).getJSONArray("components").getJSONObject(0).getJSONArray("points").getJSONObject(1).put("value", -8)
+            root.value = updated; refresh.intValue++
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("Second: -8.0").assertExists()
+        compose.onNodeWithText("Selected: Second = -4.0").assertDoesNotExist()
+    }
+
     @Test fun realRendererKeepsOrderAfterToggleRemoveUndoAndCapturesItsViewport() {
         val root = RecordEditingFixture.definition()
         root.getJSONObject("actions").put("remove", JSONObject().put("steps", JSONArray().put(JSONObject().put("type", "remove_record").put("collection", "entries").put("record_id", JSONObject().put("var", "row.id")))))

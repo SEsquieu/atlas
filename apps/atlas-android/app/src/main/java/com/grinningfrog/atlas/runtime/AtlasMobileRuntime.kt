@@ -452,7 +452,15 @@ class AtlasMobileRuntime(
                     userInitiated = true,
                 ),
             )
-            val request = baseRequest.copy(tools = if (toolsAvailable) toolHarness.definitions else emptyList())
+            val turnCalls = database.loadTurnToolCalls(turnId)
+            val suppressed = ToolRetryPolicy.repeatedRejections(turnCalls).filter { name ->
+                name == ToolHarness.CLARIFICATION_TOOL || !toolHarness.evaluate(turnSession, turnCalls.last { it.name == name }.let { ToolCallProposal(it.id, it.name, it.argumentsJson) }).allowed
+            }.toSet()
+            if (suppressed.isNotEmpty()) database.appendEvent(session.id, "tool.retry_suppressed", JSONObject().put("turnId", turnId).put("tools", org.json.JSONArray(suppressed.toList())).put("reason", "Repeated deterministic rejection; current policy unchanged"))
+            val request = baseRequest.copy(
+                tools = if (toolsAvailable) toolHarness.definitions.filter { it.name !in suppressed } else emptyList(),
+                systemPrompt = baseRequest.systemPrompt + if (suppressed.isEmpty()) "" else "\nCORE RETRY LIMIT: ${suppressed.joinToString()} repeatedly rejected. Do not repeat these calls. Correct a different control or report the unresolved blocker honestly; discovery resume_local only restores installed local mutations under ordinary policy.",
+            )
             database.appendEvent(session.id, "context.assembled", JSONObject().apply {
                 put("turnId", turnId); put("step", step); put("messageIds", org.json.JSONArray(context.includedMessageIds))
                 put("omittedMessages", context.omittedMessageCount); put("approximateCharacters", context.approximateCharacters)
@@ -501,9 +509,20 @@ class AtlasMobileRuntime(
                 "Provider returned duplicate tool-call ids in one response"
             }
             val clarificationCalls = response.toolCalls.filter { it.name == ToolHarness.CLARIFICATION_TOOL }
-            require(clarificationCalls.size <= 1) { "Provider returned multiple clarification controls in one step" }
             if (clarificationCalls.isNotEmpty()) {
-                require(response.toolCalls.size == 1) { "Clarification control cannot be mixed with physical tool proposals" }
+                val rejection = if (ToolHarness.CLARIFICATION_TOOL in suppressed) StructuredToolRejection("Repeated invalid clarification control", "clarification_retry_limit", JSONObject().put("hint", "Report the unresolved question; do not repeat the rejected control in this turn."))
+                    else ClarificationControl.rejection(response.toolCalls, database.loadPendingClarification(session.id)?.id)
+                if (rejection != null) {
+                    val prior = database.loadTurnToolCalls(turnId)
+                    require(prior.size + response.toolCalls.size <= AgentLoopPolicy.MAX_TOOL_CALLS) { "Agent exceeded the tool budget" }
+                    response.toolCalls.forEachIndexed { index, proposal ->
+                        val call = prepareToolCall(turnSession, turnId, step, index, proposal, prior, index).copy(status = ToolCallStatus.REJECTED, requiresConfirmation = false, error = rejection.message)
+                        database.insertToolCall(call)
+                        database.appendEvent(session.id, "clarification.control_rejected", JSONObject().put("turnId", turnId).put("toolCallId", call.id).put("error", rejection.message).put("recovery", rejection.recovery))
+                        recordToolResult(call, ToolFailurePayload.json(rejection, rejection.message.orEmpty()).toString())
+                    }
+                    continue
+                }
                 when (handleClarificationControl(session, turnId, clarificationCalls.single(), observation, spoken)) {
                     ClarificationControlOutcome.WAITING -> {
                         database.updateTurn(turnId, TurnStatus.WAITING_FOR_USER_CLARIFICATION, stepCount = step)

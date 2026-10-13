@@ -179,6 +179,7 @@ private fun V2Component(component: JSONObject, state: JSONObject, records: Map<S
             val maximum = (value("max", 100) as? Number)?.toFloat()?.coerceAtLeast(1f) ?: 100f
             Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) { Text(label); LinearProgressIndicator({ (current / maximum).coerceIn(0f, 1f) }, Modifier.fillMaxWidth()) }
         }
+        "chart" -> WorkspaceBarChart(component, records, modifier)
         "list" -> {
             val items = records[component.optString("collection")].orEmpty()
             Card(modifier) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

@@ -46,6 +46,43 @@ class CapabilityDiscoveryTest {
     private fun call(name: String, args: String = "{}", turnId: String = turn.id) = AtlasToolCall(UUID.randomUUID().toString(), session.id, turnId, name, args, ToolCallStatus.PROPOSED, ToolRisk.SESSION_WRITE, false, UUID.randomUUID().toString(), createdAtMs = 0, updatedAtMs = 0)
     private val blocked = """{"stage":"blocked","objective":"Analyze this unsupported format","missing_capability":"Format conversion"}"""
     private val candidate = """{"stage":"candidate","candidate":"Example converter","sources":["https://example.org/docs"],"assessment":"unverified","applicability":"Documentation describes conversion of the requested format","requirements":"Availability, access and cost remain unverified"}"""
+    @Test fun resumeRestoresOnlyInstalledLocalMutationsAndNewBlockerReentersDiscovery() = runTest {
+        var allowed = true
+        val local = object : AtlasToolAdapter {
+            override val supportsLocalMutation = true
+            override val definition = ToolDefinition("local_edit", "Local", "{}", risk = ToolRisk.SESSION_WRITE)
+            override fun evaluate(session: AtlasSession, proposal: ToolCallProposal) = ToolPolicyDecision(allowed, false, ToolRisk.SESSION_WRITE, "Realm check")
+            override suspend fun execute(call: AtlasToolCall): ToolExecutionResult { executions++; return ToolExecutionResult("{}") }
+        }
+        val h = harness(local, adapter("external", ToolRisk.EXTERNAL_EFFECT), adapter("untrusted_write", ToolRisk.SESSION_WRITE))
+        h.execute(call(CapabilityDiscovery.TOOL, blocked))
+        assertFalse(h.evaluate(session, ToolCallProposal("edit", "local_edit", "{}")).allowed)
+        h.execute(call(CapabilityDiscovery.TOOL, """{"stage":"no_candidate","reason":"Use existing local behavior"}"""))
+        assertFalse(h.evaluate(session, ToolCallProposal("edit", "local_edit", "{}")).allowed)
+        h.execute(call(CapabilityDiscovery.TOOL, """{"stage":"resume_local","reason":"Existing local behavior satisfies the request"}"""))
+        assertTrue(h.evaluate(session, ToolCallProposal("edit", "local_edit", "{}")).allowed)
+        h.execute(call("local_edit")); assertEquals(1, executions)
+        for (name in listOf("external", "untrusted_write")) {
+            assertFalse(h.evaluate(session, ToolCallProposal(name, name, "{}")).allowed)
+            assertTrue(runCatching { h.execute(call(name)) }.isFailure)
+        }
+        allowed = false
+        assertFalse(h.evaluate(session, ToolCallProposal("edit", "local_edit", "{}")).allowed)
+        assertTrue(runCatching { h.execute(call("local_edit")) }.isFailure)
+        allowed = true
+        h.execute(call(CapabilityDiscovery.TOOL, """{"stage":"blocked","objective":"Another objective","missing_capability":"Another capability"}"""))
+        assertTrue(runCatching { h.execute(call("local_edit")) }.isFailure)
+        assertEquals(1, executions)
+        assertTrue(db.loadRecentEvents(session.id).any { it.type == "capability.local_work_resumed" })
+    }
+    @Test fun resumeCannotUsePriorTurnBlockerOrGrantAuthorization() = runTest {
+        val h = harness()
+        h.execute(call(CapabilityDiscovery.TOOL, blocked))
+        val next = db.createTurn(session.id, "user")
+        assertTrue(runCatching { h.execute(call(CapabilityDiscovery.TOOL, """{"stage":"resume_local","reason":"Resume"}""", next.id)) }.isFailure)
+        val result = JSONObject(h.execute(call(CapabilityDiscovery.TOOL, """{"stage":"resume_local","reason":"Resume existing local tools"}""")).resultJson)
+        assertTrue(result.getBoolean("local_work_resumed")); assertFalse(result.getBoolean("authorization_granted")); assertFalse(result.getBoolean("candidate_invoked"))
+    }
     @Test fun noCandidateCannotLaunderUnrecordedSources() = runTest {
         val h = harness(adapter("web_search", ToolRisk.READ_ONLY, true))
         h.execute(call(CapabilityDiscovery.TOOL, blocked))
