@@ -29,6 +29,19 @@ class WorkspaceReliabilityTest {
         db.close(); db = AtlasDatabase(RuntimeEnvironment.getApplication())
         assertEquals(before, db.listWorkspaceRecords(workspace.id, "entries").map { it.id })
     }
+    @Test fun archiveKeepsCreationOrderAfterEditsAndRegeneratesIdsWithoutTieReordering() {
+        val root = RecordEditingFixture.definition()
+        val workspace = db.createComposableWorkspace("Archive order", "", root.toString())
+        repeat(3) { db.addWorkspaceRecord(workspace.id, "entries", RecordEditingFixture.data("Row $it").toString(), 10) }
+        val before = db.listWorkspaceRecords(workspace.id, "entries")
+        db.applyWorkspaceAction(workspace.id, root, "toggleEntry", rowCollection = "entries", rowId = before.first().id)
+        val imported = db.importArchive(ArchiveCodec.preview(db.exportComposableWorkspace(workspace.id)))
+        val restored = db.listWorkspaceRecords(imported.id, "entries")
+        assertEquals(before.map { JSONObject(it.dataJson).getString("name") }, restored.map { JSONObject(it.dataJson).getString("name") })
+        assertTrue(restored.all { it.createdAtMs == 10L })
+        assertTrue(restored.none { restoredRow -> before.any { it.id == restoredRow.id } })
+        assertTrue(JSONObject(restored.first().dataJson).getBoolean("done"))
+    }
     @Test fun requiredFieldDefaultsBackfillLiveRecordsAtomically() {
         val root = RecordEditingFixture.definition()
         val workspace = db.createComposableWorkspace("Migration", "", root.toString())

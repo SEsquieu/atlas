@@ -28,6 +28,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.findViewTreeLifecycleOwner
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -96,7 +98,7 @@ internal fun WorkspaceV2Renderer(
     val surfaceColor = MaterialTheme.colorScheme.background
     DisposableEffect(owner, graphicsLayer, hostView) {
         WorkspaceRenderSurface.register(owner, workspace.id, workspace.liveRevisionId) {
-            check(hostView.isShown && hostView.windowVisibility == android.view.View.VISIBLE && hostView.hasWindowFocus()) { "Atlas workspace must be visible in the foreground to capture" }
+            check(hostView.isShown && hostView.windowVisibility == android.view.View.VISIBLE && hostView.findViewTreeLifecycleOwner()?.lifecycle?.currentState == Lifecycle.State.RESUMED) { "Atlas workspace must be visible in the foreground to capture" }
             check(graphicsLayer.size.width > 0 && graphicsLayer.size.height > 0) { "Workspace has not drawn yet" }
             check(graphicsLayer.size.width.toLong() * graphicsLayer.size.height <= 8_000_000) { "Workspace viewport exceeds capture budget" }
             graphicsLayer.toImageBitmap().asAndroidBitmap()

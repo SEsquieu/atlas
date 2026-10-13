@@ -492,9 +492,9 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             for (index in records.length() - 1 downTo 0) {
                 val row = records.getJSONObject(index)
                 insertOrThrow("workspace_records", null, ContentValues().apply {
-                    put("record_id", UUID.randomUUID().toString()); put("composable_workspace_id", workspace.id)
+                    put("record_id", "${workspace.id}:${row.getString("id")}"); put("composable_workspace_id", workspace.id)
                     put("collection_name", row.getString("collection")); put("data_json", row.getJSONObject("data").toString())
-                    put("created_at", row.optLong("updated_at_ms", now)); put("updated_at", row.optLong("updated_at_ms", now))
+                    put("created_at", row.optLong("created_at_ms", row.optLong("updated_at_ms", now))); put("updated_at", row.optLong("updated_at_ms", now))
                 })
             }
             if (root.getJSONObject("workspace").getString("status") == "ARCHIVED") setComposableWorkspaceArchived(workspace.id, true)
@@ -930,8 +930,8 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         return record
     }
 
-    fun listWorkspaceRecords(workspaceId: String, collection: String? = null, limit: Int = 100): List<WorkspaceRecord> {
-        val stableOrder = collection != "AtlasRuntimeState" && loadLiveWorkspaceRevision(workspaceId)?.let { JSONObject(it.definitionJson).optString("format") == WorkspaceRuntimeV2.FORMAT } == true
+    fun listWorkspaceRecords(workspaceId: String, collection: String? = null, limit: Int = 100, archiveOrder: Boolean = false): List<WorkspaceRecord> {
+        val stableOrder = !archiveOrder && collection != "AtlasRuntimeState" && loadLiveWorkspaceRevision(workspaceId)?.let { JSONObject(it.definitionJson).optString("format") == WorkspaceRuntimeV2.FORMAT } == true
         val where = if (collection == null) "composable_workspace_id = ?" else "composable_workspace_id = ? AND collection_name = ?"
         val args = if (collection == null) arrayOf(workspaceId) else arrayOf(workspaceId, collection)
         return readableDatabase.query("workspace_records", arrayOf("record_id","composable_workspace_id","collection_name","data_json","created_at","updated_at"), where, args, null, null, (if (stableOrder) "created_at ASC, record_id ASC" else "updated_at DESC, rowid DESC"), limit.coerceIn(1, 5_000).toString()).use { cursor ->
@@ -1117,7 +1117,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     private fun allWorkspaceRecords(workspaceId: String): List<WorkspaceRecord> {
         val count = readableDatabase.rawQuery("SELECT COUNT(*) FROM workspace_records WHERE composable_workspace_id=?", arrayOf(workspaceId)).use { it.moveToFirst(); it.getInt(0) }
         require(count <= 5000) { "Workspace has $count records; export limit is 5,000. No partial export was created." }
-        return listWorkspaceRecords(workspaceId, limit = 5000)
+        return listWorkspaceRecords(workspaceId, limit = 5000, archiveOrder = true)
     }
 
     fun exportComposableWorkspace(workspaceId: String): JSONObject = writableDatabase.transaction {
@@ -1133,7 +1133,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 put("id", revision.id); put("content_hash", revision.contentHash); put("definition", JSONObject(revision.definitionJson))
             })
             put("records", JSONArray().apply { allWorkspaceRecords(workspaceId).forEach { record ->
-                put(JSONObject().apply { put("id", record.id); put("collection", record.collection); put("data", JSONObject(record.dataJson)); put("updated_at_ms", record.updatedAtMs) })
+                put(JSONObject().apply { put("id", record.id); put("collection", record.collection); put("data", JSONObject(record.dataJson)); put("created_at_ms", record.createdAtMs); put("updated_at_ms", record.updatedAtMs) })
             } })
             put("completeness", JSONObject().put("records", "all").put("revisionHistory", false).put("grants", false))
             put("notice", "Capability grants and credentials are intentionally excluded.")

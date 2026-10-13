@@ -1,7 +1,9 @@
 package com.grinningfrog.atlas.workspace
 
 import android.app.Application
+import android.graphics.Canvas
 import android.graphics.Bitmap
+import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -9,7 +11,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.test.isToggleable
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -24,12 +26,14 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class WorkspaceRendererTest {
-    @get:Rule val compose = createComposeRule()
+    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     private lateinit var db: AtlasDatabase
     @Before fun setup() { RuntimeEnvironment.getApplication().deleteDatabase("atlas.db"); db = AtlasDatabase(RuntimeEnvironment.getApplication()); db.writableDatabase }
     @After fun cleanup() { db.close() }
@@ -51,7 +55,16 @@ class WorkspaceRendererTest {
             MaterialTheme { if (visible.value) WorkspaceV2Renderer(workspace, root, db, refresh.intValue, { refresh.intValue++ }, Modifier.fillMaxSize()) }
         }
         compose.waitForIdle()
+        fun draw() {
+            compose.waitForIdle()
+            compose.runOnIdle {
+                val view = compose.activity.findViewById<android.view.View>(android.R.id.content)
+                val target = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+                try { view.draw(Canvas(target)) } finally { target.recycle() }
+            }
+        }
         fun order(): List<String> {
+            draw()
             val snapshot = WorkspaceRenderSurface.diagnostics(workspace.id, workspace.liveRevisionId)!!
             val ids = snapshot.getJSONObject("projection").getJSONArray("lists").getJSONObject(0).getJSONArray("ordered_record_ids")
             return (0 until ids.length()).map(ids::getString)
