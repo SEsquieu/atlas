@@ -59,6 +59,7 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
             if (toolsAvailable) appendLine("Use the supplied tools when you need current device information or must update explicit working/task memory.")
             if (toolsAvailable) appendLine(CapabilityDiscovery.instructions)
             appendLine("Never claim a tool ran until Atlas returns its result. Never invent observations or external effects.")
+            appendLine("For Atlas workspace layout or UI bugs, use workspace_render_diagnostics and workspace_capture_view. UI screenshots depict only the visible workspace panel; physical camera images do not show the app screen. Diagnostics are installed read-only capabilities, available during discovery. Never claim a projection or simulation proves visual correctness.")
             appendLine("Treat physical observations according to their timestamps; call capture_current_view when the supplied view is insufficient or stale.")
             if (toolsAvailable) appendLine("Use atlas_remember for concise session facts, decisions, constraints, and task progress that later turns must retain. Durable user memory requires confirmation.")
             appendLine("Keep spoken answers direct, but do not sacrifice necessary safety context.")
@@ -92,7 +93,7 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
             if (observation != null) {
                 val age = (nowMs - observation.observedAtMs).coerceAtLeast(0)
                 appendLine()
-                appendLine("PHYSICAL CONTEXT: observation=${observation.id}; ageMs=$age; stability=${observation.stability}; motion=${observation.motionState}; confidence=${observation.confidence ?: "unknown"}.")
+                appendLine("${if (observation.media.purpose == com.grinningfrog.atlas.model.MediaPurpose.WORKSPACE_UI) "WORKSPACE UI CONTEXT (not physical)" else "PHYSICAL CONTEXT"}: observation=${observation.id}; ageMs=$age; stability=${observation.stability}; motion=${observation.motionState}; confidence=${observation.confidence ?: "unknown"}.")
                 observation.summary?.let { appendLine("Prior interpretation: $it") }
             } else {
                 appendLine()

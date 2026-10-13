@@ -69,7 +69,7 @@ data class ChatGptUsageSummary(
     val lastHostedSearchStatus: String? = null,
 )
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 12) {
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 13) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         db.setForeignKeyConstraintsEnabled(true)
@@ -293,6 +293,16 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             FOREIGN KEY(composable_workspace_id) REFERENCES composable_workspaces(composable_workspace_id) ON DELETE CASCADE
         )""".trimIndent())
         db.execSQL("CREATE INDEX IF NOT EXISTS workspace_records_collection ON workspace_records(composable_workspace_id,collection_name,updated_at DESC)")
+        createWorkspaceUndoTable(db)
+    }
+
+    private fun createWorkspaceUndoTable(db: SQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS workspace_record_undo (
+            undo_token TEXT PRIMARY KEY, composable_workspace_id TEXT NOT NULL, record_id TEXT NOT NULL,
+            collection_name TEXT NOT NULL, data_json TEXT NOT NULL, created_at INTEGER NOT NULL,
+            deleted_at INTEGER NOT NULL,
+            FOREIGN KEY(composable_workspace_id) REFERENCES composable_workspaces(composable_workspace_id) ON DELETE CASCADE
+        )""".trimIndent())
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -376,6 +386,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 13) createWorkspaceUndoTable(db)
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE observations ADD COLUMN media_id TEXT")
             db.execSQL("ALTER TABLE observations ADD COLUMN media_mime TEXT NOT NULL DEFAULT 'image/jpeg'")
@@ -831,6 +842,31 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         "SELECT r.revision_id,r.composable_workspace_id,r.parent_revision_id,r.definition_json,r.content_hash,r.author_type,r.source_session_id,r.source_turn_id,r.purpose,r.created_at FROM workspace_revisions r JOIN composable_workspaces w ON w.live_revision_id = r.revision_id WHERE w.composable_workspace_id = ?", arrayOf(workspaceId)
     ).use { if (it.moveToFirst()) it.toWorkspaceRevision() else null }
 
+    fun workspaceRecordMigration(workspaceId: String, definition: JSONObject): Pair<List<WorkspaceRecord>, JSONObject> {
+        val changes = mutableListOf<WorkspaceRecord>()
+        val details = JSONArray()
+        var checked = 0
+        var bytes = 0L
+        readableDatabase.query("workspace_records", arrayOf("record_id", "collection_name", "data_json", "created_at", "updated_at"),
+            "composable_workspace_id = ? AND collection_name != 'AtlasRuntimeState'", arrayOf(workspaceId), null, null, "created_at ASC, rowid ASC").use { cursor ->
+            while (cursor.moveToNext()) {
+                require(++checked <= 30_000) { "Record migration exceeds 30,000 records" }
+                bytes += cursor.getString(2).toByteArray().size
+                require(bytes <= 32L * 1024 * 1024) { "Record migration exceeds 32 MiB" }
+                val old = JSONObject(cursor.getString(2))
+                val next = try { WorkspaceRuntimeV2.migrateRecord(definition, cursor.getString(1), old) }
+                    catch (error: Exception) { throw IllegalArgumentException("Record ${cursor.getString(0)} in ${cursor.getString(1)} is incompatible: ${error.message}", error) }
+                require(next.toString().toByteArray().size <= 32 * 1024) { "Migrated record exceeds 32 KiB" }
+                if (next.toString() != old.toString()) {
+                    changes += WorkspaceRecord(cursor.getString(0), workspaceId, cursor.getString(1), next.toString(), cursor.getLong(3), cursor.getLong(4))
+                    if (details.length() < 50) details.put(JSONObject().put("record_id", cursor.getString(0)).put("collection", cursor.getString(1))
+                        .put("added_fields", JSONArray(next.keys().asSequence().filter { !old.has(it) }.toList())))
+                }
+            }
+        }
+        return changes to JSONObject().put("records_checked", checked).put("records_backfilled", changes.size).put("changes", details).put("changes_truncated", changes.size > 50)
+    }
+
     @Synchronized
     fun replaceWorkspaceDefinition(workspaceId: String, baseRevisionId: String, definitionJson: String, authorType: String, sourceSessionId: String?, sourceTurnId: String?, purpose: String, nowMs: Long = System.currentTimeMillis()): WorkspaceRevision {
         val validation = WorkspaceDefinitionValidator.validate(definitionJson)
@@ -840,6 +876,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             listWorkspaceRecords(workspaceId, "AtlasRuntimeState", 1).firstOrNull()
                 ?.let { runCatching { JSONObject(it.dataJson).getJSONObject("state") }.getOrNull() }
         } else null
+        val recordMigration = if (definition.optString("format") == WorkspaceRuntimeV2.FORMAT) workspaceRecordMigration(workspaceId, definition) else null
         val revisionId = UUID.randomUUID().toString()
         val revision = WorkspaceRevision(revisionId, workspaceId, baseRevisionId, definitionJson, sha256(definitionJson), authorType, sourceSessionId, sourceTurnId, purpose.take(500), nowMs)
         writableDatabase.transaction {
@@ -849,6 +886,10 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             insertOrThrow("workspace_revisions", null, revisionValues(revisionId, workspaceId, baseRevisionId, definitionJson, authorType, sourceSessionId, sourceTurnId, purpose, nowMs))
             if (definition.optString("format") == WorkspaceRuntimeV2.FORMAT) {
                 val migration = WorkspaceRuntimeV2.migrateState(definition, persistedState)
+                recordMigration?.first?.forEach { record ->
+                    check(update("workspace_records", ContentValues().apply { put("data_json", record.dataJson) }, "record_id = ? AND composable_workspace_id = ?", arrayOf(record.id, workspaceId)) == 1)
+                }
+                recordWorkspaceEvent("workspace.records_migrated", workspaceId, recordMigration?.second ?: JSONObject(), nowMs)
                 insertOrThrow("workspace_records", null, ContentValues().apply {
                     put("record_id", UUID.randomUUID().toString()); put("composable_workspace_id", workspaceId); put("collection_name", "AtlasRuntimeState")
                     put("data_json", JSONObject().put("state", migration.state).put("migration", JSONObject()
@@ -890,9 +931,10 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     fun listWorkspaceRecords(workspaceId: String, collection: String? = null, limit: Int = 100): List<WorkspaceRecord> {
+        val stableOrder = collection != "AtlasRuntimeState" && loadLiveWorkspaceRevision(workspaceId)?.let { JSONObject(it.definitionJson).optString("format") == WorkspaceRuntimeV2.FORMAT } == true
         val where = if (collection == null) "composable_workspace_id = ?" else "composable_workspace_id = ? AND collection_name = ?"
         val args = if (collection == null) arrayOf(workspaceId) else arrayOf(workspaceId, collection)
-        return readableDatabase.query("workspace_records", arrayOf("record_id","composable_workspace_id","collection_name","data_json","created_at","updated_at"), where, args, null, null, "updated_at DESC, rowid DESC", limit.coerceIn(1, 5_000).toString()).use { cursor ->
+        return readableDatabase.query("workspace_records", arrayOf("record_id","composable_workspace_id","collection_name","data_json","created_at","updated_at"), where, args, null, null, (if (stableOrder) "created_at ASC, record_id ASC" else "updated_at DESC, rowid DESC"), limit.coerceIn(1, 5_000).toString()).use { cursor ->
             buildList { while (cursor.moveToNext()) add(WorkspaceRecord(cursor.getString(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getLong(5))) }
         }
     }
@@ -931,8 +973,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         val records = workspaceExecutionRecords(workspaceId, definition)
         if (rowId != null && expectedData != null) requireExpectedRecord(records, rowCollection ?: error("row_collection is required"), rowId, expectedData)
         val result = WorkspaceRuntimeV2.executeAction(definition, actionId, loadWorkspaceRuntimeState(workspaceId, definition), records, rowCollection, rowId)
-        persistWorkspaceExecution(workspaceId, result, nowMs, source, actionId)
-        return result
+        return result.copy(undoTokens = persistWorkspaceExecution(workspaceId, result, nowMs, source, actionId))
     }
 
     @Synchronized
@@ -953,18 +994,19 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         return result
     }
 
-    private fun persistWorkspaceExecution(workspaceId: String, result: WorkspaceExecutionResult, nowMs: Long, source: String, actionId: String) {
+    private fun persistWorkspaceExecution(workspaceId: String, result: WorkspaceExecutionResult, nowMs: Long, source: String, actionId: String): List<String> {
+        val undoTokens = mutableListOf<String>()
         writableDatabase.transaction {
             result.mutations.filterIsInstance<WorkspaceMutation.InsertRecord>().groupingBy { it.collection }.eachCount().forEach { (collection, additions) ->
                 val existing = rawQuery("SELECT COUNT(*) FROM workspace_records WHERE composable_workspace_id = ? AND collection_name = ?", arrayOf(workspaceId, collection)).use { cursor ->
                     cursor.moveToFirst(); cursor.getInt(0)
                 }
-                require(existing + additions <= 5_000) { "Collection $collection exceeds 5,000 records" }
+                require(existing + additions - result.mutations.filterIsInstance<WorkspaceMutation.DeleteRecord>().count { it.collection == collection } <= 5_000) { "Collection $collection exceeds 5,000 records" }
             }
             result.mutations.filterIsInstance<WorkspaceMutation.InsertRecord>().forEach { mutation ->
                 insertOrThrow("workspace_records", null, ContentValues().apply {
-                    put("record_id", UUID.randomUUID().toString()); put("composable_workspace_id", workspaceId); put("collection_name", mutation.collection)
-                    put("data_json", mutation.data.toString()); put("created_at", nowMs); put("updated_at", nowMs)
+                    put("record_id", mutation.recordId ?: UUID.randomUUID().toString()); put("composable_workspace_id", workspaceId); put("collection_name", mutation.collection)
+                    put("data_json", mutation.data.toString()); put("created_at", mutation.createdAtMs ?: nowMs); put("updated_at", nowMs)
                 })
             }
             result.mutations.filterIsInstance<WorkspaceMutation.UpdateRecord>().forEach { mutation ->
@@ -972,6 +1014,20 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                     put("data_json", mutation.data.toString()); put("updated_at", nowMs)
                 }, "record_id = ? AND composable_workspace_id = ? AND collection_name = ?", arrayOf(mutation.recordId, workspaceId, mutation.collection)) == 1) { "Record changed or is unavailable" }
             }
+            result.mutations.filterIsInstance<WorkspaceMutation.DeleteRecord>().forEach { mutation ->
+                val record = query("workspace_records", arrayOf("data_json", "created_at"), "record_id = ? AND composable_workspace_id = ? AND collection_name = ?",
+                    arrayOf(mutation.recordId, workspaceId, mutation.collection), null, null, null).use { cursor ->
+                    check(cursor.moveToFirst()) { "Record is unavailable" }; cursor.getString(0) to cursor.getLong(1)
+                }
+                val token = UUID.randomUUID().toString()
+                insertOrThrow("workspace_record_undo", null, ContentValues().apply {
+                    put("undo_token", token); put("composable_workspace_id", workspaceId); put("record_id", mutation.recordId)
+                    put("collection_name", mutation.collection); put("data_json", record.first); put("created_at", record.second); put("deleted_at", nowMs)
+                })
+                check(delete("workspace_records", "record_id = ? AND composable_workspace_id = ? AND collection_name = ?", arrayOf(mutation.recordId, workspaceId, mutation.collection)) == 1)
+                undoTokens += token
+            }
+            execSQL("DELETE FROM workspace_record_undo WHERE undo_token IN (SELECT undo_token FROM workspace_record_undo WHERE composable_workspace_id = ? ORDER BY deleted_at DESC, rowid DESC LIMIT -1 OFFSET 50)", arrayOf(workspaceId))
             insertOrThrow("workspace_records", null, ContentValues().apply {
                 put("record_id", UUID.randomUUID().toString()); put("composable_workspace_id", workspaceId); put("collection_name", "AtlasRuntimeState")
                 put("data_json", JSONObject().put("state", result.state).toString()); put("created_at", nowMs); put("updated_at", nowMs)
@@ -983,10 +1039,63 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                         put(JSONObject().put("record_id", mutation.recordId).put("collection", mutation.collection).put("fields", JSONArray(mutation.data.keys().asSequence().toList())))
                     }
                 })
+            data.put("record_deletions", JSONArray(result.mutations.filterIsInstance<WorkspaceMutation.DeleteRecord>().map { it.recordId })).put("undo_tokens", JSONArray(undoTokens))
             rawQuery("SELECT session_id FROM sessions WHERE active_composable_workspace_id = ?", arrayOf(workspaceId)).use { cursor ->
                 while (cursor.moveToNext()) appendEventLocked(this, cursor.getString(0), "workspace.action_applied", nowMs, data.toString())
             }
         }
+        return undoTokens
+    }
+
+    @Synchronized
+    fun recordWorkspaceEvent(type: String, workspaceId: String, data: JSONObject, nowMs: Long = System.currentTimeMillis()) {
+        data.put("workspace_id", workspaceId)
+        readableDatabase.rawQuery("SELECT session_id FROM sessions WHERE active_composable_workspace_id = ?", arrayOf(workspaceId)).use { cursor ->
+            while (cursor.moveToNext()) appendEventLocked(writableDatabase, cursor.getString(0), type, nowMs, data.toString())
+        }
+    }
+
+    fun pendingWorkspaceUndo(workspaceId: String): JSONArray = queryRows("workspace_record_undo", "composable_workspace_id = ?", arrayOf(workspaceId), "deleted_at DESC, rowid DESC")
+
+    @Synchronized
+    fun deleteWorkspaceRecord(workspaceId: String, baseRevisionId: String, collection: String, recordId: String, expectedData: JSONObject, sessionId: String? = null, navigationSequence: Long? = null, nowMs: Long = System.currentTimeMillis()): WorkspaceExecutionResult {
+        val definition = recordOperationDefinition(workspaceId, baseRevisionId, sessionId, navigationSequence)
+        val records = workspaceExecutionRecords(workspaceId, definition)
+        requireExpectedRecord(records, collection, recordId, expectedData)
+        val result = WorkspaceRuntimeV2.executeRecordStep(definition, loadWorkspaceRuntimeState(workspaceId, definition), records,
+            JSONObject().put("type", "remove_record").put("collection", collection).put("record_id", recordId))
+        return result.copy(undoTokens = persistWorkspaceExecution(workspaceId, result, nowMs, "MODEL", "remove_record"))
+    }
+
+    private fun recordOperationDefinition(workspaceId: String, baseRevisionId: String, sessionId: String?, navigationSequence: Long?): JSONObject {
+        if (sessionId != null) {
+            val session = loadSession(sessionId) ?: error("Session is unavailable")
+            require(session.activeComposableWorkspaceId == workspaceId && session.workspaceNavigationSequence == navigationSequence && loadComposableWorkspace(workspaceId)?.realmId == session.workspaceId) { "Workspace context changed; inspect again" }
+        }
+        val revision = loadLiveWorkspaceRevision(workspaceId) ?: error("Workspace is unavailable")
+        require(revision.id == baseRevisionId) { "Workspace revision changed; inspect again" }
+        val root = JSONObject(revision.definitionJson)
+        requireCurrentWorkspaceDefinition(workspaceId, root)
+        require(root.optString("format") == WorkspaceRuntimeV2.FORMAT) { "Record operations require atlas.workspace.v2" }
+        return root
+    }
+
+    @Synchronized
+    fun restoreWorkspaceRecord(workspaceId: String, baseRevisionId: String, undoToken: String, sessionId: String? = null, navigationSequence: Long? = null, nowMs: Long = System.currentTimeMillis()): WorkspaceExecutionResult {
+        val definition = recordOperationDefinition(workspaceId, baseRevisionId, sessionId, navigationSequence)
+        val row = readableDatabase.query("workspace_record_undo", null, "composable_workspace_id = ? AND undo_token = ?", arrayOf(workspaceId, undoToken), null, null, null).use { cursor ->
+            check(cursor.moveToFirst()) { "Undo is unavailable or already used" }
+            WorkspaceRecord(cursor.getString(cursor.getColumnIndexOrThrow("record_id")), workspaceId, cursor.getString(cursor.getColumnIndexOrThrow("collection_name")), cursor.getString(cursor.getColumnIndexOrThrow("data_json")), cursor.getLong(cursor.getColumnIndexOrThrow("created_at")), nowMs)
+        }
+        val data = WorkspaceRuntimeV2.migrateRecord(definition, row.collection, JSONObject(row.dataJson))
+        val result = WorkspaceRuntimeV2.executeRecordStep(definition, loadWorkspaceRuntimeState(workspaceId, definition), workspaceExecutionRecords(workspaceId, definition),
+            JSONObject().put("type", "insert").put("collection", row.collection).put("data", data))
+        val restored = result.copy(mutations = result.mutations.map { if (it is WorkspaceMutation.InsertRecord) it.copy(recordId = row.id, createdAtMs = row.createdAtMs) else it })
+        writableDatabase.transaction {
+            persistWorkspaceExecution(workspaceId, restored, nowMs, if (sessionId == null) "UI" else "MODEL", "restore_record")
+            check(delete("workspace_record_undo", "composable_workspace_id = ? AND undo_token = ?", arrayOf(workspaceId, undoToken)) == 1)
+        }
+        return restored
     }
 
     @Synchronized
@@ -1249,7 +1358,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             })
             appendEventLocked(this, observation.sessionId, "observation.captured", observation.availableAtMs, JSONObject().apply {
                 put("observationId", observation.id); put("observedAtMs", observation.observedAtMs); put("availableAtMs", observation.availableAtMs)
-                put("mediaId", observation.media.id); put("mediaBytes", observation.media.byteSize); put("mediaSha256", observation.media.sha256)
+                put("mediaId", observation.media.id); put("mediaPurpose", observation.media.purpose.name); put("mediaBytes", observation.media.byteSize); put("mediaSha256", observation.media.sha256)
                 put("totalMs", observation.timing.totalMs); put("captureMs", observation.timing.captureMs)
                 put("processingMs", observation.timing.processingMs); put("motionState", observation.motionState.name)
             }.toString())
@@ -1267,7 +1376,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     fun loadLatestObservation(sessionId: String): VisualObservation? = readableDatabase.rawQuery(
         """SELECT observation_id,media_path,media_id,media_mime,media_width,media_height,media_bytes,media_sha256,media_purpose,
             media_raw_bytes,media_processing_ms,observed_at,available_at,total_ms,capture_ms,processing_ms,
-            confidence,stability,motion_state,fingerprint,summary,interpreted_at FROM observations WHERE session_id = ? ORDER BY observed_at DESC LIMIT 1""".trimIndent(),
+            confidence,stability,motion_state,fingerprint,summary,interpreted_at FROM observations WHERE session_id = ? AND media_purpose != 'WORKSPACE_UI' ORDER BY observed_at DESC LIMIT 1""".trimIndent(),
         arrayOf(sessionId)
     ).use { cursor ->
         if (!cursor.moveToFirst()) null else VisualObservation(

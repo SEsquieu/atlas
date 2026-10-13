@@ -17,7 +17,7 @@ object WorkspaceRuntimeV2 {
     private val identifier = Regex("[A-Za-z][A-Za-z0-9_-]{0,63}")
     private val stateTypes = setOf("string", "integer", "decimal", "boolean", "timestamp", "enum")
     private val componentTypes = setOf("text", "status", "metric", "button", "input", "toggle", "list", "section", "row", "grid", "divider", "progress")
-    private val stepTypes = setOf("set", "increment", "toggle", "insert", "update_record", "toggle_record", "navigate", "sequence", "branch", "stop")
+    private val stepTypes = setOf("set", "increment", "toggle", "insert", "update_record", "toggle_record", "remove_record", "navigate", "sequence", "branch", "stop")
     private val expressionOps = setOf("eq", "ne", "gt", "gte", "lt", "lte", "and", "or", "not", "add", "subtract", "multiply", "divide", "concat", "if", "count")
 
     fun validate(root: JSONObject): WorkspaceValidationResult {
@@ -46,7 +46,9 @@ object WorkspaceRuntimeV2 {
             if (fields == null) errors += "collections.$name.fields is required"
             else fields.keys().forEach { field ->
                 if (!field.matches(identifier)) errors += "Invalid field name: $name.$field"
-                if (fields.optJSONObject(field)?.optString("type") !in stateTypes) errors += "Unsupported field type: $name.$field"
+                val schema = fields.optJSONObject(field)
+                if (schema?.optString("type") !in stateTypes) errors += "Unsupported field type: $name.$field"
+                if (schema?.has("initial") == true && !valueMatchesType(schema.opt("initial"), schema.optString("type"), schema.optJSONArray("values"))) errors += "Invalid collection default: $name.$field"
             }
         }
 
@@ -276,6 +278,14 @@ object WorkspaceRuntimeV2 {
                         data.keys().forEach { key -> target.put(key, data.opt(key)) }
                         mutations += WorkspaceMutation.UpdateRecord(collection, recordId, data)
                     }
+                    "remove_record" -> {
+                        val collection = step.getString("collection")
+                        val id = eval(step.opt("record_id")) as? String ?: throw WorkspaceRuntimeException("record_id must be a string")
+                        val rows = workingRecords[collection] ?: throw WorkspaceRuntimeException("Unknown collection: $collection")
+                        val target = rows.singleOrNull { it.optString("_id") == id } ?: throw WorkspaceRuntimeException("Record is unavailable in $collection: $id")
+                        rows.remove(target)
+                        mutations += WorkspaceMutation.DeleteRecord(collection, id)
+                    }
                     "navigate" -> {
                         val view = step.getString("view")
                         require((0 until root.getJSONArray("views").length()).any { root.getJSONArray("views").optJSONObject(it)?.optString("id") == view }) { "Unknown view: $view" }
@@ -298,14 +308,27 @@ object WorkspaceRuntimeV2 {
         return WorkspaceExecutionResult(next, mutations)
     }
 
-    /** A conversational patch uses the same interpreter, type checks and invariants as a UI action. */
-    fun executeRecordUpdate(root: JSONObject, state: JSONObject, records: MutableMap<String, MutableList<JSONObject>>, collection: String, recordId: String, data: JSONObject): WorkspaceExecutionResult {
+    /** Tool record operations share the interpreter, type checks and invariants with UI actions. */
+    fun executeRecordStep(root: JSONObject, state: JSONObject, records: MutableMap<String, MutableList<JSONObject>>, step: JSONObject): WorkspaceExecutionResult {
         val proposed = JSONObject(root.toString())
-        val action = "AtlasRecordUpdate"
         val actions = proposed.optJSONObject("actions") ?: JSONObject().also { proposed.put("actions", it) }
-        actions.put(action, JSONObject().put("steps", JSONArray().put(JSONObject()
-            .put("type", "update_record").put("collection", collection).put("record_id", recordId).put("data", data))))
-        return executeAction(proposed, action, state, records)
+        actions.put("AtlasRecordOperation", JSONObject().put("steps", JSONArray().put(step)))
+        return executeAction(proposed, "AtlasRecordOperation", state, records)
+    }
+
+    fun executeRecordUpdate(root: JSONObject, state: JSONObject, records: MutableMap<String, MutableList<JSONObject>>, collection: String, recordId: String, data: JSONObject): WorkspaceExecutionResult =
+        executeRecordStep(root, state, records, JSONObject().put("type", "update_record").put("collection", collection).put("record_id", recordId).put("data", data))
+
+    /** Preserve existing values; only fill absent fields with explicitly declared valid defaults. */
+    fun migrateRecord(root: JSONObject, collection: String, original: JSONObject): JSONObject {
+        val next = JSONObject(original.toString())
+        val fields = root.optJSONObject("collections")?.optJSONObject(collection)?.optJSONObject("fields") ?: error("Collection $collection was removed while it still contains records")
+        fields.keys().forEach { key ->
+            val schema = fields.getJSONObject(key)
+            if (!next.has(key) && schema.has("initial")) next.put(key, deepCopy(schema.opt("initial")))
+        }
+        requireRecord(root, collection, next)
+        return next
     }
 
     fun simulate(root: JSONObject): WorkspaceSimulationResult = simulate(root, null)
@@ -334,14 +357,20 @@ object WorkspaceRuntimeV2 {
                 for (actionIndex in 0 until actions.length()) {
                     val result = executeAction(root, actions.getString(actionIndex), state, records, rowCollection, rowId)
                     result.state.keys().forEach { state.put(it, result.state.opt(it)) }
-                    result.mutations.filterIsInstance<WorkspaceMutation.InsertRecord>().forEach { mutation ->
-                        val rows = records.getOrPut(mutation.collection) { mutableListOf() }
-                        rows.add(JSONObject(mutation.data.toString()).put("_id", "insert-${rows.size}"))
-                    }
-                    result.mutations.filterIsInstance<WorkspaceMutation.UpdateRecord>().forEach { mutation ->
-                        val rows = records.getValue(mutation.collection)
-                        val index = rows.indexOfFirst { it.optString("_id") == mutation.recordId }
-                        rows[index] = JSONObject(mutation.data.toString()).put("_id", mutation.recordId)
+                    result.mutations.forEach { mutation ->
+                        when (mutation) {
+                            is WorkspaceMutation.InsertRecord -> {
+                                val rows = records.getOrPut(mutation.collection) { mutableListOf() }
+                                rows.add(JSONObject(mutation.data.toString()).put("_id", "insert-${rows.size}"))
+                            }
+                            is WorkspaceMutation.UpdateRecord -> {
+                                val rows = records.getValue(mutation.collection)
+                                val index = rows.indexOfFirst { it.optString("_id") == mutation.recordId }
+                                rows[index] = JSONObject(mutation.data.toString()).put("_id", mutation.recordId)
+                            }
+                            is WorkspaceMutation.DeleteRecord -> records[mutation.collection]?.removeAll { it.optString("_id") == mutation.recordId }
+                            else -> Unit
+                        }
                     }
                 }
                 val row = records[rowCollection]?.firstOrNull { it.optString("_id") == rowId }
@@ -364,18 +393,38 @@ object WorkspaceRuntimeV2 {
             }
             val type = component.optString("type"); val id = component.optString("id")
             if (type !in componentTypes) errors += "Unsupported component type: ${type.ifBlank { "<blank>" }}"
+            val common = setOf("id", "type", "label", "visible")
+            val supported = when (type) {
+                "text" -> setOf("value", "text", "text_size", "bold")
+                "status", "metric" -> setOf("value", "compact", "show_label", "text_size", "bold")
+                "button" -> setOf("action", "enabled")
+                "input" -> setOf("binding", "action", "submit_label")
+                "toggle" -> setOf("binding", "action")
+                "progress" -> setOf("value", "max")
+                "list" -> setOf("collection", "primary_field", "secondary_field", "checked_field", "row_action", "row_action_label", "remove_action", "remove_label", "sort_by", "sort_direction", "limit", "empty_text")
+                "section" -> setOf("children", "compact", "show_label")
+                "row" -> setOf("children")
+                "grid" -> setOf("children", "columns")
+                else -> emptySet()
+            }
+            component.keys().forEach { key -> if (key !in common && key !in supported) errors += "$path.$id has unsupported property for $type: $key" }
+
             if (!id.matches(identifier)) errors += "Invalid component id: ${id.ifBlank { "<blank>" }}"
             component.optString("action").takeIf(String::isNotBlank)?.let { if (!actions.has(it)) errors += "$path.$id references unknown action: $it" }
             component.optString("binding").takeIf(String::isNotBlank)?.let { if (!state.has(it)) errors += "$path.$id references unknown state: $it" }
             component.optString("collection").takeIf(String::isNotBlank)?.let { if (!collections.has(it)) errors += "$path.$id references unknown collection: $it" }
             if (type == "list") {
                 val fields = collections.optJSONObject(component.optString("collection"))?.optJSONObject("fields")
-                for (key in listOf("primary_field", "secondary_field", "checked_field")) {
+                for (key in listOf("primary_field", "secondary_field", "checked_field", "sort_by")) {
                     component.optString(key).takeIf(String::isNotBlank)?.let { field ->
                         if (fields?.has(field) != true) errors += "$path.$id.$key references unknown collection field: $field"
                         else if (key == "checked_field" && fields.getJSONObject(field).optString("type") != "boolean") errors += "$path.$id.checked_field must be boolean"
                     }
                 }
+                if (component.has("sort_direction") && component.optString("sort_direction") !in setOf("ascending", "descending")) errors += "$path.$id.sort_direction must be ascending or descending"
+                if (component.has("sort_direction") && !component.has("sort_by")) errors += "$path.$id.sort_direction requires sort_by"
+                if (component.has("limit") && (component.opt("limit") !is Int || component.optInt("limit") !in 1..200)) errors += "$path.$id.limit must be an integer between 1 and 200"
+                component.optString("remove_action").takeIf(String::isNotBlank)?.let { if (!actions.has(it)) errors += "$path.$id references unknown remove_action: $it" }
                 val rowAction = component.optString("row_action")
                 if (rowAction.isNotBlank() && !actions.has(rowAction)) errors += "$path.$id references unknown row_action: $rowAction"
                 if (component.has("checked_field") && rowAction.isBlank()) errors += "$path.$id.checked_field requires row_action"
@@ -407,7 +456,7 @@ object WorkspaceRuntimeV2 {
             if (type == "set") validateExpression(step.opt("value"), "$path.steps[$i].value", state, collections, errors, 0)
             if (type == "increment" && step.has("by")) validateExpression(step.opt("by"), "$path.steps[$i].by", state, collections, errors, 0)
             if (type == "insert") step.optJSONObject("data")?.let { data -> data.keys().forEach { key -> validateExpression(data.opt(key), "$path.steps[$i].data.$key", state, collections, errors, 0) } }
-            if (type in setOf("update_record", "toggle_record")) {
+            if (type in setOf("update_record", "toggle_record", "remove_record")) {
                 val collection = step.optString("collection")
                 val fields = collections.optJSONObject(collection)?.optJSONObject("fields")
                 if (fields == null) errors += "$path.steps[$i] references unknown collection: $collection"
@@ -416,7 +465,7 @@ object WorkspaceRuntimeV2 {
                 if (type == "toggle_record") {
                     val field = step.optString("field")
                     if (fields?.optJSONObject(field)?.optString("type") != "boolean") errors += "$path.steps[$i].field must reference a boolean collection field"
-                } else {
+                } else if (type == "update_record") {
                     val data = step.optJSONObject("data")
                     if (data == null || data.length() == 0) errors += "$path.steps[$i].data requires at least one field"
                     data?.keys()?.forEach { field ->
@@ -491,12 +540,13 @@ object WorkspaceRuntimeV2 {
 
 sealed interface WorkspaceMutation {
     data class SetState(val key: String, val value: Any?) : WorkspaceMutation
-    data class InsertRecord(val collection: String, val data: JSONObject) : WorkspaceMutation
+    data class InsertRecord(val collection: String, val data: JSONObject, val recordId: String? = null, val createdAtMs: Long? = null) : WorkspaceMutation
     data class UpdateRecord(val collection: String, val recordId: String, val data: JSONObject) : WorkspaceMutation
+    data class DeleteRecord(val collection: String, val recordId: String) : WorkspaceMutation
     data class Navigate(val view: String) : WorkspaceMutation
 }
 
-data class WorkspaceExecutionResult(val state: JSONObject, val mutations: List<WorkspaceMutation>)
+data class WorkspaceExecutionResult(val state: JSONObject, val mutations: List<WorkspaceMutation>, val undoTokens: List<String> = emptyList())
 data class WorkspaceSimulationResult(val passed: Boolean, val failures: List<String>, val testsRun: Int)
 data class WorkspaceStateMigration(val state: JSONObject, val addedKeys: List<String>, val resetKeys: List<String>, val removedKeys: List<String>)
 open class WorkspaceRuntimeException(message: String) : IllegalStateException(message)

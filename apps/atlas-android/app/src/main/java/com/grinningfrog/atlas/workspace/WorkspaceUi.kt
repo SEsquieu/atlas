@@ -152,7 +152,7 @@ fun WorkspacePage(
             }) { Icon(Icons.Default.IosShare, "Export workspace") }
         }
         HorizontalDivider()
-        WorkspaceRenderer(workspace, revision, database, refresh, { refresh++ }, Modifier.weight(1f))
+        WorkspaceRenderer(workspace, revision, database, listOf(refresh, revision.id, snapshot.messages.lastOrNull()?.id), { refresh++ }, Modifier.weight(1f))
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
         WorkspaceComposer(runtime, snapshot, hasProvider, actionScope)
     }
@@ -236,7 +236,7 @@ private fun WorkspaceRenderer(
     workspace: ComposableWorkspace,
     revision: WorkspaceRevision,
     database: AtlasDatabase,
-    refresh: Int,
+    refresh: Any,
     onChanged: () -> Unit,
     modifier: Modifier,
 ) {
@@ -261,7 +261,7 @@ private fun WorkspaceRenderer(
 }
 
 @Composable
-private fun WorkspaceComponent(workspaceId: String, component: JSONObject, database: AtlasDatabase, refresh: Int, onChanged: () -> Unit) {
+private fun WorkspaceComponent(workspaceId: String, component: JSONObject, database: AtlasDatabase, refresh: Any, onChanged: () -> Unit) {
     val id = component.optString("id")
     val label = component.optString("label", component.optString("title", id))
     when (component.optString("type")) {
@@ -355,7 +355,7 @@ private fun WorkspaceComponent(workspaceId: String, component: JSONObject, datab
 }
 
 @Composable
-private fun WorkspaceCanvas(workspaceId: String, componentId: String, label: String, database: AtlasDatabase, refresh: Int, onChanged: () -> Unit) {
+private fun WorkspaceCanvas(workspaceId: String, componentId: String, label: String, database: AtlasDatabase, refresh: Any, onChanged: () -> Unit) {
     val saved = remember(workspaceId, componentId, refresh) { database.listWorkspaceRecords(workspaceId, componentId, 1).firstOrNull() }
     val strokes = remember(workspaceId, componentId, saved?.id) {
         mutableStateListOf<SnapshotStateList<Offset>>().apply {

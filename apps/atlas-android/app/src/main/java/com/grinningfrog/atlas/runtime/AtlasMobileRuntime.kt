@@ -401,6 +401,7 @@ class AtlasMobileRuntime(
     private suspend fun runTurnLoopLocked(session: AtlasSession, turnId: String, startingObservation: VisualObservation?, voice: Boolean) {
         val startedAt = System.currentTimeMillis()
         var observation = startingObservation
+        var uiObservation: VisualObservation? = null
         var step = database.loadTurn(turnId)?.stepCount ?: 0
         while (step < AgentLoopPolicy.MAX_STEPS && System.currentTimeMillis() - startedAt < AgentLoopPolicy.MAX_WALL_TIME_MS) {
             currentCoroutineContext().ensureActive()
@@ -412,10 +413,11 @@ class AtlasMobileRuntime(
             val memories = database.loadActiveMemories(session.id)
             val pendingClarification = database.loadPendingClarification(session.id)
             observation = usableLatestObservation(session.id) ?: observation
-            val capability = capabilityForTurn(messages, observation)
+            val imageObservation = uiObservation ?: observation
+            val capability = if (uiObservation != null) RouteCapability.VISION else capabilityForTurn(messages, observation)
             val risk = riskForTurn(messages)
             val latestToolCall = database.loadTurnToolCalls(turnId).lastOrNull()
-            val attachImage = observation != null && (capability == RouteCapability.VISION ||
+            val attachImage = imageObservation != null && (uiObservation != null || capability == RouteCapability.VISION ||
                 (latestToolCall?.name == "capture_current_view" && latestToolCall.status == ToolCallStatus.COMPLETED))
             val toolsAvailable = router.hasToolCapableRoute(capability, requiresVision = attachImage)
             val context = contextAssembler.assemble(
@@ -438,9 +440,9 @@ class AtlasMobileRuntime(
                     (if (spoken) ResponsePolicy.instructions(responseContract) else ""),
                 userText = latestUserText,
                 messages = context.messages,
-                observation = observation.takeIf { attachImage },
-                image = observation?.takeIf { attachImage }?.let { mediaRepository.inferenceImage(it.media) },
-                contextNote = observation?.let(::observationContext),
+                observation = imageObservation.takeIf { attachImage },
+                image = imageObservation?.takeIf { attachImage }?.let { mediaRepository.inferenceImage(it.media) },
+                contextNote = if (uiObservation != null) "Attached image is an Atlas workspace UI viewport, not physical-world evidence. ${uiObservation?.summary}" else observation?.let(::observationContext),
                 risk = risk,
                 responseContract = responseContract,
                 provenance = InferenceProvenance(
@@ -545,7 +547,9 @@ class AtlasMobileRuntime(
                 if (call.status == ToolCallStatus.REJECTED) {
                     recordToolResult(call, JSONObject().put("ok", false).put("error", call.error).toString())
                 } else if (!call.requiresConfirmation) {
-                    executeToolLocked(call)
+                    val captured = executeToolLocked(call)
+                    if (captured?.media?.purpose == MediaPurpose.WORKSPACE_UI) uiObservation = captured
+                    else if (call.risk != com.grinningfrog.atlas.model.ToolRisk.READ_ONLY) uiObservation = null
                     database.loadLatestObservation(session.id)?.let { observation = it }
                 }
             }
@@ -844,9 +848,9 @@ class AtlasMobileRuntime(
         )
     }
 
-    private suspend fun executeToolLocked(call: AtlasToolCall) {
+    private suspend fun executeToolLocked(call: AtlasToolCall): VisualObservation? {
         val current = database.loadToolCall(call.id) ?: call
-        if (current.status == ToolCallStatus.COMPLETED || current.status == ToolCallStatus.REJECTED || current.status == ToolCallStatus.FAILED) return
+        if (current.status == ToolCallStatus.COMPLETED || current.status == ToolCallStatus.REJECTED || current.status == ToolCallStatus.FAILED) return null
         if (current.status == ToolCallStatus.UNKNOWN) error("Tool outcome is unknown and cannot be retried automatically")
         database.updateTurn(call.turnId, TurnStatus.EXECUTING_TOOL)
         database.updateToolCall(call.id, ToolCallStatus.RUNNING)
@@ -855,6 +859,7 @@ class AtlasMobileRuntime(
             val result = toolHarness.execute(call)
             database.updateToolCall(call.id, ToolCallStatus.COMPLETED, resultJson = result.resultJson)
             recordToolResult(call, result.resultJson)
+            return result.observation
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -866,6 +871,7 @@ class AtlasMobileRuntime(
             }
             idleRuntime?.observeRepeatedFailure("${call.name} repeatedly failed", error.safeMessage(), count)
             recordToolResult(call, result)
+            return null
         } finally {
             publish()
         }

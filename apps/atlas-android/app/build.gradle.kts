@@ -12,10 +12,10 @@ android {
         applicationId = "com.grinningfrog.atlas"
         minSdk = 28
         targetSdk = 35
-        versionCode = providers.environmentVariable("ATLAS_ANDROID_VERSION_CODE").orElse("12").get().toInt().also {
+        versionCode = providers.environmentVariable("ATLAS_ANDROID_VERSION_CODE").orElse("13").get().toInt().also {
             require(it in 1..2_100_000_000) { "ATLAS_ANDROID_VERSION_CODE is outside Android limits" }
         }
-        versionName = "0.1.0-alpha.9"
+        versionName = "0.1.0-alpha.10"
 
         vectorDrawables.useSupportLibrary = true
         buildConfigField("String", "ATLAS_GATEWAY_URL", "\"${providers.gradleProperty("ATLAS_GATEWAY_URL").orElse("").get()}\"")
@@ -110,6 +110,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("org.robolectric:robolectric:4.17")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")

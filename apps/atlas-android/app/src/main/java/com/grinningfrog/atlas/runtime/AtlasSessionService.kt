@@ -97,7 +97,7 @@ class AtlasSessionService : LifecycleService() {
         )
         runtime = AtlasMobileRuntime(
             app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope, idleRuntime,
-            additionalTools = AndroidContextTools.create(this, app.database, app.settings) + WorkspaceTools.create(app.database),
+            additionalTools = AndroidContextTools.create(this, app.database, app.settings) + WorkspaceTools.create(app.database, app.mediaRepository),
         )
         serviceScope.launch {
             runCatching { runtime.initialize() }.onFailure { error ->

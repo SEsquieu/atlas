@@ -33,6 +33,8 @@ interface AtlasToolAdapter {
     val definition: ToolDefinition
     /** Opt in only for installed public, read-only research executors. */
     val supportsCapabilityDiscovery: Boolean get() = false
+    /** Installed, scoped, read-only local diagnostics; never grants access to a discovered capability. */
+    val supportsLocalDiagnostics: Boolean get() = false
     fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision = ToolPolicyDecision(
         allowed = true,
         requiresConfirmation = definition.requiresConfirmation ||
@@ -134,7 +136,7 @@ class ToolHarness(
     }
 
     private fun discoveryAllowed(name: String): Boolean = name in setOf(CapabilityDiscovery.TOOL, CLARIFICATION_TOOL) ||
-        additionalTools.any { it.definition.name == name && it.supportsCapabilityDiscovery && it.definition.risk == ToolRisk.READ_ONLY }
+        additionalTools.any { it.definition.name == name && (it.supportsCapabilityDiscovery || it.supportsLocalDiagnostics) && it.definition.risk == ToolRisk.READ_ONLY }
 
     suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
         val arguments = JSONObject(call.argumentsJson)

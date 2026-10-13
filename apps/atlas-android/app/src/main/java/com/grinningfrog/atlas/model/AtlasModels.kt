@@ -14,7 +14,7 @@ enum class InferencePurpose { USER_RESPONSE, HEARTBEAT_SCENE_REVIEW, MEMORY_COMP
 enum class ContextStability { STABLE, TRANSITIONING, UNKNOWN }
 enum class MotionState { STATIONARY, HANDHELD_STABLE, TURNING, WALKING, VEHICLE, UNKNOWN }
 enum class PermissionPolicy { NEVER, USER_REQUEST, ACTIVE_SESSION }
-enum class MediaPurpose { HEARTBEAT, STANDARD_VISION, DETAIL_VISION }
+enum class MediaPurpose { HEARTBEAT, STANDARD_VISION, DETAIL_VISION, WORKSPACE_UI }
 enum class MessageRole { USER, ASSISTANT, TOOL }
 enum class MessageKind { DIALOGUE, TOOL_RESULT, INTERNAL }
 enum class TurnStatus {
