@@ -47,7 +47,8 @@ class SystemSectionTabsTest {
         for (label in listOf("Inference", "Data & logs", "Intent", "Tools")) {
             val layouts = mutableListOf<TextLayoutResult>()
             compose.onNodeWithText(label).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
-            assertFalse(label, layouts.single().hasVisualOverflow)
+            val layout = layouts.single()
+            assertFalse("$label: size=${layout.size}, widthOverflow=${layout.didOverflowWidth}, heightOverflow=${layout.didOverflowHeight}, lines=${layout.lineCount}, tabWidths=${tabs.map { it.boundsInRoot.width }}", layout.hasVisualOverflow)
         }
         compose.onNodeWithText("Data & logs").assertIsSelected()
         compose.onNodeWithText("Tools").performClick().assertIsSelected()
