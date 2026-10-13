@@ -48,7 +48,9 @@ class SystemSectionTabsTest {
             val layouts = mutableListOf<TextLayoutResult>()
             compose.onNodeWithText(label).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
             val layout = layouts.single()
-            assertFalse("$label: size=${layout.size}, widthOverflow=${layout.didOverflowWidth}, heightOverflow=${layout.didOverflowHeight}, lines=${layout.lineCount}, tabWidths=${tabs.map { it.boundsInRoot.width }}", layout.hasVisualOverflow)
+            assertEquals("$label must remain on one line", 1, layout.lineCount)
+            assertFalse("$label must not be truncated", layout.isLineEllipsized(0))
+            assertEquals("Every character of $label must be visible", label.length, layout.getLineEnd(0, visibleEnd = true))
         }
         compose.onNodeWithText("Data & logs").assertIsSelected()
         compose.onNodeWithText("Tools").performClick().assertIsSelected()
