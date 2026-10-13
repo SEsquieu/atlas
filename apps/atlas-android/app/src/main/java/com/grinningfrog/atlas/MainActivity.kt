@@ -11,6 +11,7 @@ import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import com.grinningfrog.atlas.ui.SystemSectionTabs
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -650,16 +651,7 @@ private fun SystemPage(
     var section by remember { mutableStateOf("Inference") }
     val idleStatus by runtime.idleStatus?.collectAsState() ?: remember { mutableStateOf(IdleRuntimeStatus()) }
     Column(modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (section == "Inference") Button({ section = "Inference" }, Modifier.weight(1f)) { Text("Inference") }
-            else OutlinedButton({ section = "Inference" }, Modifier.weight(1f)) { Text("Inference") }
-            if (section == "Data") Button({ section = "Data" }, Modifier.weight(1f)) { Text("Data & logs") }
-            else OutlinedButton({ section = "Data" }, Modifier.weight(1f)) { Text("Data & logs") }
-            if (section == "Intent") Button({ section = "Intent" }, Modifier.weight(1f)) { Text("Intent") }
-            else OutlinedButton({ section = "Intent" }, Modifier.weight(1f)) { Text("Intent") }
-            if (section == "Tools") Button({ section = "Tools" }, Modifier.weight(1f)) { Text("Tools") }
-            else OutlinedButton({ section = "Tools" }, Modifier.weight(1f)) { Text("Tools") }
-        }
+        SystemSectionTabs(section, { section = it })
         Box(Modifier.weight(1f)) {
             when (section) {
                 "Inference" -> ProviderPage(settings, providers, managedAccount, chatGptAuth, database, Modifier.fillMaxSize(), onProvidersChanged)
