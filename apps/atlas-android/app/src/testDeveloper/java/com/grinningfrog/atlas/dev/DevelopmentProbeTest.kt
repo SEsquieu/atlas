@@ -22,7 +22,7 @@ class DevelopmentProbeTest {
     private fun endpoint() = ProviderEndpoint("plan", "Plan", "https://api.openai.com/v1", "test-model", supportsTools = true, supportsStreaming = true, kind = ProviderKind.CHATGPT_PLAN)
     @Test fun minimalOmitsAllOptionalContextAndProviderTools() {
         val request = ProbeRequestBuilder.build("probe", ProbeOptions(), null, emptyList())
-        val backend = ChatGptPlanBackend(ChatGptTokenProvider { _ -> "token" })
+        val backend = ChatGptPlanBackend(ChatGptTokenProvider { _ -> "token" }, omitEmptyOptionalFields = true)
         val json = backend.requestJson(endpoint(), request, includeHostedSearch = false)
         assertEquals(setOf("model", "store", "stream", "input"), json.keys().asSequence().toSet())
         assertEquals(1, json.getJSONArray("input").length())
@@ -34,7 +34,7 @@ class DevelopmentProbeTest {
         val context = AssembledContext("Atlas instructions", listOf(InferenceMessage(MessageRole.USER, "History")), emptyList(), 0, 0)
         val options = ProbeOptions(instructions = true, history = true, hostedSearch = true, tools = definitions.map { it.name }.toSet())
         val request = ProbeRequestBuilder.build("probe", options, context, definitions)
-        val backend = ChatGptPlanBackend(ChatGptTokenProvider { _ -> "token" })
+        val backend = ChatGptPlanBackend(ChatGptTokenProvider { _ -> "token" }, omitEmptyOptionalFields = true)
         val json = backend.requestJson(endpoint(), request, true)
         val namespace = json.getJSONArray("tools").getJSONObject(1).getJSONArray("tools")
         assertEquals(definitions.size, namespace.length()); assertTrue(definitions.size >= 20)
@@ -64,7 +64,7 @@ class DevelopmentProbeTest {
         server.start()
         val events = mutableListOf<JSONObject>()
         try {
-            val backend = ChatGptPlanBackend(ChatGptTokenProvider { _ -> "secret-token" }, responsesUrl = server.url("/v1/responses").toString(), allowHostedSearch = false, diagnosticSink = { _, data -> events.add(data) })
+            val backend = ChatGptPlanBackend(ChatGptTokenProvider { _ -> "secret-token" }, responsesUrl = server.url("/v1/responses").toString(), allowHostedSearch = false, omitEmptyOptionalFields = true, diagnosticSink = { _, data -> events.add(data) })
             val request = ProbeRequestBuilder.build("probe", ProbeOptions(), null, emptyList())
             val failure = runCatching { backend.infer(endpoint(), null, request) }.exceptionOrNull() as InferenceUnavailableException
             assertTrue(failure.outcomeAmbiguous)

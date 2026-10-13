@@ -40,6 +40,7 @@ class ChatGptPlanBackend(
     private val baseClient: OkHttpClient = OkHttpClient(),
     private val responsesUrl: String = "https://api.openai.com/v1/responses",
     private val allowHostedSearch: Boolean = true,
+    private val omitEmptyOptionalFields: Boolean = false,
     private val diagnosticSink: (InferenceRequest, JSONObject) -> Unit = { _, _ -> },
 ) : InferenceBackend {
     private val hostedSearchUnsupportedModels = ConcurrentHashMap.newKeySet<String>()
@@ -201,10 +202,10 @@ class ChatGptPlanBackend(
         put("model", endpoint.model)
         put("store", false)
         put("stream", true)
-        if (request.systemPrompt.isNotBlank()) put("instructions", request.systemPrompt)
+        if (!omitEmptyOptionalFields || request.systemPrompt.isNotBlank()) put("instructions", request.systemPrompt)
         put("input", input(request))
         if (includeHostedSearch) put("include", JSONArray().put("web_search_call.action.sources"))
-        if (includeHostedSearch || request.tools.isNotEmpty()) put("tools", JSONArray().apply {
+        if (!omitEmptyOptionalFields || includeHostedSearch || request.tools.isNotEmpty()) put("tools", JSONArray().apply {
             if (includeHostedSearch) put(JSONObject().put("type", "web_search"))
             if (request.tools.isNotEmpty()) put(JSONObject().apply {
                 put("type", "namespace")

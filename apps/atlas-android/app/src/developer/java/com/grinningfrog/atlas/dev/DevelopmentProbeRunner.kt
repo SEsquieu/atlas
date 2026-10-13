@@ -60,7 +60,7 @@ internal class DevelopmentProbeRunner(private val app: AtlasApplication, private
             .put("instructions", options.instructions).put("instruction_override", options.instructionOverride.isNotBlank())
             .put("history", options.history).put("workspace", options.workspace).put("hosted_search", options.hostedSearch)
             .put("tool_names", JSONArray(request.tools.map { it.name })).put("tool_execution", "disabled"))
-        val backend = backendOverride ?: ProviderBackendRegistry(OpenAiCompatibleBackend(), ChatGptPlanBackend(app.chatGptAuth, allowHostedSearch = options.hostedSearch,
+        val backend = backendOverride ?: ProviderBackendRegistry(OpenAiCompatibleBackend(), ChatGptPlanBackend(app.chatGptAuth, allowHostedSearch = options.hostedSearch, omitEmptyOptionalFields = true,
             diagnosticSink = { _, data -> event("provider.http_diagnostic", data) }))
         val started = System.currentTimeMillis()
         try {
