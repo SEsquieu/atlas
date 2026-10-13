@@ -68,4 +68,20 @@ class WorkspaceDiagnosticsTest {
         WorkspaceRenderSurface.unregister(owner)
         assertTrue(runCatching { WorkspaceRenderSurface.capture("workspace", "revision") }.isFailure)
     }
+
+    @Test fun harmlessRedrawIsAllowedButChangedContentInvalidatesCapture() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val owner = Any()
+        var epoch = "same"
+        WorkspaceRenderSurface.register(owner, "workspace", "revision") {
+            WorkspaceRenderSurface.drawn(owner, JSONObject().put("drawn_at_ms", 20).put("render_epoch", epoch))
+            Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
+        }
+        try {
+            WorkspaceRenderSurface.drawn(owner, JSONObject().put("drawn_at_ms", 10).put("render_epoch", "same"))
+            WorkspaceRenderSurface.capture("workspace", "revision").first.recycle()
+            epoch = "changed"
+            assertTrue(runCatching { WorkspaceRenderSurface.capture("workspace", "revision") }.isFailure)
+        } finally { WorkspaceRenderSurface.unregister(owner) }
+    }
 }

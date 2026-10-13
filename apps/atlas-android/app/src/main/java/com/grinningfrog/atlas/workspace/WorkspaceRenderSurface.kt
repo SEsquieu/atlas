@@ -32,6 +32,8 @@ object WorkspaceRenderSurface {
         ?.takeIf { it.workspaceId == workspaceId && it.revisionId == revisionId }
         ?.drawn?.let { JSONObject(it.toString()) }
 
+    private fun frameKey(data: JSONObject): String = JSONObject(data.toString()).apply { remove("drawn_at_ms") }.toString()
+
     suspend fun capture(workspaceId: String, revisionId: String): Pair<Bitmap, JSONObject> = withTimeout(5_000) {
         withContext(Dispatchers.Main.immediate) {
             val current = synchronized(this@WorkspaceRenderSurface) {
@@ -39,7 +41,7 @@ object WorkspaceRenderSurface {
             } ?: error("Workspace panel is not visible or has not drawn this revision. Open it before capturing.")
             val evidence = JSONObject(current.drawn!!.toString())
             val bitmap = current.capture()
-            val same = synchronized(this@WorkspaceRenderSurface) { host === current && current.drawn?.toString() == evidence.toString() }
+            val same = synchronized(this@WorkspaceRenderSurface) { host === current && current.drawn?.let { frameKey(it) } == frameKey(evidence) }
             if (!same) { bitmap.recycle(); error("Workspace changed during capture; retry") }
             bitmap to evidence
         }

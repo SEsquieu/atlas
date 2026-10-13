@@ -72,9 +72,10 @@ internal fun WorkspaceV2Renderer(
     }
     fun execute(action: String, collection: String? = null, row: JSONObject? = null) {
         runCatching {
-            if (action.isNotBlank()) database.applyWorkspaceAction(workspace.id, definition, action, rowCollection = collection, rowId = row?.getString("_id"), expectedData = row?.let { JSONObject(it.toString()).apply { remove("_id") } })
+            require(action.isNotBlank()) { "An action is required" }
+            database.applyWorkspaceAction(workspace.id, definition, action, rowCollection = collection, rowId = row?.getString("_id"), expectedData = row?.let { JSONObject(it.toString()).apply { remove("_id") } })
         }.onSuccess { result ->
-            (result as? WorkspaceExecutionResult)?.undoTokens?.lastOrNull()?.let { undoToken = it }
+            result.undoTokens.lastOrNull()?.let { undoToken = it }
             runtimeError = null
             onChanged()
         }.onFailure {
@@ -106,7 +107,7 @@ internal fun WorkspaceV2Renderer(
         graphicsLayer.record { this@drawWithContent.drawContent() }
         drawLayer(graphicsLayer)
         val data = JSONObject().put("workspace_id", workspace.id).put("revision_id", workspace.liveRevisionId).put("drawn_at_ms", System.currentTimeMillis())
-            .put("scope", "visible_workspace_viewport").put("width", size.width.toInt()).put("height", size.height.toInt())
+            .put("scope", "visible_workspace_viewport").put("render_epoch", refresh.toString()).put("scroll_index", listState.firstVisibleItemIndex).put("scroll_offset", listState.firstVisibleItemScrollOffset).put("width", size.width.toInt()).put("height", size.height.toInt())
             .put("projection", projection.getOrNull()).put("error", runtimeError ?: expressionError ?: projection.exceptionOrNull()?.message)
             .put("visible_component_ids", JSONArray(listState.layoutInfo.visibleItemsInfo.map { it.key }.filterIsInstance<String>()))
         if (WorkspaceRenderSurface.drawn(owner, data)) renderScope.launch(Dispatchers.IO) {
