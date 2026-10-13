@@ -23,7 +23,7 @@
         android:name=".AtlasApplication"
         android:allowBackup="false"
         android:icon="@drawable/ic_atlas"
-        android:label="${atlasAppLabel}"
+        android:label="${atlasAppLabel}${atlasDevSuffix}"
         android:supportsRtl="true"
         android:theme="@style/Theme.Atlas"
         android:usesCleartextTraffic="${atlasCleartext}">

@@ -651,9 +651,13 @@ private fun SystemPage(
     var section by remember { mutableStateOf("Inference") }
     val idleStatus by runtime.idleStatus?.collectAsState() ?: remember { mutableStateOf(IdleRuntimeStatus()) }
     Column(modifier.fillMaxSize()) {
+        if (com.grinningfrog.atlas.dev.DevelopmentPanel.available) {
+            TextButton(onClick = { section = "Developer" }) { Text("DEV · Diagnostics") }
+        }
         SystemSectionTabs(section, { section = it })
         Box(Modifier.weight(1f)) {
             when (section) {
+                "Developer" -> com.grinningfrog.atlas.dev.DevelopmentPanel.Content(snapshot.session?.id)
                 "Inference" -> ProviderPage(settings, providers, managedAccount, chatGptAuth, database, Modifier.fillMaxSize(), onProvidersChanged)
                 "Intent" -> IntentRuntimePage(runtime, idleStatus, snapshot, Modifier.fillMaxSize())
                 "Tools" -> CapabilityToolsPage(settings, Modifier.fillMaxSize())

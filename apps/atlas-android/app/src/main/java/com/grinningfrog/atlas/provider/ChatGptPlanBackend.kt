@@ -39,6 +39,8 @@ class ChatGptPlanBackend(
     private val auth: ChatGptTokenProvider,
     private val baseClient: OkHttpClient = OkHttpClient(),
     private val responsesUrl: String = "https://api.openai.com/v1/responses",
+    private val allowHostedSearch: Boolean = true,
+    private val diagnosticSink: (InferenceRequest, JSONObject) -> Unit = { _, _ -> },
 ) : InferenceBackend {
     private val hostedSearchUnsupportedModels = ConcurrentHashMap.newKeySet<String>()
 
@@ -51,11 +53,14 @@ class ChatGptPlanBackend(
     override fun stream(endpoint: ProviderEndpoint, apiKey: String?, request: InferenceRequest): Flow<InferenceStreamEvent> = flow {
         val started = System.nanoTime()
         var refreshed = false
-        var hostedSearch = endpoint.model !in hostedSearchUnsupportedModels
+        var hostedSearch = allowHostedSearch && endpoint.model !in hostedSearchUnsupportedModels
         var hostedSearchUnavailable = false
         while (true) {
             val token = auth.accessToken(forceRefresh = refreshed)
-            val call = client(endpoint).newCall(httpRequest(endpoint, token, request, hostedSearch))
+            val json = requestJson(endpoint, request, hostedSearch)
+            fun diagnostic(data: JSONObject) { runCatching { diagnosticSink(request, data.put("request_id", request.requestId).put("elapsed_ms", elapsedMs(started))) } }
+            diagnostic(ProviderHttpDiagnostics.request(json).put("phase", "request"))
+            val call = client(endpoint).newCall(httpRequest(endpoint, token, request, json))
             val invalidation = auth.onSessionInvalidated(call::cancel)
             val response = try { call.await() } catch (cancelled: CancellationException) {
                 invalidation.close()
@@ -65,6 +70,7 @@ class ChatGptPlanBackend(
                 val definitelyNotAccepted = error is ConnectException || error is UnknownHostException
                 throw InferenceUnavailableException("ChatGPT request failed: ${error.message ?: error.javaClass.simpleName}", error, !definitelyNotAccepted)
             }
+            diagnostic(ProviderHttpDiagnostics.response(response).put("phase", "headers"))
             if (response.code == 401 && !refreshed) {
                 invalidation.close()
                 response.close()
@@ -72,7 +78,8 @@ class ChatGptPlanBackend(
                 continue
             }
             if (!response.isSuccessful) {
-                val body = response.body?.string().orEmpty()
+                val body = response.peekBody(8192).string()
+                diagnostic(ProviderHttpDiagnostics.response(response, body).put("phase", "http_failure"))
                 val error = providerError(response.code, body, response.header("x-request-id") ?: response.header("openai-request-id"))
                 invalidation.close()
                 response.close()
@@ -194,10 +201,10 @@ class ChatGptPlanBackend(
         put("model", endpoint.model)
         put("store", false)
         put("stream", true)
-        put("instructions", request.systemPrompt)
+        if (request.systemPrompt.isNotBlank()) put("instructions", request.systemPrompt)
         put("input", input(request))
         if (includeHostedSearch) put("include", JSONArray().put("web_search_call.action.sources"))
-        put("tools", JSONArray().apply {
+        if (includeHostedSearch || request.tools.isNotEmpty()) put("tools", JSONArray().apply {
             if (includeHostedSearch) put(JSONObject().put("type", "web_search"))
             if (request.tools.isNotEmpty()) put(JSONObject().apply {
                 put("type", "namespace")
@@ -316,10 +323,10 @@ class ChatGptPlanBackend(
 
     private companion object { const val TOOL_NAMESPACE = "atlas" }
 
-    private fun httpRequest(endpoint: ProviderEndpoint, token: String, request: InferenceRequest, includeHostedSearch: Boolean) = Request.Builder().url(responsesUrl)
+    private fun httpRequest(endpoint: ProviderEndpoint, token: String, request: InferenceRequest, json: JSONObject) = Request.Builder().url(responsesUrl)
         .header("Authorization", "Bearer $token").header("Content-Type", "application/json").header("Accept", "text/event-stream")
         .header("X-Atlas-Request-Id", request.requestId)
-        .post(requestJson(endpoint, request, includeHostedSearch).toString().toRequestBody("application/json".toMediaType())).build()
+        .post(json.toString().toRequestBody("application/json".toMediaType())).build()
 
     private fun client(endpoint: ProviderEndpoint) = baseClient.newBuilder().connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(endpoint.timeoutMs, TimeUnit.MILLISECONDS).writeTimeout(30, TimeUnit.SECONDS).callTimeout(endpoint.timeoutMs, TimeUnit.MILLISECONDS).build()

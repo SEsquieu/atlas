@@ -60,7 +60,9 @@ class AtlasSessionService : LifecycleService() {
         val speech = SpeechController(this)
         val health = DeviceHealthMonitor(this, motion)
         val router = CapabilityRouter(
-            backend = ProviderBackendRegistry(OpenAiCompatibleBackend(), ChatGptPlanBackend(app.chatGptAuth)),
+            backend = ProviderBackendRegistry(OpenAiCompatibleBackend(), ChatGptPlanBackend(app.chatGptAuth, diagnosticSink = { request, data ->
+                app.database.appendEvent(request.sessionId, "provider.http_diagnostic", data.put("turnId", request.turnId))
+            })),
             endpoints = app::inferenceProviders,
             routes = app.settings::loadRoutes,
             apiKey = { endpoint -> when {

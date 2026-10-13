@@ -27,9 +27,9 @@ jobs:
           java-version: "17"
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
       - name: Unit tests
-        run: ./gradlew testSecureDebugUnitTest testLanDebugUnitTest
+        run: ./gradlew testSecureDebugUnitTest testLanDebugUnitTest testSecureDeveloperUnitTest testLanDeveloperUnitTest
       - name: Lint and debug APKs
-        run: ./gradlew lintSecureDebug lintLanDebug assembleSecureDebug assembleLanDebug
+        run: ./gradlew lintSecureDebug lintLanDebug lintSecureDeveloper lintLanDeveloper assembleSecureDebug assembleLanDebug assembleSecureDeveloper assembleLanDeveloper
 
   installable:
     if: github.event_name == 'push'
@@ -65,14 +65,28 @@ jobs:
           ATLAS_ANDROID_KEY_PASSWORD: ${{ secrets.ATLAS_ANDROID_KEY_PASSWORD }}
         run: |
           export ATLAS_ANDROID_VERSION_CODE=$((1000 + GITHUB_RUN_NUMBER))
-          ./gradlew assembleSecureDebug assembleLanDebug
+          ./gradlew assembleSecureDebug assembleLanDebug assembleSecureDeveloper assembleLanDeveloper
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/secure/debug/app-secure-debug.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/lan/debug/app-lan-debug.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/secure/developer/app-secure-developer.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/lan/developer/app-lan-developer.apk
+          python3 - <<'PYCODE'
+          import zipfile
+          from pathlib import Path
+          markers = (b'DevelopmentProbeScreen', b'DevelopmentProbeRunner', b'ProbeRequestBuilder')
+          for apk in Path('app/build/outputs/apk').glob('*/*/*.apk'):
+              with zipfile.ZipFile(apk) as z:
+                  dex = [z.read(n) for n in z.namelist() if n.endswith('.dex')]
+                  has_panel = all(any(marker in data for data in dex) for marker in markers)
+                  assert has_panel == (apk.parent.name == 'developer'), f'DEV source isolation failed: {apk}'
+          PYCODE
       - name: Upload installable APKs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: atlas-android-installable
-          path: apps/atlas-android/app/build/outputs/apk/*/debug/*.apk
+          path: |
+            apps/atlas-android/app/build/outputs/apk/*/debug/*.apk
+            apps/atlas-android/app/build/outputs/apk/*/developer/*.apk
       - name: Remove signing material
         if: always()
         run: rm -f "$RUNNER_TEMP/atlas-alpha.jks"

@@ -12,11 +12,12 @@ android {
         applicationId = "com.grinningfrog.atlas"
         minSdk = 28
         targetSdk = 35
-        versionCode = providers.environmentVariable("ATLAS_ANDROID_VERSION_CODE").orElse("16").get().toInt().also {
+        versionCode = providers.environmentVariable("ATLAS_ANDROID_VERSION_CODE").orElse("17").get().toInt().also {
             require(it in 1..2_100_000_000) { "ATLAS_ANDROID_VERSION_CODE is outside Android limits" }
         }
-        versionName = "0.1.0-alpha.13"
+        versionName = "0.1.0-alpha.14"
 
+        manifestPlaceholders["atlasDevSuffix"] = ""
         vectorDrawables.useSupportLibrary = true
         buildConfigField("String", "ATLAS_GATEWAY_URL", "\"${providers.gradleProperty("ATLAS_GATEWAY_URL").orElse("").get()}\"")
         buildConfigField("String", "SUPABASE_URL", "\"${providers.gradleProperty("SUPABASE_URL").orElse("").get()}\"")
@@ -57,11 +58,23 @@ android {
         debug {
             signingConfig = signingConfigs.findByName("alpha") ?: signingConfigs.getByName("debug")
         }
+        create("developer") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+            manifestPlaceholders["atlasDevSuffix"] = " DEV"
+            matchingFallbacks += listOf("debug")
+        }
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.findByName("alpha")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+    }
+
+    sourceSets {
+        getByName("debug").java.srcDir("src/standard/java")
+        getByName("release").java.srcDir("src/standard/java")
     }
 
     compileOptions {
@@ -113,6 +126,7 @@ dependencies {
 
     testImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    add("developerImplementation", "androidx.compose.ui:ui-test-manifest")
     testImplementation("org.robolectric:robolectric:4.17")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
