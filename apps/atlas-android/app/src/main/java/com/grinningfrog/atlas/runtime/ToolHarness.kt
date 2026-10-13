@@ -46,6 +46,11 @@ interface AtlasToolAdapter {
     )
     suspend fun execute(call: AtlasToolCall): ToolExecutionResult
 }
+/** Only synchronous SQLite effects may opt in; no network, files, or suspension inside the transaction. */
+interface AtlasLocalMutationAdapter : AtlasToolAdapter {
+    fun executeLocal(call: AtlasToolCall): ToolExecutionResult
+    override suspend fun execute(call: AtlasToolCall) = executeLocal(call)
+}
 /**
  * Core-owned tool boundary. Providers can only propose calls; this harness validates policy,
  * performs the device operation, and returns an auditable result.
@@ -56,6 +61,7 @@ class ToolHarness(
     private val deviceHealth: () -> DeviceHealth,
     private val now: () -> Long = System::currentTimeMillis,
     private val additionalTools: List<AtlasToolAdapter> = emptyList(),
+    private val executionLease: () -> ExecutionLease? = { null },
 ) {
     private val discovery = CapabilityDiscovery(database)
     private val builtInDefinitions: List<ToolDefinition> = listOf(
@@ -89,6 +95,8 @@ class ToolHarness(
         maxCallsPerTurn = 2,
     )
     val definitions: List<ToolDefinition> = builtInDefinitions + clarificationDefinition + CapabilityDiscovery.definition + additionalTools.map { it.definition }
+
+    fun atomicLocalTools() = additionalTools.filterIsInstance<AtlasLocalMutationAdapter>().map { it.definition.name } + "atlas_remember"
 
     fun definition(name: String) = definitions.firstOrNull { it.name == name }
 
@@ -191,8 +199,10 @@ class ToolHarness(
                     put("observed_at_ms", now())
                 }.toString())
             }
-            "atlas_remember" -> executeMemory(call, arguments)
-            else -> additionalTools.firstOrNull { it.definition.name == call.name }?.execute(call)
+            "atlas_remember" -> ExecutionTaskStore(database).localOperation(call, executionLease()) { executeMemory(call, arguments) }
+            else -> additionalTools.firstOrNull { it.definition.name == call.name }?.let { adapter ->
+                if (adapter is AtlasLocalMutationAdapter) ExecutionTaskStore(database).localOperation(call, executionLease()) { adapter.executeLocal(call) } else adapter.execute(call)
+            }
                 ?: error("Tool ${call.name} is not registered")
         }
     }

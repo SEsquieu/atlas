@@ -46,6 +46,24 @@ class CapabilityDiscoveryTest {
     private fun call(name: String, args: String = "{}", turnId: String = turn.id) = AtlasToolCall(UUID.randomUUID().toString(), session.id, turnId, name, args, ToolCallStatus.PROPOSED, ToolRisk.SESSION_WRITE, false, UUID.randomUUID().toString(), createdAtMs = 0, updatedAtMs = 0)
     private val blocked = """{"stage":"blocked","objective":"Analyze this unsupported format","missing_capability":"Format conversion"}"""
     private val candidate = """{"stage":"candidate","candidate":"Example converter","sources":["https://example.org/docs"],"assessment":"unverified","applicability":"Documentation describes conversion of the requested format","requirements":"Availability, access and cost remain unverified"}"""
+    @Test fun researchProvenanceAndResumeSurviveCoreLinkedSlicesButNotAnotherTask() = runTest {
+        val store=ExecutionTaskStore(db)
+        val task=store.create(db.loadSession(session.id)!!,"Analyze an unsupported format",turn.id,ExecutionBudget())
+        val h=harness(adapter("research",ToolRisk.READ_ONLY,research=true))
+        h.execute(call(CapabilityDiscovery.TOOL,blocked))
+        h.execute(call("research"))
+        val lease=store.claim(task.id,"runner")!!
+        store.finish(lease,SliceOutcome.YIELDED,1)
+        val continuation=store.nextTurn(task.id)
+        assertTrue(JSONObject(h.execute(call(CapabilityDiscovery.TOOL,candidate,continuation)).resultJson).getBoolean("ok"))
+        h.execute(call(CapabilityDiscovery.TOOL,"""{"stage":"resume_local","reason":"Use installed local tools"}""",continuation))
+        assertTrue(CapabilityDiscovery(db).localWorkResumed(continuation))
+        val unrelated=db.createTurn(session.id,"text")
+        store.create(db.loadSession(session.id)!!,"Different objective",unrelated.id,ExecutionBudget())
+        h.execute(call(CapabilityDiscovery.TOOL,blocked,unrelated.id))
+        assertTrue(runCatching {h.execute(call(CapabilityDiscovery.TOOL,candidate,unrelated.id))}.isFailure)
+    }
+
     @Test fun resumeRestoresOnlyInstalledLocalMutationsAndNewBlockerReentersDiscovery() = runTest {
         var allowed = true
         val local = object : AtlasToolAdapter {

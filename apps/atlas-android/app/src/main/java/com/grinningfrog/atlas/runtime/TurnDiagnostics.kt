@@ -22,8 +22,9 @@ data class TurnDiagnostics(
     val inferencePending: Boolean,
 ) {
     val terminal: Boolean get() = turn.status in setOf(TurnStatus.COMPLETED, TurnStatus.COMPLETED_LATE,
-        TurnStatus.FAILED, TurnStatus.CANCELLED, TurnStatus.HARD_CANCELLED, TurnStatus.INTERRUPTED)
+        TurnStatus.YIELDED, TurnStatus.FAILED, TurnStatus.CANCELLED, TurnStatus.HARD_CANCELLED, TurnStatus.INTERRUPTED)
     val headline: String get() = when {
+        turn.status == TurnStatus.YIELDED -> "SLICE SAVED · task continues"
         turn.status == TurnStatus.SOFT_TIMED_OUT -> "STILL GENERATING · interaction deadline reached"
         turn.status == TurnStatus.COMPLETED_LATE && lateToolCalls > 0 -> "LATE RESULT · tool calls were not executed"
         turn.status == TurnStatus.COMPLETED -> "COMPLETED"
@@ -69,7 +70,7 @@ data class TurnDiagnostics(
                 when { evidence?.has("simulation_passed") == true -> if (evidence.optBoolean("simulation_passed")) "${evidence.optInt("tests_run")}/${evidence.optInt("tests_run")} passed" else "failed: ${evidence.optJSONArray("test_failures")}"; else -> "not reported" },
                 committed.map { it.second.getString("revision_id") },
                 own.filter { it.first.type == "provider.completed_late" }.sumOf { it.second.optInt("toolCallCount") },
-                (turn.status in setOf(TurnStatus.WAITING_FOR_MODEL, TurnStatus.SOFT_TIMED_OUT) || (requested - finished).isNotEmpty()) && !turn.status.let { it in setOf(TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.CANCELLED, TurnStatus.HARD_CANCELLED, TurnStatus.INTERRUPTED, TurnStatus.COMPLETED_LATE) })
+                (turn.status in setOf(TurnStatus.WAITING_FOR_MODEL, TurnStatus.SOFT_TIMED_OUT) || (requested - finished).isNotEmpty()) && !turn.status.let { it in setOf(TurnStatus.COMPLETED, TurnStatus.YIELDED, TurnStatus.FAILED, TurnStatus.CANCELLED, TurnStatus.HARD_CANCELLED, TurnStatus.INTERRUPTED, TurnStatus.COMPLETED_LATE) })
         }
     }
 }

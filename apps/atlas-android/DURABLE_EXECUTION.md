@@ -1,0 +1,15 @@
+# Durable interactive execution
+
+A user request creates one durable execution task. Each model/tool loop runs in a bounded slice (eight model steps, twelve local tool dispatches, three minutes). A boundary commits a checkpoint, yields the coroutine and creates a continuation turn without another user message. Provider-hosted research is recorded separately from local tool dispatches.
+
+SQLite owns the task objective, original realm/actor scope, cumulative resource usage, linked turns and operation receipts. A generated reply ends the response; it does not certify that the objective was achieved. The checkpoint and tool receipts remain the evidence for committed effects. Context compaction cannot remove these receipts or the latest authoring artifact pointer.
+
+Only one running task can own a session. Every claim changes a generation fence; a stale owner cannot dispatch an operation or commit an atomic local mutation. Installed synchronous SQLite workspace mutations and memory writes commit their result receipt in the same transaction as their effects. A crash before commit rolls both back. A committed operation is replayed from its receipt, never executed again under the same operation ID. Other operations with uncertain outcomes block recovery and require reconciliation; they are never blindly retried.
+
+Clarification and authorization wait for the existing user controls. Session pause and new input preemption retain the task; cancellation ends it. Resuming preserves cumulative usage. Unambiguous transient provider failures retry with exponential backoff, at most eight consecutive retries. An unresolved/ambiguous provider request waits. A late provider result is diagnostic evidence only: its proposals are not executed; once recorded, a new slice may reason from it. Deterministic repeated tool failures wait after three checkpoints.
+
+Default task allowances are ten million input tokens, one million output tokens, ten thousand model steps, ten thousand local tool dispatches and twelve hours of active execution. Reservations are charged before dispatch; missing provider usage retains conservative estimates. Allowance exhaustion waits and cannot be cleared by a normal resume. This is a resource ceiling, not a promise that every objective finishes.
+
+The existing Android foreground service owns the runner. The app must have an active session and a usable provider route. Android force-stop, device shutdown, revoked runtime permissions or loss of connectivity can interrupt it; persisted state is recovered when the runtime starts again. No background restart bypasses OS policy. Session exports include read-only task snapshots; imports never restore executable authority.
+
+Tests include an accelerated thousand-slice run, database reopen, transaction rollback, committed receipt replay, stale-owner fencing, cancellation, unknown external outcomes, task allowances, repeated failures and task-scoped research provenance. Accelerated tests do not establish hours-long device endurance; that still requires a phone soak with representative tools and OS conditions.

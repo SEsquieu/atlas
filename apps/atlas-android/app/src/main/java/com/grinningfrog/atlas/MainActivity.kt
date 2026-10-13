@@ -435,6 +435,21 @@ private fun AtlasHomePage(
                 }
             }
 
+            snapshot.executionTasks.firstOrNull()?.let { task ->
+                item {
+                    InstrumentCard {
+                        Text("Task · ${task.state.name.lowercase()}", style = MaterialTheme.typography.labelLarge)
+                        Text(task.objective, maxLines = 3)
+                        Text("${task.document.optInt("slice_count")} slices · ${task.usage.optLong("model_steps")} model steps · ${task.usage.optLong("tool_calls")} tools", style = MaterialTheme.typography.bodySmall)
+                        if (task.waitReason.isNotBlank()) Text("Reason: ${task.waitReason.replace('_', ' ')}", color = AtlasAmber)
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            if (task.state in setOf(com.grinningfrog.atlas.runtime.ExecutionState.PAUSED, com.grinningfrog.atlas.runtime.ExecutionState.WAITING) && task.waitReason !in setOf("clarification", "authorization", "unknown_operation_outcome", "task_allowance")) TextButtonCompact("Resume") { runAction { runtime.resumeExecution(task.id) } }
+                            if (task.state !in setOf(com.grinningfrog.atlas.runtime.ExecutionState.COMPLETED, com.grinningfrog.atlas.runtime.ExecutionState.CANCELLED, com.grinningfrog.atlas.runtime.ExecutionState.FAILED)) TextButtonCompact("Cancel task") { runtime.cancelExecution(task.id) }
+                        }
+                    }
+                }
+            }
+
             snapshot.turnDiagnostics.firstOrNull()?.let { report -> item { TurnDiagnosticsCard(report) } }
 
             snapshot.activeTurn?.let { turn ->

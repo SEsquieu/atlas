@@ -69,7 +69,7 @@ data class ChatGptUsageSummary(
     val lastHostedSearchStatus: String? = null,
 )
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 13) {
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 14) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         db.setForeignKeyConstraintsEnabled(true)
@@ -383,9 +383,11 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         createIntentRuntimeTables(db)
         createComposableWorkspaceTables(db)
         createArchiveTables(db)
+        com.grinningfrog.atlas.runtime.ExecutionTaskStore.createTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 14) com.grinningfrog.atlas.runtime.ExecutionTaskStore.createTables(db)
         if (oldVersion < 13) createWorkspaceUndoTable(db)
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE observations ADD COLUMN media_id TEXT")
@@ -1212,6 +1214,8 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         put("memory", queryRows("memory_items", "session_id = ?", arrayOf(sessionId), "created_at"))
         put("summaries", queryRows("session_summaries", "session_id = ?", arrayOf(sessionId)))
         put("observations", queryRows("observations", "session_id = ?", arrayOf(sessionId), "observed_at"))
+        put("executionTaskSnapshots", queryRows("execution_tasks", "session_id = ?", arrayOf(sessionId)))
+        put("executionImportPolicy", "Read-only snapshots; executable authority is never imported")
         put("events", queryRows("events", "session_id = ?", arrayOf(sessionId), "sequence"))
         put("workspaces", JSONArray().apply {
             val ids = mutableSetOf<String>()
@@ -1248,6 +1252,9 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         val mediaKeys = mediaKeys("o.session_id = ?", arrayOf(sessionId))
         writableDatabase.transaction {
             delete("archive_imports", "kind='session' AND destination_id=?", arrayOf(sessionId))
+            execSQL("DELETE FROM execution_slices WHERE task_id IN (SELECT task_id FROM execution_tasks WHERE session_id=?)", arrayOf(sessionId))
+            delete("execution_tasks", "session_id=?", arrayOf(sessionId))
+            delete("local_operation_receipts", "session_id=?", arrayOf(sessionId))
             delete("speech_segments", "session_id = ?", arrayOf(sessionId))
             delete("tool_calls", "session_id = ?", arrayOf(sessionId))
             delete("messages", "session_id = ?", arrayOf(sessionId))
@@ -1518,7 +1525,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     fun loadActiveTurn(sessionId: String): AgentTurn? = readableDatabase.rawQuery(
-        "SELECT turn_id,session_id,status,trigger,created_at,updated_at,step_count,error FROM turns WHERE session_id = ? AND status NOT IN ('COMPLETED','COMPLETED_LATE','FAILED','CANCELLED','HARD_CANCELLED','INTERRUPTED') ORDER BY created_at DESC LIMIT 1",
+        "SELECT turn_id,session_id,status,trigger,created_at,updated_at,step_count,error FROM turns WHERE session_id = ? AND status NOT IN ('COMPLETED','COMPLETED_LATE','FAILED','CANCELLED','HARD_CANCELLED','INTERRUPTED','YIELDED') ORDER BY created_at DESC LIMIT 1",
         arrayOf(sessionId),
     ).use { cursor -> if (!cursor.moveToFirst()) null else cursor.toTurn() }
 
@@ -1651,7 +1658,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 put("tool_call_id", call.id); put("session_id", call.sessionId); put("turn_id", call.turnId); put("name", call.name)
                 put("arguments_json", call.argumentsJson); put("status", call.status.name); put("risk", call.risk.name)
                 put("requires_confirmation", if (call.requiresConfirmation) 1 else 0); put("idempotency_key", call.idempotencyKey)
-                put("reason", call.reason); put("created_at", call.createdAtMs); put("updated_at", call.updatedAtMs)
+                put("reason", call.reason); put("error", call.error); put("created_at", call.createdAtMs); put("updated_at", call.updatedAtMs)
             })
             appendEventLocked(this, call.sessionId, "tool.proposed", call.createdAtMs, JSONObject().apply {
                 put("turnId", call.turnId); put("toolCallId", call.id); put("tool", call.name); put("arguments", JSONObject(call.argumentsJson))
@@ -1681,6 +1688,12 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         """SELECT tool_call_id,session_id,turn_id,name,arguments_json,status,risk,requires_confirmation,idempotency_key,reason,result_json,error,created_at,updated_at
             FROM tool_calls WHERE session_id = ? AND idempotency_key NOT LIKE 'archive:%' AND status IN ('PROPOSED','WAITING_FOR_CONFIRMATION','APPROVED','RUNNING','UNKNOWN') ORDER BY created_at""".trimIndent(), arrayOf(sessionId)
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toToolCall()) } }
+
+    fun loadExecutionToolCalls(taskId: String, limit: Int = 100, pendingOnly: Boolean = false): List<AtlasToolCall> = readableDatabase.rawQuery(
+        "SELECT tc.tool_call_id,tc.session_id,tc.turn_id,tc.name,tc.arguments_json,tc.status,tc.risk,tc.requires_confirmation,tc.idempotency_key,tc.reason,tc.result_json,tc.error,tc.created_at,tc.updated_at FROM tool_calls tc JOIN execution_slices es ON tc.turn_id=es.turn_id WHERE es.task_id=? " +
+            (if(pendingOnly) "AND tc.status IN ('PROPOSED','APPROVED','WAITING_FOR_CONFIRMATION','RUNNING','UNKNOWN') " else "") +
+            "ORDER BY tc.created_at DESC LIMIT ?", arrayOf(taskId,limit.coerceIn(1,10000).toString())
+    ).use { cursor -> buildList { while(cursor.moveToNext()) add(cursor.toToolCall()) }.reversed() }
 
     fun loadTurnToolCalls(turnId: String): List<AtlasToolCall> = readableDatabase.rawQuery(
         """SELECT tool_call_id,session_id,turn_id,name,arguments_json,status,risk,requires_confirmation,idempotency_key,reason,result_json,error,created_at,updated_at

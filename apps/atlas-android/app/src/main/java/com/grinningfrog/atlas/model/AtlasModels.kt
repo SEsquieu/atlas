@@ -20,7 +20,7 @@ enum class MessageKind { DIALOGUE, TOOL_RESULT, INTERNAL }
 enum class TurnStatus {
     CREATED, ASSEMBLING_CONTEXT, WAITING_FOR_MODEL, WAITING_FOR_CONFIRMATION,
     WAITING_FOR_USER_CLARIFICATION, EXECUTING_TOOL, SOFT_TIMED_OUT, COMPLETED_LATE,
-    HARD_CANCELLED, COMPLETED, FAILED, CANCELLED, INTERRUPTED,
+    HARD_CANCELLED, COMPLETED, FAILED, CANCELLED, INTERRUPTED, YIELDED,
 }
 enum class ToolCallStatus { PROPOSED, WAITING_FOR_CONFIRMATION, APPROVED, RUNNING, COMPLETED, REJECTED, FAILED, UNKNOWN }
 enum class ToolRisk { READ_ONLY, SESSION_WRITE, PERSONAL_DATA, EXTERNAL_EFFECT }
@@ -399,6 +399,7 @@ data class RuntimeSnapshot(
     val messages: List<AtlasMessage> = emptyList(),
     val activeTurn: AgentTurn? = null,
     val turnDiagnostics: List<com.grinningfrog.atlas.runtime.TurnDiagnostics> = emptyList(),
+    val executionTasks: List<com.grinningfrog.atlas.runtime.ExecutionTask> = emptyList(),
     val pendingToolCalls: List<AtlasToolCall> = emptyList(),
     val memories: List<MemoryItem> = emptyList(),
     val sessionSummary: SessionSummary? = null,
