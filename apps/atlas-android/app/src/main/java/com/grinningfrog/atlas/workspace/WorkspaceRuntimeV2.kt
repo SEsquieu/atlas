@@ -380,6 +380,27 @@ object WorkspaceRuntimeV2 {
         return WorkspaceSimulationResult(failures.isEmpty(), failures, tests.length())
     }
 
+    fun supportedComponents(): List<String> = componentTypes.sorted()
+    fun supportedSteps(): List<String> = stepTypes.sorted()
+    fun supportedExpressions(): List<String> = expressionOps.sorted()
+    fun supportedFieldTypes(): List<String> = stateTypes.sorted()
+    fun supportedComponentProperties(type: String): Set<String> {
+        require(type in componentTypes) { "Unsupported component type: $type" }
+        return setOf("id", "type", "label", "visible") + when (type) {
+            "text" -> setOf("value", "text", "text_size", "bold")
+            "status", "metric" -> setOf("value", "compact", "show_label", "text_size", "bold")
+            "button" -> setOf("action", "enabled")
+            "input" -> setOf("binding", "action", "submit_label")
+            "toggle" -> setOf("binding", "action")
+            "progress" -> setOf("value", "max")
+            "list" -> setOf("collection", "primary_field", "secondary_field", "checked_field", "row_action", "row_action_label", "remove_action", "remove_label", "sort_by", "sort_direction", "limit", "empty_text")
+            "section" -> setOf("children", "compact", "show_label")
+            "row" -> setOf("children")
+            "grid" -> setOf("children", "columns")
+            else -> emptySet()
+        }
+    }
+
     private fun validateComponents(array: JSONArray?, path: String, actions: JSONObject, state: JSONObject, collections: JSONObject, errors: MutableList<String>, depth: Int): Int {
         if (array == null) { errors += "$path.components is required"; return 0 }
         if (depth > 12) { errors += "$path component nesting exceeds 12"; return 0 }
@@ -393,21 +414,8 @@ object WorkspaceRuntimeV2 {
             }
             val type = component.optString("type"); val id = component.optString("id")
             if (type !in componentTypes) errors += "Unsupported component type: ${type.ifBlank { "<blank>" }}"
-            val common = setOf("id", "type", "label", "visible")
-            val supported = when (type) {
-                "text" -> setOf("value", "text", "text_size", "bold")
-                "status", "metric" -> setOf("value", "compact", "show_label", "text_size", "bold")
-                "button" -> setOf("action", "enabled")
-                "input" -> setOf("binding", "action", "submit_label")
-                "toggle" -> setOf("binding", "action")
-                "progress" -> setOf("value", "max")
-                "list" -> setOf("collection", "primary_field", "secondary_field", "checked_field", "row_action", "row_action_label", "remove_action", "remove_label", "sort_by", "sort_direction", "limit", "empty_text")
-                "section" -> setOf("children", "compact", "show_label")
-                "row" -> setOf("children")
-                "grid" -> setOf("children", "columns")
-                else -> emptySet()
-            }
-            component.keys().forEach { key -> if (key !in common && key !in supported) errors += "$path.$id has unsupported property for $type: $key" }
+            val supported = if (type in componentTypes) supportedComponentProperties(type) else emptySet()
+            component.keys().forEach { key -> if (key !in supported) errors += "$path.$id has unsupported property for $type: $key" }
 
             if (!id.matches(identifier)) errors += "Invalid component id: ${id.ifBlank { "<blank>" }}"
             component.optString("action").takeIf(String::isNotBlank)?.let { if (!actions.has(it)) errors += "$path.$id references unknown action: $it" }

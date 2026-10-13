@@ -863,7 +863,7 @@ class AtlasMobileRuntime(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
-            val result = JSONObject().put("ok", false).put("error", error.safeMessage()).toString()
+            val result = ToolFailurePayload.json(error, error.safeMessage()).toString()
             database.updateToolCall(call.id, ToolCallStatus.FAILED, resultJson = result, error = error.safeMessage())
             database.appendEvent(call.sessionId, "tool.failed", JSONObject().put("tool", call.name).put("error", error.safeMessage()))
             val count = database.loadRecentEvents(call.sessionId, 100).count { event ->

@@ -51,6 +51,8 @@ object WorkspaceDefinitionValidator {
         "list", "gallery", "canvas", "button", "divider", "section",
     )
 
+    fun supportedComponents(): List<String> = componentTypes.sorted()
+
     fun validate(raw: String): WorkspaceValidationResult {
         val parsed = runCatching { JSONObject(raw) }.getOrNull()
         if (parsed?.optString("format") == WorkspaceRuntimeV2.FORMAT) return WorkspaceRuntimeV2.validate(parsed)

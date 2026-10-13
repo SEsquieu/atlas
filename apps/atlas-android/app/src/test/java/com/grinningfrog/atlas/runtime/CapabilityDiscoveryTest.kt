@@ -61,6 +61,39 @@ class CapabilityDiscoveryTest {
         assertTrue(runCatching { h.execute(call(CapabilityDiscovery.TOOL, args.toString(), other.id)) }.isFailure)
         h.execute(call(CapabilityDiscovery.TOOL, """{"stage":"no_candidate","reason":"No recorded evidence"}""", other.id))
     }
+    @Test fun rejectedCrossTurnParentReturnsCurrentIdsAndCanRecoverWithNewRoot() = runTest {
+        val h = harness()
+        val first = h.execute(call(CapabilityDiscovery.TOOL, blocked))
+        val priorId = JSONObject(first.resultJson).getString("blocker_id")
+        val next = db.createTurn(session.id, "user")
+        val failure = runCatching { h.execute(call(CapabilityDiscovery.TOOL, JSONObject(blocked).put("parent_blocker_id", priorId).toString(), next.id)) }.exceptionOrNull() as StructuredToolRejection
+        val payload = ToolFailurePayload.json(failure, failure.message!!)
+        assertEquals("invalid_parent_blocker", payload.getString("error_code"))
+        assertEquals(next.id, payload.getJSONObject("recovery").getString("current_turn_id"))
+        assertEquals(0, payload.getJSONObject("recovery").getJSONArray("current_blockers").length())
+        assertFalse(payload.getBoolean("authorization_granted"))
+        h.execute(call(CapabilityDiscovery.TOOL, blocked, next.id))
+        assertTrue(db.loadRecentEvents(session.id).any { it.type == "capability.control_rejected" })
+    }
+    @Test fun sourceRejectionIdentifiesExactMissingUrlsAndAllowsCorrectedCandidate() = runTest {
+        val h = harness(adapter("web_search", ToolRisk.READ_ONLY, true))
+        h.execute(call(CapabilityDiscovery.TOOL, blocked))
+        h.execute(call("web_search"))
+        val mixed = JSONObject(candidate).put("sources", org.json.JSONArray().put("https://example.org/docs").put("https://example.org/unread"))
+        val failure = runCatching { h.execute(call(CapabilityDiscovery.TOOL, mixed.toString())) }.exceptionOrNull() as StructuredToolRejection
+        assertEquals("unrecorded_sources", failure.code)
+        assertEquals("https://example.org/unread", failure.recovery.getJSONArray("unrecorded_sources").getString(0))
+        assertEquals("https://example.org/docs", failure.recovery.getJSONArray("recorded_sources").getString(0))
+        assertFalse(db.loadRecentEvents(session.id).any { it.type == "capability.candidate_proposed" })
+        h.execute(call(CapabilityDiscovery.TOOL, candidate))
+        assertTrue(db.loadRecentEvents(session.id).any { it.type == "capability.candidate_proposed" })
+        val next = db.createTurn(session.id, "user")
+        val missing = runCatching { h.execute(call(CapabilityDiscovery.TOOL, candidate, next.id)) }.exceptionOrNull() as StructuredToolRejection
+        assertEquals("missing_blocker", missing.code)
+        h.execute(call(CapabilityDiscovery.TOOL, blocked, next.id))
+        val crossTurn = runCatching { h.execute(call(CapabilityDiscovery.TOOL, candidate, next.id)) }.exceptionOrNull() as StructuredToolRejection
+        assertEquals(0, crossTurn.recovery.getJSONArray("recorded_sources").length())
+    }
     @Test fun recordsFullDiscoveryTraceWithoutInvokingCandidate() = runTest {
         val h = harness(adapter("web_search", ToolRisk.READ_ONLY, true))
         h.execute(call(CapabilityDiscovery.TOOL, blocked))
