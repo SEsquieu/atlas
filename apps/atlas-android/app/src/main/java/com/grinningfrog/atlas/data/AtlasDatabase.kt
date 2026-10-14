@@ -1083,7 +1083,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     @Synchronized
-    fun restoreWorkspaceRecord(workspaceId: String, baseRevisionId: String, undoToken: String, sessionId: String? = null, navigationSequence: Long? = null, nowMs: Long = System.currentTimeMillis()): WorkspaceExecutionResult {
+    fun restoreWorkspaceRecord(workspaceId: String, baseRevisionId: String, undoToken: String, sessionId: String? = null, navigationSequence: Long? = null, nowMs: Long = System.currentTimeMillis(), source: String = if (sessionId == null) "UI" else "MODEL"): WorkspaceExecutionResult {
         val definition = recordOperationDefinition(workspaceId, baseRevisionId, sessionId, navigationSequence)
         val row = readableDatabase.query("workspace_record_undo", null, "composable_workspace_id = ? AND undo_token = ?", arrayOf(workspaceId, undoToken), null, null, null).use { cursor ->
             check(cursor.moveToFirst()) { "Undo is unavailable or already used" }
@@ -1094,7 +1094,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             JSONObject().put("type", "insert").put("collection", row.collection).put("data", data))
         val restored = result.copy(mutations = result.mutations.map { if (it is WorkspaceMutation.InsertRecord) it.copy(recordId = row.id, createdAtMs = row.createdAtMs) else it })
         writableDatabase.transaction {
-            persistWorkspaceExecution(workspaceId, restored, nowMs, if (sessionId == null) "UI" else "MODEL", "restore_record")
+            persistWorkspaceExecution(workspaceId, restored, nowMs, source, "restore_record")
             check(delete("workspace_record_undo", "composable_workspace_id = ? AND undo_token = ?", arrayOf(workspaceId, undoToken)) == 1)
         }
         return restored

@@ -329,7 +329,7 @@ private class RestoreRecord(database: AtlasDatabase) : DeleteRecord(database) {
     override fun executeLocal(call: AtlasToolCall): ToolExecutionResult {
         val args = JSONObject(call.argumentsJson)
         require(evaluate(sessionFor(call), ToolCallProposal(call.id, call.name, call.argumentsJson)).allowed) { "Task target changed; inspect again" }
-        val result = database.restoreWorkspaceRecord(args.getString("workspace_id"), args.getString("base_revision_id"), args.getString("undo_token"), if (durable(call)) null else call.sessionId, args.getLong("navigation_sequence"))
+        val result = database.restoreWorkspaceRecord(args.getString("workspace_id"), args.getString("base_revision_id"), args.getString("undo_token"), if (durable(call)) null else call.sessionId, args.getLong("navigation_sequence"), source = "MODEL")
         val record = result.mutations.filterIsInstance<WorkspaceMutation.InsertRecord>().single()
         return ToolExecutionResult(JSONObject().put("ok", true).put("record_id", record.recordId).put("collection", record.collection).put("data", record.data).toString())
     }

@@ -89,7 +89,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val doc = JSONObject().put("objective", objective).put("root_turn_id", turnId).put("created_at", now()).put("budget", budget.json())
             .put("usage", JSONObject().put("input_tokens",0).put("output_tokens",0).put("model_steps",0).put("tool_calls",0).put("active_ms",0))
             .put("scope", JSONObject().put("actor_id",session.actorId ?: JSONObject.NULL).put("realm_id",session.workspaceId).put("session_id",session.id).put("atomic_local_tools",JSONArray(atomicTools)))
-            .put("workspace_target", JSONObject().put("workspace_id", session.activeComposableWorkspaceId ?: JSONObject.NULL).put("sequence", 0))
+            .put("workspace_target", JSONObject().put("workspace_id", session.activeComposableWorkspaceId ?: JSONObject.NULL).put("sequence", session.workspaceNavigationSequence))
             .put("slice_count",1).put("checkpoint",JSONObject()).put("consecutive_retries",0)
         database.writableDatabase.insertOrThrow("execution_tasks",null,ContentValues().apply { put("task_id",id);put("session_id",session.id);put("state","READY");put("generation",0);put("lease_until",0);put("next_run_at",0);put("document_json",doc.toString()) })
         link(id, turnId, 1)
