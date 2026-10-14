@@ -15,16 +15,18 @@ import com.grinningfrog.atlas.runtime.ToolExecutionResult
 import org.json.JSONArray
 import org.json.JSONObject
 
-private const val AUTHORING_GUIDE = "Inspect workspace_capabilities before declaring a workspace feature unavailable; query both formats and request examples for unfamiliar components. Prefer atlas.workspace.v2 for stateful apps. V2 requires format,title,entry_view,state,collections,actions,views, and should include tests. State fields are {type:string|integer|decimal|boolean|timestamp|enum,initial,values?}; collection fields use the same types. All components require a unique id. views is an array of {id,title,components}; collection schemas are {fields:{...}}. Text supports text_size:small|normal|large and bold:boolean; metric supports text_size; section supports show_label:boolean. Markdown is plain text. For small edits use workspace_patch_definition instead of rewriting the full definition. Components: chart(points:[{label,value}] OR collection,label_field,value_field; value_label?,sort_by?,sort_direction?,limit:1..50?; native horizontal bars, tap to inspect values; collection updates reflect durable edits), text(value), status/metric(value), button(action), input(binding), toggle(binding,action), progress(value,max), list(collection,primary_field,secondary_field,checked_field?,row_action?,row_action_label?,remove_action?,remove_label?,sort_by?,sort_direction?,limit?), section(children,compact?), row(children), grid(children,columns:1..6), divider. Input and toggle bindings are bare state keys (binding:item_name, not state.item_name). Every action step is an object with type, for example {type:set,key:item_name,value:bread}; never use step or a nested set object. Actions contain bounded steps: set(key,value), increment(key,by), toggle(key), insert(collection,data), update_record(collection,record_id,data), toggle_record(collection,record_id,field), remove_record(collection,record_id), navigate(view), sequence(steps), branch(if,then,else), stop; enabled_if and disabled_message guard actions. Root invariants are {name?,assert,message?}. Expressions are literals, {var:'state.key'}, {var:'count.collection'}, {var:'row.id'} for the stable selected record ID and {var:'row.field'} for its data (row variables require row context), or {op:eq|ne|gt|gte|lt|lte|and|or|not|add|subtract|multiply|divide|concat|if|count,args:[...]}. A list checked_field must be a boolean collection field and requires row_action. Wire row_action to a toggle_record step with record_id:{var:row.id}; row controls and conversational workspace_update_record edits both persist validated record changes. Chat can add items with workspace_add_record; no separate input binding is required. Tests are {name,action|actions,initial_state?,initial_records?,row_collection?,row_id?,assert}; initial_records maps collections to arrays of schema-valid data with unique _id metadata for testing existing records. Use row_id and row_collection to select a fixture record. Example: {type:toggle_record,collection:items,record_id:{var:row.id},field:found}. Lists default to creation-time ascending with stable ID tie-breaking; sort_by names a collection field and sort_direction is ascending or descending. Unsupported component properties are rejected. remove_action can reference a remove_record action and the UI provides Undo. New required collection fields need a valid initial default; revision preview validates and backfills actual saved records atomically. Migration reports distinguish state migration from record_migration. Use workspace_render_diagnostics for ordering/errors and workspace_capture_view for UI pixels; capture_current_view is the physical camera. Validate against the active workspace before replacing. V1 also supports a basic freehand canvas with explicit Save/Clear and persisted strokes; request format atlas.workspace.v1, component canvas, include_examples true from workspace_capabilities. V2 supports collapsible content as boolean state + toggle + section.visible, but not a dedicated accordion or theme tokens."
+private const val AUTHORING_GUIDE = "Inspect workspace_capabilities before declaring a workspace feature unavailable; query both formats and request examples for unfamiliar components. Prefer atlas.workspace.v2 for stateful apps. V2 requires format,title,entry_view,state,collections,actions,views, and should include tests. State fields are {type:string|integer|decimal|boolean|timestamp|enum,initial,values?}; collection fields use the same types. All components require a unique id. views is an array of {id,title,components}; collection schemas are {fields:{...}}. Text supports text_size:small|normal|large and bold:boolean; metric supports text_size; section supports show_label:boolean. Markdown is plain text. For small edits use workspace_patch_definition instead of rewriting the full definition. Components: chart(points:[{label,value}] OR collection,label_field,value_field; value_label?,sort_by?,sort_direction?,limit:1..50?; native horizontal bars, tap to inspect values; collection updates reflect durable edits), text(value), status/metric(value), button(action), input(binding), toggle(binding,action), progress(value,max), list(collection,primary_field,secondary_field,checked_field?,row_action?,row_action_label?,remove_action?,remove_label?,sort_by?,sort_direction?,limit?), section(children,compact?), row(children), grid(children,columns:1..6), divider. Input and toggle bindings are bare state keys (binding:item_name, not state.item_name). Every action step is an object with type, for example {type:set,key:item_name,value:bread}; never use step or a nested set object. Actions contain bounded steps: set(key,value), increment(key,by), toggle(key), insert(collection,data), update_record(collection,record_id,data), toggle_record(collection,record_id,field), remove_record(collection,record_id), navigate(view), sequence(steps), branch(if,then,else), stop; enabled_if and disabled_message guard actions. Root invariants are {name?,assert,message?}. Expressions are literals, {var:'state.key'}, {var:'count.collection'}, {var:'row.id'} for the stable selected record ID and {var:'row.field'} for its data (row variables require row context), or {op:eq|ne|gt|gte|lt|lte|and|or|not|add|subtract|multiply|divide|concat|if|count,args:[...]}. A list checked_field must be a boolean collection field and requires row_action. Wire row_action to a toggle_record step with record_id:{var:row.id}; row controls and conversational workspace_update_record edits both persist validated record changes. Chat can add items with workspace_add_record; no separate input binding is required. Tests are {name,action|actions,initial_state?,initial_records?,row_collection?,row_id?,assert}; initial_records maps collections to arrays of schema-valid data with unique _id metadata for testing existing records. Use row_id and row_collection to select a fixture record. Example: {type:toggle_record,collection:items,record_id:{var:row.id},field:found}. Lists default to creation-time ascending with stable ID tie-breaking; sort_by names a collection field and sort_direction is ascending or descending. Unsupported component properties are rejected. remove_action can reference a remove_record action and the UI provides Undo. New required collection fields need a valid initial default; revision preview validates and backfills actual saved records atomically. Migration reports distinguish state migration from record_migration. Use workspace_render_diagnostics for ordering/errors and workspace_capture_view for UI pixels; capture_current_view is the physical camera. For explicit named edits call workspace_target first, then inspect and validate the target before replacing. For ambiguous edits use the task target captured from the open workspace. Read references by ID without retargeting. UI navigation is independent of task targets. V1 also supports a basic freehand canvas with explicit Save/Clear and persisted strokes; request format atlas.workspace.v1, component canvas, include_examples true from workspace_capabilities. V2 supports collapsible content as boolean state + toggle + section.visible, but not a dedicated accordion or theme tokens."
 
 object WorkspaceTools {
     fun create(database: AtlasDatabase, mediaRepository: MediaRepository? = null): List<AtlasToolAdapter> = listOf(
-        Capabilities(database), ListWorkspaces(database), ValidateDefinition(database), CreateWorkspace(database), InspectWorkspace(database), ReplaceDefinition(database), PatchDefinition(database), AddRecord(database), UpdateRecord(database), DeleteRecord(database), RestoreRecord(database), RenderDiagnostics(database),
+        Capabilities(database), ListWorkspaces(database), TargetWorkspace(database), ValidateDefinition(database), CreateWorkspace(database), InspectWorkspace(database), ReplaceDefinition(database), PatchDefinition(database), AddRecord(database), UpdateRecord(database), DeleteRecord(database), RestoreRecord(database), RenderDiagnostics(database),
     ) + if (mediaRepository == null) emptyList() else listOf(CaptureWorkspace(database, mediaRepository))
 }
 
 private abstract class WorkspaceAdapter(protected val database: AtlasDatabase) : AtlasToolAdapter {
     override val supportsLocalMutation = true
+    protected fun sessionFor(call: AtlasToolCall): AtlasSession = com.grinningfrog.atlas.runtime.ExecutionTaskStore(database).workspaceSession(database.loadSession(call.sessionId) ?: error("Session is unavailable"), call.turnId)
+    protected fun durable(call: AtlasToolCall) = com.grinningfrog.atlas.runtime.ExecutionTaskStore(database).forTurn(call.turnId) != null
     protected fun active(session: AtlasSession) = session.activeComposableWorkspaceId
     protected fun allowedWorkspace(session: AtlasSession, requested: String?): String? {
         val id = requested?.takeIf(String::isNotBlank) ?: active(session) ?: return null
@@ -80,7 +82,7 @@ private class CreateWorkspace(database: AtlasDatabase) : LocalWorkspaceMutation(
     override fun evaluate(session: AtlasSession, proposal: ToolCallProposal) = ToolPolicyDecision(true, false, ToolRisk.SESSION_WRITE, "Creates a reversible local workspace")
     override fun executeLocal(call: AtlasToolCall): ToolExecutionResult {
         val args = JSONObject(call.argumentsJson)
-        val session = database.loadSession(call.sessionId) ?: error("Session is unavailable")
+        val session = sessionFor(call)
         val name = args.getString("name").trim()
         require(name.isNotBlank()) { "Workspace name is required" }
         val description = args.optString("description").trim()
@@ -89,7 +91,7 @@ private class CreateWorkspace(database: AtlasDatabase) : LocalWorkspaceMutation(
         val simulation = if (proposed.optString("format") == WorkspaceRuntimeV2.FORMAT) WorkspaceRuntimeV2.simulate(proposed) else null
         require(simulation?.passed != false) { simulation?.failures.orEmpty().joinToString("; ") }
         val workspace = database.createComposableWorkspace(name, description, definition, session.workspaceId, session.id, call.turnId)
-        val sequence = database.activateComposableWorkspace(session.id, workspace.id)
+        val sequence = if (durable(call)) com.grinningfrog.atlas.runtime.ExecutionTaskStore(database).bindWorkspace(call.turnId, workspace.id) else database.activateComposableWorkspace(session.id, workspace.id)
         return ToolExecutionResult(JSONObject().apply {
             put("ok", true); put("workspace_id", workspace.id); put("revision_id", workspace.liveRevisionId); put("navigation_sequence", sequence); put("valid", true)
             simulation?.let { put("simulation_passed", it.passed); put("tests_run", it.testsRun); put("test_failures", JSONArray(it.failures)) }
@@ -127,10 +129,37 @@ private class ValidateDefinition(database: AtlasDatabase) : WorkspaceAdapter(dat
     }
 }
 
+private class TargetWorkspace(database: AtlasDatabase) : LocalWorkspaceMutation(database) {
+    override val definition = ToolDefinition(
+        "workspace_target", "Resolve an explicitly requested workspace by exact name or an inspected workspace ID and bind it as this task's edit target without navigating the UI. Use only for user-requested edit targets; reference inspection does not change the edit target. Duplicate names return candidates and require clarification. Subsequent ambiguous commands in this task refer to this target.",
+        """{"type":"object","properties":{"name":{"type":"string"},"workspace_id":{"type":"string"}},"additionalProperties":false}""",
+        ToolRisk.SESSION_WRITE, maxCallsPerTurn = 6,
+    )
+    override fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision {
+        val args = runCatching { JSONObject(proposal.argumentsJson) }.getOrNull()
+        val valid = args != null && (args.has("name") xor args.has("workspace_id"))
+        return ToolPolicyDecision(valid, false, ToolRisk.SESSION_WRITE, "Task-scoped target resolution; no UI navigation")
+    }
+    override fun executeLocal(call: AtlasToolCall): ToolExecutionResult {
+        val args = JSONObject(call.argumentsJson)
+        require(args.has("name") xor args.has("workspace_id")) { "Supply exactly one name or workspace_id" }
+        val session = sessionFor(call)
+        val matches = database.listComposableWorkspaces().filter {
+            it.realmId == session.workspaceId && it.status == WorkspaceStatus.ACTIVE &&
+                if (args.has("workspace_id")) it.id == args.getString("workspace_id") else it.name.equals(args.getString("name").trim(), ignoreCase = true)
+        }
+        if (matches.size != 1) return ToolExecutionResult(JSONObject().put("ok", false).put("reason", if (matches.isEmpty()) "workspace_not_found" else "ambiguous_workspace_name")
+            .put("candidates", JSONArray(matches.map { JSONObject().put("workspace_id", it.id).put("name", it.name) })).put("requires_clarification", true).toString())
+        val target = matches.single()
+        val sequence = com.grinningfrog.atlas.runtime.ExecutionTaskStore(database).bindWorkspace(call.turnId, target.id)
+        return ToolExecutionResult(JSONObject().put("ok", true).put("workspace_id", target.id).put("name", target.name).put("navigation_sequence", sequence).put("ui_navigation_changed", false).toString())
+    }
+}
+
 private class InspectWorkspace(database: AtlasDatabase) : WorkspaceAdapter(database) {
     override val supportsLocalDiagnostics = true
     override val definition = ToolDefinition(
-        "workspace_inspect", "Inspect an active workspace. Compact mode is optimized for diagnosis; request full mode only when editing the definition. Records are omitted unless explicitly requested.",
+        "workspace_inspect", "Inspect any same-realm workspace by ID; omitted ID uses the task target. Inspection of a reference does not retarget edits. Compact mode is optimized for diagnosis; request full mode only when editing the definition. Records are omitted unless explicitly requested.",
         """{"type":"object","properties":{"workspace_id":{"type":"string"},"mode":{"type":"string","enum":["compact","full"]},"collection":{"type":"string"},"include_records":{"type":"boolean"},"record_limit":{"type":"integer","minimum":1,"maximum":50}},"additionalProperties":false}""",
         ToolRisk.READ_ONLY, maxCallsPerTurn = 3,
     )
@@ -140,7 +169,7 @@ private class InspectWorkspace(database: AtlasDatabase) : WorkspaceAdapter(datab
     }
     override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
         val args = JSONObject(call.argumentsJson)
-        val session = database.loadSession(call.sessionId) ?: error("Session is unavailable")
+        val session = sessionFor(call)
         val id = allowedWorkspace(session, args.optString("workspace_id")) ?: error("Workspace is unavailable")
         val workspace = database.loadComposableWorkspace(id) ?: error("Workspace is unavailable")
         val revision = database.loadLiveWorkspaceRevision(id) ?: error("Workspace revision is unavailable")
@@ -175,20 +204,20 @@ private class InspectWorkspace(database: AtlasDatabase) : WorkspaceAdapter(datab
 
 private open class ReplaceDefinition(database: AtlasDatabase) : LocalWorkspaceMutation(database) {
     override val definition = ToolDefinition(
-        "workspace_replace_definition", "Replace the active workspace definition. The base revision and navigation sequence prevent stale changes. $AUTHORING_GUIDE",
+        "workspace_replace_definition", "Replace the task-target workspace definition. The base revision and navigation sequence prevent stale changes. $AUTHORING_GUIDE",
         """{"type":"object","properties":{"workspace_id":{"type":"string"},"base_revision_id":{"type":"string"},"navigation_sequence":{"type":"integer"},"purpose":{"type":"string","maxLength":500},"definition":{"type":"object"}},"required":["workspace_id","base_revision_id","navigation_sequence","purpose","definition"],"additionalProperties":false}""",
         ToolRisk.SESSION_WRITE, maxCallsPerTurn = 3,
     )
     override fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision {
         val args = runCatching { JSONObject(proposal.argumentsJson) }.getOrNull()
         val same = args != null && args.optString("workspace_id") == session.activeComposableWorkspaceId && args.optLong("navigation_sequence", -1) == session.workspaceNavigationSequence
-        return ToolPolicyDecision(same, false, ToolRisk.SESSION_WRITE, if (same) "Versioned reversible workspace revision" else "Workspace context changed; inspect the active workspace again")
+        return ToolPolicyDecision(same, false, ToolRisk.SESSION_WRITE, if (same) "Versioned reversible workspace revision" else "Task target differs; resolve the requested workspace with workspace_target, then inspect again")
     }
     override fun executeLocal(call: AtlasToolCall): ToolExecutionResult {
         val args = JSONObject(call.argumentsJson)
-        val session = database.loadSession(call.sessionId) ?: error("Session is unavailable")
+        val session = sessionFor(call)
         val id = args.getString("workspace_id")
-        require(id == session.activeComposableWorkspaceId && args.getLong("navigation_sequence") == session.workspaceNavigationSequence) { "Workspace context changed" }
+        require(allowedWorkspace(session, id) != null && id == session.activeComposableWorkspaceId && args.getLong("navigation_sequence") == session.workspaceNavigationSequence) { "Workspace context changed" }
         val definition = args.getJSONObject("definition")
         val migration = if (definition.optString("format") == WorkspaceRuntimeV2.FORMAT) {
             WorkspaceRuntimeV2.migrateState(definition, database.loadWorkspacePersistedState(id))
@@ -228,18 +257,18 @@ private class PatchDefinition(database: AtlasDatabase) : ReplaceDefinition(datab
 
 private class AddRecord(database: AtlasDatabase) : LocalWorkspaceMutation(database) {
     override val definition = ToolDefinition(
-        "workspace_add_record", "Add one structured record to a collection in the active workspace.",
+        "workspace_add_record", "Add one structured record to a collection in the task-target workspace.",
         """{"type":"object","properties":{"workspace_id":{"type":"string"},"collection":{"type":"string"},"data":{"type":"object"}},"required":["workspace_id","collection","data"],"additionalProperties":false}""",
         ToolRisk.SESSION_WRITE, maxCallsPerTurn = 6,
     )
     override fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision {
         val id = runCatching { JSONObject(proposal.argumentsJson).optString("workspace_id") }.getOrNull()
         val allowed = id == session.activeComposableWorkspaceId && allowedWorkspace(session, id) != null
-        return ToolPolicyDecision(allowed, false, ToolRisk.SESSION_WRITE, if (allowed) "Reversible local workspace record" else "Only the active workspace may be changed")
+        return ToolPolicyDecision(allowed, false, ToolRisk.SESSION_WRITE, if (allowed) "Reversible local workspace record" else "Resolve the requested edit target with workspace_target first")
     }
     override fun executeLocal(call: AtlasToolCall): ToolExecutionResult {
         val args = JSONObject(call.argumentsJson)
-        val session = database.loadSession(call.sessionId) ?: error("Session is unavailable")
+        val session = sessionFor(call)
         require(args.getString("workspace_id") == session.activeComposableWorkspaceId && allowedWorkspace(session, args.getString("workspace_id")) != null) { "Workspace context changed; inspect again" }
         val revision = database.loadLiveWorkspaceRevision(args.getString("workspace_id")) ?: error("Workspace is unavailable")
         val root = JSONObject(revision.definitionJson)
@@ -264,9 +293,9 @@ private class UpdateRecord(database: AtlasDatabase) : LocalWorkspaceMutation(dat
     }
     override fun executeLocal(call: AtlasToolCall): ToolExecutionResult {
         val args = JSONObject(call.argumentsJson)
-        val session = database.loadSession(call.sessionId) ?: error("Session is unavailable")
+        val session = sessionFor(call)
         require(evaluate(session, ToolCallProposal(call.id, call.name, call.argumentsJson)).allowed) { "Workspace context changed; inspect again" }
-        val result = database.updateWorkspaceRecord(args.getString("workspace_id"), args.getString("base_revision_id"), args.getString("collection"), args.getString("record_id"), args.getJSONObject("data"), args.getJSONObject("expected_data"), sessionId = session.id, navigationSequence = args.getLong("navigation_sequence"))
+        val result = database.updateWorkspaceRecord(args.getString("workspace_id"), args.getString("base_revision_id"), args.getString("collection"), args.getString("record_id"), args.getJSONObject("data"), args.getJSONObject("expected_data"), sessionId = if (durable(call)) null else session.id, navigationSequence = args.getLong("navigation_sequence"))
         val mutation = result.mutations.filterIsInstance<WorkspaceMutation.UpdateRecord>().single()
         return ToolExecutionResult(JSONObject().put("ok", true).put("workspace_id", args.getString("workspace_id")).put("record_id", mutation.recordId).put("collection", mutation.collection).put("data", mutation.data).toString())
     }
@@ -285,7 +314,8 @@ private open class DeleteRecord(database: AtlasDatabase) : LocalWorkspaceMutatio
     }
     override fun executeLocal(call: AtlasToolCall): ToolExecutionResult {
         val args = JSONObject(call.argumentsJson)
-        val result = database.deleteWorkspaceRecord(args.getString("workspace_id"), args.getString("base_revision_id"), args.getString("collection"), args.getString("record_id"), args.getJSONObject("expected_data"), call.sessionId, args.getLong("navigation_sequence"))
+        require(evaluate(sessionFor(call), ToolCallProposal(call.id, call.name, call.argumentsJson)).allowed) { "Task target changed; inspect again" }
+        val result = database.deleteWorkspaceRecord(args.getString("workspace_id"), args.getString("base_revision_id"), args.getString("collection"), args.getString("record_id"), args.getJSONObject("expected_data"), if (durable(call)) null else call.sessionId, args.getLong("navigation_sequence"))
         return ToolExecutionResult(JSONObject().put("ok", true).put("record_id", args.getString("record_id")).put("undo_token", result.undoTokens.single()).toString())
     }
 }
@@ -298,7 +328,8 @@ private class RestoreRecord(database: AtlasDatabase) : DeleteRecord(database) {
     )
     override fun executeLocal(call: AtlasToolCall): ToolExecutionResult {
         val args = JSONObject(call.argumentsJson)
-        val result = database.restoreWorkspaceRecord(args.getString("workspace_id"), args.getString("base_revision_id"), args.getString("undo_token"), call.sessionId, args.getLong("navigation_sequence"))
+        require(evaluate(sessionFor(call), ToolCallProposal(call.id, call.name, call.argumentsJson)).allowed) { "Task target changed; inspect again" }
+        val result = database.restoreWorkspaceRecord(args.getString("workspace_id"), args.getString("base_revision_id"), args.getString("undo_token"), if (durable(call)) null else call.sessionId, args.getLong("navigation_sequence"))
         val record = result.mutations.filterIsInstance<WorkspaceMutation.InsertRecord>().single()
         return ToolExecutionResult(JSONObject().put("ok", true).put("record_id", record.recordId).put("collection", record.collection).put("data", record.data).toString())
     }
@@ -316,7 +347,7 @@ private open class RenderDiagnostics(database: AtlasDatabase) : WorkspaceAdapter
         return ToolPolicyDecision(id != null && id == session.activeComposableWorkspaceId && allowedWorkspace(session, id) != null, false, ToolRisk.READ_ONLY, "Scoped diagnostics of the active local workspace")
     }
     protected fun target(call: AtlasToolCall): Pair<AtlasSession, String> {
-        val session = database.loadSession(call.sessionId) ?: error("Session is unavailable")
+        val session = sessionFor(call)
         require(evaluate(session, ToolCallProposal(call.id, call.name, call.argumentsJson)).allowed) { "Workspace context changed; inspect again" }
         return session to session.activeComposableWorkspaceId!!
     }
@@ -352,10 +383,12 @@ private class CaptureWorkspace(database: AtlasDatabase, private val media: Media
     override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
         val (session, id) = target(call)
         val revision = database.loadLiveWorkspaceRevision(id) ?: error("Workspace is unavailable")
+        val viewing = database.loadSession(session.id) ?: error("Session is unavailable")
+        require(viewing.activeComposableWorkspaceId == id && viewing.permissions.observe) { "Target workspace is not open for pixel capture; use headless render diagnostics" }
         val (bitmap, rendered) = WorkspaceRenderSurface.capture(id, revision.id)
         val ref = media.ingestWorkspaceBitmap(bitmap, session.id)
         val current = database.loadSession(session.id) ?: error("Session is unavailable")
-        if (!current.permissions.observe || current.activeComposableWorkspaceId != id || current.workspaceNavigationSequence != session.workspaceNavigationSequence || database.loadLiveWorkspaceRevision(id)?.id != revision.id) {
+        if (!current.permissions.observe || current.activeComposableWorkspaceId != id || current.workspaceNavigationSequence != viewing.workspaceNavigationSequence || database.loadLiveWorkspaceRevision(id)?.id != revision.id) {
             media.deleteStorageKeys(listOf(ref.storageKey)); error("Workspace changed during screenshot capture; retry")
         }
         val observation = VisualObservation(sessionId = session.id, media = ref, observedAtMs = rendered.getLong("drawn_at_ms"), availableAtMs = System.currentTimeMillis(),

@@ -108,7 +108,7 @@ class ToolHarness(
         }
         val arguments = runCatching { JSONObject(proposal.argumentsJson) }.getOrNull()
             ?: return ToolPolicyDecision(false, false, definition.risk, "Tool arguments are not valid JSON")
-        val turnId = database.loadActiveTurn(session.id)?.id
+        val turnId = executionLease()?.let { ExecutionTaskStore(database).currentTurn(it.taskId) } ?: database.loadActiveTurn(session.id)?.id
         if (turnId != null && discovery.active(turnId) && !discoveryAllowed(proposal.name, turnId))
             return ToolPolicyDecision(false, false, definition.risk, "Capability discovery is read-only; a separate explicit authorization path is required")
         if (proposal.name == CapabilityDiscovery.TOOL) {
@@ -116,7 +116,7 @@ class ToolHarness(
             return ToolPolicyDecision(error == null, false, ToolRisk.SESSION_WRITE, error?.message ?: "Audit-only capability discovery control; no external access granted")
         }
         additionalTools.firstOrNull { it.definition.name == proposal.name }?.let {
-            val decision = it.evaluate(session, proposal)
+            val decision = it.evaluate(if (it.definition.name.startsWith("workspace_")) ExecutionTaskStore(database).workspaceSession(session, turnId) else session, proposal)
             if (turnId != null && discovery.active(turnId) && (decision.requiresConfirmation || (decision.risk != ToolRisk.READ_ONLY && !(discovery.localWorkResumed(turnId) && it.supportsLocalMutation && decision.risk == ToolRisk.SESSION_WRITE))))
                 return ToolPolicyDecision(false, false, decision.risk, "Discovery cannot authorize additional research permissions")
             return decision
@@ -161,7 +161,7 @@ class ToolHarness(
         val adapter = additionalTools.firstOrNull { it.definition.name == call.name }
         if (researching && adapter?.supportsLocalMutation == true && adapter.definition.risk == ToolRisk.SESSION_WRITE) {
             val session = requireNotNull(database.loadSession(call.sessionId)) { "Session is unavailable" }
-            val policy = adapter.evaluate(session, ToolCallProposal(call.id, call.name, call.argumentsJson))
+            val policy = adapter.evaluate(if (call.name.startsWith("workspace_")) ExecutionTaskStore(database).workspaceSession(session, call.turnId) else session, ToolCallProposal(call.id, call.name, call.argumentsJson))
             require(policy.allowed && policy.risk == ToolRisk.SESSION_WRITE && !policy.requiresConfirmation) { "Local mutation is unavailable under its current policy" }
         }
         val trustedResearch = adapter?.supportsCapabilityDiscovery == true && adapter.definition.risk == ToolRisk.READ_ONLY

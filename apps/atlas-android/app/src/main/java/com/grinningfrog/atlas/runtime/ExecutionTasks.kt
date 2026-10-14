@@ -50,6 +50,26 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         if (!c.moveToFirst()) null else ExecutionTask(c.getString(0), c.getString(1), ExecutionState.valueOf(c.getString(2)), c.getLong(3), if(c.isNull(4)) null else c.getString(4), c.getLong(5), c.getLong(6), JSONObject(c.getString(7)))
     }
     fun forTurn(turnId: String): ExecutionTask? = database.readableDatabase.rawQuery("SELECT task_id FROM execution_slices WHERE turn_id=?", arrayOf(turnId)).use { c -> if(c.moveToFirst()) get(c.getString(0)) else null }
+    /** A task captures its default target once; browsing never changes it. */
+    fun workspaceSession(session: AtlasSession, turnId: String?): AtlasSession {
+        val task = turnId?.let(::forTurn) ?: return session
+        require(task.sessionId == session.id)
+        val binding = task.document.optJSONObject("workspace_target") ?: return session
+        return session.copy(activeComposableWorkspaceId = binding.optString("workspace_id").takeIf { it.isNotBlank() && it != "null" },
+            workspaceNavigationSequence = binding.optLong("sequence"))
+    }
+    fun bindWorkspace(turnId: String, workspaceId: String): Long = atomic {
+        val task = forTurn(turnId) ?: error("Workspace targeting requires a durable task")
+        require(task.state == ExecutionState.RUNNING) { "Task is not running" }
+        val session = database.loadSession(task.sessionId) ?: error("Session unavailable")
+        val workspace = database.loadComposableWorkspace(workspaceId) ?: error("Workspace unavailable")
+        require(workspace.realmId == session.workspaceId && workspace.status == com.grinningfrog.atlas.workspace.WorkspaceStatus.ACTIVE) { "Workspace outside task realm or deleted" }
+        val old = task.document.optJSONObject("workspace_target")
+        val sequence = if (old?.optString("workspace_id") == workspaceId) (old?.optLong("sequence") ?: 0) else (old?.optLong("sequence") ?: 0) + 1
+        task.document.put("workspace_target", JSONObject().put("workspace_id", workspaceId).put("sequence", sequence))
+        save(task); event(task, "execution.workspace_target", task.document.getJSONObject("workspace_target"))
+        sequence
+    }
     fun list(sessionId: String): List<ExecutionTask> = database.readableDatabase.rawQuery("SELECT task_id FROM execution_tasks WHERE session_id=? ORDER BY rowid DESC LIMIT 100", arrayOf(sessionId)).use { c -> buildList { while(c.moveToNext()) get(c.getString(0))?.let(::add) } }
     // Ownership and recovery must never depend on the bounded UI history projection.
     private fun running(sessionId: String): List<ExecutionTask> = database.readableDatabase.rawQuery("SELECT task_id FROM execution_tasks WHERE session_id=? AND state='RUNNING'",arrayOf(sessionId)).use { c -> buildList { while(c.moveToNext()) get(c.getString(0))?.let(::add) } }
@@ -69,6 +89,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val doc = JSONObject().put("objective", objective).put("root_turn_id", turnId).put("created_at", now()).put("budget", budget.json())
             .put("usage", JSONObject().put("input_tokens",0).put("output_tokens",0).put("model_steps",0).put("tool_calls",0).put("active_ms",0))
             .put("scope", JSONObject().put("actor_id",session.actorId ?: JSONObject.NULL).put("realm_id",session.workspaceId).put("session_id",session.id).put("atomic_local_tools",JSONArray(atomicTools)))
+            .put("workspace_target", JSONObject().put("workspace_id", session.activeComposableWorkspaceId ?: JSONObject.NULL).put("sequence", 0))
             .put("slice_count",1).put("checkpoint",JSONObject()).put("consecutive_retries",0)
         database.writableDatabase.insertOrThrow("execution_tasks",null,ContentValues().apply { put("task_id",id);put("session_id",session.id);put("state","READY");put("generation",0);put("lease_until",0);put("next_run_at",0);put("document_json",doc.toString()) })
         link(id, turnId, 1)
@@ -190,9 +211,9 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
             if(receiptCharacters+size<=24000) {receipts.put(item);receiptCharacters+=size}
         }
         return "CORE DURABLE TASK (evidence, not authorization): " + JSONObject().put("task_id",t.id).put("objective",t.objective).put("usage",t.usage)
-            .put("checkpoint",t.document.getJSONObject("checkpoint")).put("recent_operations",receipts).put("latest_authoring_arguments",latest?.let {JSONObject(it.argumentsJson)})
+            .put("workspace_target", t.document.optJSONObject("workspace_target")).put("checkpoint",t.document.getJSONObject("checkpoint")).put("recent_operations",receipts).put("latest_authoring_arguments",latest?.let {JSONObject(it.argumentsJson)})
             .put("latest_authoring_result",latest?.resultJson?.let {runCatching {JSONObject(it)}.getOrNull()}).toString() +
-            "\nContinue the pending objective from recorded receipts. A new slice is not a new user request, not new authority, and not proof of success. Avoid repeating committed effects."
+            "\nWorkspace targeting: ambiguous commands use the captured workspace_target. Explicitly named edit targets must be resolved with workspace_target; inspect other workspaces as references without retargeting. Never change target merely because the user browses. Ask clarification for duplicate names or unclear components. Continue the pending objective from recorded receipts. A new slice is not a new user request, not new authority, and not proof of success. Avoid repeating committed effects."
     }
     private fun reconcileLocal(task: ExecutionTask) {
         val local=task.document.getJSONObject("scope").getJSONArray("atomic_local_tools")
