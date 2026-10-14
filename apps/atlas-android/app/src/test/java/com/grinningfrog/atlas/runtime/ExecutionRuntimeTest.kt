@@ -60,7 +60,7 @@ class ExecutionRuntimeTest {
     }
     @Test fun cancellingActivityWaitDoesNotCancelServiceOwnedTask() = runTest {
         val entered=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>()
-        val runtime=runtime(backgroundScope,emptyList()) { request -> entered.complete(Unit);release.await();response(request) }
+        val runtime=runtime(this,emptyList()) { request -> entered.complete(Unit);release.await();response(request) }
         val activity=launch { runtime.ask("Reply when ready") }
         entered.await()
         activity.cancel();activity.join()
@@ -73,7 +73,7 @@ class ExecutionRuntimeTest {
 
     @Test fun productionRunnerAutomaticallyContinuesAfterEightSteps() = runTest {
         var requests=0;var executions=0;val turns=mutableListOf<String>()
-        val runtime=runtime(backgroundScope,listOf(diagnostic {executions++})) { request ->
+        val runtime=runtime(this,listOf(diagnostic {executions++})) { request ->
             requests++;turns+=request.turnId!!
             response(request,if(requests<=16) listOf(ToolCallProposal("call-$requests","diagnostic","{}")) else emptyList())
         }
@@ -86,7 +86,7 @@ class ExecutionRuntimeTest {
     }
     @Test fun oversizedSliceBatchIsJournaledAndDrainedWithoutDroppingOrRepeatingCalls() = runTest {
         var requests=0;var executions=0
-        val runtime=runtime(backgroundScope,listOf(diagnostic {executions++})) { request ->
+        val runtime=runtime(this,listOf(diagnostic {executions++})) { request ->
             response(request,if(++requests==1) (1..20).map {ToolCallProposal("batch-$it","diagnostic","{}")} else emptyList())
         }
         runtime.ask("Run the diagnostics")
@@ -102,7 +102,7 @@ class ExecutionRuntimeTest {
         db.activateComposableWorkspace(session.id,workspace.id);session=db.loadSession(session.id)!!
         val updated=JSONObject(definition.toString()).put("title","Updated")
         var requests=0
-        val runtime=runtime(backgroundScope,WorkspaceTools.create(db)+diagnostic {}) { request ->
+        val runtime=runtime(this,WorkspaceTools.create(db)+diagnostic {}) { request ->
             val n=++requests
             val proposal=when(n) {
                 1 -> ToolCallProposal("blocked",CapabilityDiscovery.TOOL,"""{"stage":"blocked","objective":"Update the workspace","missing_capability":"Additional presentation option"}""")
