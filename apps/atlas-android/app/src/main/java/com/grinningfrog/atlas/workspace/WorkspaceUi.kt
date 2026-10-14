@@ -75,7 +75,6 @@ fun WorkspacePage(
     runtime: AtlasMobileRuntime,
     snapshot: RuntimeSnapshot,
     database: AtlasDatabase,
-    hasProvider: Boolean,
     actionScope: CoroutineScope,
     modifier: Modifier = Modifier,
 ) {
@@ -154,7 +153,6 @@ fun WorkspacePage(
         HorizontalDivider()
         WorkspaceRenderer(workspace, revision, database, listOf(refresh, revision.id, snapshot.messages.lastOrNull()?.id), { refresh++ }, Modifier.weight(1f))
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
-        WorkspaceComposer(runtime, snapshot, hasProvider, actionScope)
     }
 }
 
@@ -400,29 +398,6 @@ private fun WorkspaceCanvas(workspaceId: String, componentId: String, label: Str
                 }, enabled = strokes.isNotEmpty()) { Text("Save drawing") }
                 OutlinedButton(onClick = { strokes.clear() }, enabled = strokes.isNotEmpty()) { Text("Clear") }
             }
-        }
-    }
-}
-
-@Composable
-private fun WorkspaceComposer(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, hasProvider: Boolean, actionScope: CoroutineScope) {
-    var prompt by remember { mutableStateOf("") }
-    val active = snapshot.session?.status == SessionStatus.ACTIVE
-    val turnAvailable = snapshot.activeTurn == null || snapshot.activeTurn?.status == com.grinningfrog.atlas.model.TurnStatus.SOFT_TIMED_OUT
-    Column(Modifier.fillMaxWidth()) {
-        HorizontalDivider()
-        snapshot.messages.lastOrNull { it.role == com.grinningfrog.atlas.model.MessageRole.ASSISTANT && it.kind == com.grinningfrog.atlas.model.MessageKind.DIALOGUE }?.let {
-            Text(it.content.take(220), modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                prompt, { prompt = it }, modifier = Modifier.weight(1f), singleLine = true,
-                placeholder = { Text(if (active) "Ask Atlas about this workspace" else "Start a session to talk to Atlas") },
-                enabled = active && turnAvailable && hasProvider,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Send),
-                trailingIcon = { IconButton(enabled = prompt.isNotBlank() && active && turnAvailable, onClick = { val message = prompt; prompt = ""; actionScope.launch { runtime.ask(message) } }) { Icon(Icons.AutoMirrored.Filled.Send, "Send") } },
-            )
-            IconButton(enabled = active && (turnAvailable || snapshot.phase == RuntimePhase.SPEAKING), onClick = { actionScope.launch { runtime.listenAndAsk() } }) { Icon(Icons.Default.Mic, "Talk to Atlas") }
         }
     }
 }

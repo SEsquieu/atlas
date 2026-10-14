@@ -15,7 +15,7 @@ android {
         versionCode = providers.environmentVariable("ATLAS_ANDROID_VERSION_CODE").orElse("18").get().toInt().also {
             require(it in 1..2_100_000_000) { "ATLAS_ANDROID_VERSION_CODE is outside Android limits" }
         }
-        versionName = "0.1.0-alpha.16"
+        versionName = "0.1.0-alpha.17"
 
         manifestPlaceholders["atlasDevSuffix"] = ""
         vectorDrawables.useSupportLibrary = true

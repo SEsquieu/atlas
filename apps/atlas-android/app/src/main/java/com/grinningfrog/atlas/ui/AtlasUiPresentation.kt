@@ -7,6 +7,14 @@ import com.grinningfrog.atlas.model.SessionStatus
 
 /** Pure projection of Core state into human-facing language. No runtime behavior belongs here. */
 object AtlasUiPresentation {
+    fun attentionTasks(snapshot: RuntimeSnapshot) = snapshot.executionTasks.filter {
+        it.sessionId == snapshot.session?.id && it.state == com.grinningfrog.atlas.runtime.ExecutionState.WAITING &&
+            it.waitReason in setOf("clarification", "authorization", "unknown_operation_outcome", "task_allowance", "unresolved_tool_failure", "repeated_failure", "runtime_blocker", "context_cutoff")
+    }
+    fun needsUserAction(snapshot: RuntimeSnapshot): Boolean = snapshot.session?.status?.let { status -> status != SessionStatus.DONE } == true &&
+        (snapshot.pendingClarification?.let { it.blocking && it.status == com.grinningfrog.atlas.model.ClarificationStatus.WAITING } == true ||
+            snapshot.pendingToolCalls.any { it.status == com.grinningfrog.atlas.model.ToolCallStatus.WAITING_FOR_CONFIRMATION } || attentionTasks(snapshot).isNotEmpty())
+
     fun runtimeLabel(snapshot: RuntimeSnapshot): String = when {
         snapshot.listeningState == ListeningState.PREPARING -> "getting the microphone ready"
         snapshot.listeningState == ListeningState.READY -> "speak now"
