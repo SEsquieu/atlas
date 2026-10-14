@@ -137,6 +137,14 @@ class ExecutionTasksTest {
         }
         assertEquals(3,slices);assertEquals("repeated_failure",store.get(t.id)!!.waitReason)
     }
+    @Test fun cancellingAuthorizationWaitRemovesPendingExecutableProposal() {
+        val t=task();val c=call(t).copy(status=ToolCallStatus.WAITING_FOR_CONFIRMATION,requiresConfirmation=true)
+        db.insertToolCall(c);val lease=store.claim(t.id,"owner")!!
+        store.finish(lease,SliceOutcome.WAITING_PERMISSION,1)
+        store.control(t.id,ExecutionState.CANCELLED,"user cancelled")
+        assertEquals(ToolCallStatus.REJECTED,db.loadToolCall(c.id)!!.status)
+        assertNull(db.loadActiveTurn(session.id));assertTrue(db.loadPendingToolCalls(session.id).isEmpty())
+    }
     @Test fun repeatedProviderCutoffsWaitWithoutClaimingCompletion() = runTest {
         val t=task();var slices=0
         executor().run(t.id) { lease,_ -> slices++;assertFalse(store.observeResponse(lease,"length"));SliceOutcome.YIELDED }

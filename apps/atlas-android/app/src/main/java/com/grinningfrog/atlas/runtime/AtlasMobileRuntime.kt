@@ -371,7 +371,11 @@ class AtlasMobileRuntime(
         require(task.waitReason !in setOf("clarification", "authorization", "unknown_operation_outcome")) { "Resolve the recorded blocker first" }
         if (task.waitReason == "provider") require(lateTurnJob?.isActive != true) { "Provider request is still unresolved" }
         if (!executionTasks.available(taskId)) { publish(error = "Task allowance exhausted; remaining usage is preserved"); return }
-        if (task.state != ExecutionState.READY) { executionTasks.control(taskId, ExecutionState.READY, "User resumed"); executionTasks.nextTurn(taskId) }
+        if (task.state != ExecutionState.READY) {
+            val resumed=executionTasks.control(taskId, ExecutionState.READY, "User resumed")
+            require(resumed?.state == ExecutionState.READY) { "Operation outcome requires reconciliation before resuming" }
+            executionTasks.nextTurn(taskId)
+        }
         resumeReadyExecution(task.sessionId)
     }
 

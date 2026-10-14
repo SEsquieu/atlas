@@ -39,7 +39,7 @@ class ExecutionRuntimeTest {
     }
     @After fun cleanup() { db.close() }
     private fun runtime(scope: kotlinx.coroutines.CoroutineScope, tools: List<AtlasToolAdapter>, respond: suspend (InferenceRequest)->InferenceResponse): AtlasMobileRuntime {
-        val app=RuntimeEnvironment.getApplication<Application>()
+        val app=RuntimeEnvironment.getApplication()
         val motion=MotionMonitor(app);val media=MediaRepository(app)
         val owner=object:LifecycleOwner {override val lifecycle:Lifecycle=LifecycleRegistry(this)}
         val endpoint=ProviderEndpoint("script","Script","https://example.org","script",supportsTools=true)

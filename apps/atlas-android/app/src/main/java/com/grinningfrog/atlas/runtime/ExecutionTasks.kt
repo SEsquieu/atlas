@@ -149,7 +149,17 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
     fun control(taskId: String, state: ExecutionState, reason: String, budget: ExecutionBudget? = null): ExecutionTask? = atomic {
         val t=get(taskId) ?: return@atomic null
         if(t.state in setOf(ExecutionState.COMPLETED,ExecutionState.CANCELLED,ExecutionState.FAILED)) return@atomic t
+        if(state==ExecutionState.READY) reconcileLocal(t)
         if(state==ExecutionState.READY && pending(taskId).any {it.status==ToolCallStatus.UNKNOWN || it.status==ToolCallStatus.RUNNING}) return@atomic t
+        if(state==ExecutionState.CANCELLED) {
+            pending(taskId).filter { it.status in setOf(ToolCallStatus.PROPOSED,ToolCallStatus.APPROVED,ToolCallStatus.WAITING_FOR_CONFIRMATION) }.forEach { call ->
+                val feedback=JSONObject().put("ok",false).put("error","Task cancelled before execution").toString()
+                database.updateToolCall(call.id,ToolCallStatus.REJECTED,resultJson=feedback,error=reason)
+                database.insertMessage(AtlasMessage(sessionId=t.sessionId,turnId=call.turnId,role=MessageRole.TOOL,content=feedback,createdAtMs=now(),kind=MessageKind.TOOL_RESULT,toolCallId=call.id))
+            }
+            database.updateTurn(currentTurn(taskId),TurnStatus.CANCELLED,error=reason)
+            database.loadPendingClarification(t.sessionId)?.takeIf {forTurn(it.sourceTurnId)?.id==taskId}?.let {database.updateClarification(it.id,ClarificationStatus.ABANDONED)}
+        }
         t.document.put("wait_reason",reason);budget?.let { t.document.put("budget",it.json()) }
         val result=t.copy(state=state,generation=t.generation+1,owner=null,leaseUntil=0,nextRunAt=0);save(result);event(result,"execution.${state.name.lowercase()}",JSONObject().put("reason",reason));result
     }
@@ -167,14 +177,18 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
             .put("latest_authoring_result",latest?.resultJson?.let {runCatching {JSONObject(it)}.getOrNull()}).toString() +
             "\nContinue the pending objective from recorded receipts. A new slice is not a new user request, not new authority, and not proof of success. Avoid repeating committed effects."
     }
+    private fun reconcileLocal(task: ExecutionTask) {
+        val local=task.document.getJSONObject("scope").getJSONArray("atomic_local_tools")
+        val names=(0 until local.length()).map(local::getString).toSet()
+        pending(task.id).filter {it.status==ToolCallStatus.UNKNOWN}.forEach { call ->
+            val receipt=receipt(call)
+            if(receipt!=null) database.updateToolCall(call.id,ToolCallStatus.COMPLETED,resultJson=receipt)
+            else if(call.name in names) database.updateToolCall(call.id,ToolCallStatus.FAILED,error="Atomic local operation rolled back; no effect receipt")
+        }
+    }
     fun recover(sessionId: String) = atomic {
         list(sessionId).filter {it.state==ExecutionState.RUNNING}.forEach { task ->
-            val local=task.document.getJSONObject("scope").getJSONArray("atomic_local_tools");val names=(0 until local.length()).map(local::getString).toSet()
-            pending(task.id).filter {it.status==ToolCallStatus.UNKNOWN}.forEach { call ->
-                val receipt=receipt(call)
-                if(receipt!=null) database.updateToolCall(call.id,ToolCallStatus.COMPLETED,resultJson=receipt)
-                else if(call.name in names) database.updateToolCall(call.id,ToolCallStatus.FAILED,error="Atomic local operation rolled back; no effect receipt")
-            }
+            reconcileLocal(task)
             val unknown=pending(task.id).any {it.status==ToolCallStatus.UNKNOWN}
             task.document.put("wait_reason",if(unknown) "unknown_operation_outcome" else "process_restart")
             val result=task.copy(state=if(unknown) ExecutionState.WAITING else ExecutionState.READY,generation=task.generation+1,owner=null,leaseUntil=0)
