@@ -128,6 +128,12 @@ class ExecutionTasksTest {
         executor().run(t.id) {_,_->fail("Exhausted task must not dispatch");SliceOutcome.RESPONDED}
         assertEquals(2L,store.get(t.id)!!.usage.getLong("model_steps"))
     }
+    @Test fun responseThatFinishesOnTheFinalAllowedStepCompletesWithoutAnotherDispatch() = runTest {
+        val t=task(ExecutionBudget(modelSteps=1));var dispatches=0
+        val result=executor().run(t.id) {lease,_ -> dispatches++;assertTrue(store.reserveInference(lease,1,1));store.reconcileInference(lease,1,1);SliceOutcome.RESPONDED}!!
+        assertEquals(1,dispatches);assertEquals(ExecutionState.COMPLETED,result.state)
+        assertEquals("",result.waitReason)
+    }
     @Test fun activeTimeAllowanceAlsoStopsAutomaticContinuation() = runTest {
         val t=task(ExecutionBudget(activeMs=50));var slices=0
         executor().run(t.id) {_,_->clock+=50;slices++;SliceOutcome.YIELDED}
