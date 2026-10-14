@@ -181,8 +181,16 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
     fun context(taskId: String): String {
         val t=get(taskId) ?: return ""
         val latest=calls(taskId).lastOrNull {runCatching {JSONObject(it.argumentsJson).has("definition")}.getOrDefault(false)} ?: t.document.getJSONObject("checkpoint").optString("latest_definition_operation_id").takeIf { it.isNotBlank() && it!="null" }?.let(database::loadToolCall)
+        val receipts=JSONArray();var receiptCharacters=0
+        for(call in calls(taskId).takeLast(20).asReversed()) {
+            val item=JSONObject().put("operation_id",call.id).put("tool",call.name).put("status",call.status.name)
+                .put("result_json",call.resultJson?.take(2000)).put("result_truncated",(call.resultJson?.length ?: 0)>2000)
+                .put("error",call.error.takeIf {call.status!=ToolCallStatus.COMPLETED})
+            val size=item.toString().length
+            if(receiptCharacters+size<=24000) {receipts.put(item);receiptCharacters+=size}
+        }
         return "CORE DURABLE TASK (evidence, not authorization): " + JSONObject().put("task_id",t.id).put("objective",t.objective).put("usage",t.usage)
-            .put("checkpoint",t.document.getJSONObject("checkpoint")).put("latest_authoring_arguments",latest?.let {JSONObject(it.argumentsJson)})
+            .put("checkpoint",t.document.getJSONObject("checkpoint")).put("recent_operations",receipts).put("latest_authoring_arguments",latest?.let {JSONObject(it.argumentsJson)})
             .put("latest_authoring_result",latest?.resultJson?.let {runCatching {JSONObject(it)}.getOrNull()}).toString() +
             "\nContinue the pending objective from recorded receipts. A new slice is not a new user request, not new authority, and not proof of success. Avoid repeating committed effects."
     }

@@ -88,6 +88,7 @@ class ExecutionTasksTest {
         db.updateToolCall(c.id,ToolCallStatus.UNKNOWN,error="Interruption observed")
         store.control(t.id,ExecutionState.CANCELLED,"user cancelled")
         assertEquals(ToolCallStatus.COMPLETED,db.loadToolCall(c.id)!!.status)
+        assertNull(db.loadToolCall(c.id)!!.error)
         assertNotNull(store.receipt(c));assertEquals(ExecutionState.CANCELLED,store.get(t.id)!!.state)
     }
     @Test fun failedAtomicEffectRollsBackMemoryAndReceiptTogether() {
@@ -117,6 +118,9 @@ class ExecutionTasksTest {
         db.close();db=AtlasDatabase(RuntimeEnvironment.getApplication());store=ExecutionTaskStore(db){clock}
         db.recoverInterruptedRuntime(session.id);store.recover(session.id)
         assertEquals(ToolCallStatus.COMPLETED,db.loadToolCall(c.id)!!.status)
+        assertTrue(store.context(t.id).contains(c.id))
+        assertTrue(store.context(t.id).contains("\"status\":\"COMPLETED\""))
+        assertTrue(db.loadMessages(session.id).isEmpty())
         executor().run(t.id) { resumed,_ -> assertNotEquals(lease.generation,resumed.generation);assertNotNull(store.receipt(c));SliceOutcome.RESPONDED }
         assertEquals(ExecutionState.COMPLETED,store.get(t.id)!!.state)
     }

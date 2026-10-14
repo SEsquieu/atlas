@@ -1677,7 +1677,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             val call = loadToolCallLocked(this, callId) ?: error("Unknown tool call $callId")
             update("tool_calls", ContentValues().apply {
                 put("status", status.name); put("updated_at", nowMs)
-                if (resultJson != null) put("result_json", resultJson); if (error != null) put("error", error.take(1_000))
+                if (resultJson != null) put("result_json", resultJson); if (error != null) put("error", error.take(1_000)) else if (status == ToolCallStatus.COMPLETED) putNull("error")
             }, "tool_call_id = ?", arrayOf(callId))
             appendEventLocked(this, call.sessionId, "tool.${status.name.lowercase()}", nowMs, JSONObject().apply {
                 put("turnId", call.turnId); put("toolCallId", call.id); put("tool", call.name)
