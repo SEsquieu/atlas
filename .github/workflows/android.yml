@@ -44,6 +44,10 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+      - name: Build desktop workspace engine for JNI tests
+        run: |
+          cmake -S app/src/main/cpp -B app/build/workspace-native-host -DCMAKE_BUILD_TYPE=Release
+          cmake --build app/build/workspace-native-host --target atlas_workspace_js -j2
       - name: Unit tests
         run: |
           tasks=(testSecureDebugUnitTest)

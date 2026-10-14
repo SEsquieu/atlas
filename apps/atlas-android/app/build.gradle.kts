@@ -7,11 +7,14 @@ plugins {
 android {
     namespace = "com.grinningfrog.atlas"
     compileSdk = 35
+    ndkVersion = "27.0.12077973"
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
 
     defaultConfig {
         applicationId = "com.grinningfrog.atlas"
         minSdk = 28
         targetSdk = 35
+        externalNativeBuild { cmake { arguments += "-DANDROID_STL=c++_static" } }
         versionCode = providers.environmentVariable("ATLAS_ANDROID_VERSION_CODE").orElse("18").get().toInt().also {
             require(it in 1..2_100_000_000) { "ATLAS_ANDROID_VERSION_CODE is outside Android limits" }
         }
@@ -87,6 +90,7 @@ android {
         unitTests.all {
             it.testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
             it.jvmArgs(
+                "-Djava.library.path=${layout.buildDirectory.dir("workspace-native-host").get().asFile.absolutePath}",
                 "--add-opens=java.base/java.lang=ALL-UNNAMED",
                 "--add-opens=java.base/java.util=ALL-UNNAMED",
                 "--add-opens=java.base/java.io=ALL-UNNAMED",

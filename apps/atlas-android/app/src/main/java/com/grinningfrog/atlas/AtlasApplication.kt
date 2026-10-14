@@ -27,6 +27,7 @@ class AtlasApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        if (Application.getProcessName().contains(":workspace_js")) return
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             runCatching { sessionArchive.enforceMediaRetention(settings.mediaRetentionDays) }
         }

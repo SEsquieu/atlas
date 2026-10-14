@@ -42,7 +42,7 @@ Alpha status permits decisive migration. It does not justify deleting user data,
 7. Switch default creation/catalog/context to packages and remove legacy authoring choices together. Until this gate, native authoring remains unchanged; do not claim migration is complete.
 8. Add scoped device broker, BLE and separately approved background jobs, including real-phone and endurance evidence.
 
-No live package renderer, worker, activation endpoint, permission-grant UI or automatic conversion is enabled by the foundation. Unused experimental substrates must not be left in production after selection.
+No live package renderer, package activation endpoint, permission-grant UI or automatic conversion is enabled. The experimental native worker is not yet exposed to generated applications or agent tools; Android isolation remains a device gate. Unused experimental substrates must not be left in production after selection.
 
 ## Validation and delivery
 
@@ -55,3 +55,13 @@ New independent tests cover package bounds/paths/schema/dependency hashes, forge
 The current `dokar3/quickjs-kt` release v1.0.15 supports module loading, memory/stack limits and cancellation, but its pinned source targets Kotlin 2.4.10; Atlas currently uses Kotlin 2.1.20. Earlier v1.0.5 already targets Kotlin 2.3.20 and lacks the later interruption fixes. Do not silently pin an older runtime or disable Kotlin metadata checks to avoid a compiler migration. Evaluate an explicit compiler upgrade with full baseline tests versus a maintained Java/JNI binding or a minimal pinned native integration before selecting the worker. `OpenQuickJS/quickjs-android` exposes allocator, stack and interrupt hooks but its inspected Android packaging is ARM-only and release-AAR based; ABI/testability/update-path evaluation remains necessary. No engine dependency has been installed yet.
 
 Primary evaluation sources: [QuickJS Kotlin v1.0.15](https://github.com/dokar3/quickjs-kt/tree/v1.0.15), [OpenQuickJS binding](https://github.com/OpenQuickJS/quickjs-android).
+
+## Native worker spike in progress
+
+The worker candidate is now a minimal JNI integration against QuickJS-NG v0.17.0, exact commit `6d46d07d04041b40f4f49eaa7fdebe44c314c699`, fetched by CMake with standard-library modules disabled. This avoids a Kotlin compiler/metadata migration. The application-owned JNI boundary installs only a packaged-source module loader; it installs no Java reflection, filesystem, network or device binding. Validate licensing, source/build provenance and ABI support before approving the substrate for live use.
+
+`WorkspaceNativeEngine` validates strict export input/output and uses UTF-8 byte arrays rather than JNI modified UTF-8. Each invocation gets a fresh runtime with a provisional 32 MiB heap, 256 KiB stack, 1 second engine deadline, bounded output and package-only imports. Desktop JNI tests exercise actual modules, dynamic imports, unavailable ambient capabilities, loops, memory exhaustion, unresolved promises, malformed outputs and emoji. Native-side serialization is not a replacement for host schema validation.
+
+`WorkspaceJavaScriptService` is a non-exported Android isolated service. `WorkspaceWorkerSupervisor` uses a unique isolated instance per request on Android 10+, an external five-second timeout and a separate control channel; the service main thread schedules a four-second process kill independently of the native evaluation thread. Android 9 worker requests fail explicitly. Core application startup skips settings/media initialization in this process. The current package contract still reports execution/activation unavailable while isolation and integration gates remain open.
+
+Android unit/lint validation now compiles a desktop JNI library first. Android external-native builds use NDK 27.0.12077973 and CMake 3.22.1. This builds libraries for validation; validation-only commits still skip APK generation. Keep the Kotlin and AGP versions unchanged.

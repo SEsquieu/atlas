@@ -43,6 +43,13 @@
             android:foregroundServiceType="camera|microphone"
             android:stopWithTask="false" />
 
+        <service
+            android:name=".workspace.application.WorkspaceJavaScriptService"
+            android:exported="false"
+            android:isolatedProcess="true"
+            android:process=":workspace_js"
+            android:stopWithTask="true" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.exports"
