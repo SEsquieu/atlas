@@ -1521,7 +1521,11 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         ).use { cursor -> buildList {
             while (cursor.moveToNext()) add(AtlasEvent(cursor.getLong(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5), cursor.getString(6), cursor.nullableString(7)))
         }.reversed() }
-        return com.grinningfrog.atlas.runtime.TurnDiagnostics.project(turn, loadTurnToolCalls(turn.id), events)
+        val proposed=loadTurnToolCalls(turn.id)
+        val calls=if(com.grinningfrog.atlas.runtime.ExecutionTaskStore(this).forTurn(turn.id)!=null) {
+            events.filter { it.type=="execution.tool_dispatched" }.mapNotNull { event -> runCatching { JSONObject(event.dataJson) }.getOrNull()?.takeIf { it.optString("turnId")==turn.id }?.optString("operation_id") }.distinct().mapNotNull(::loadToolCall)
+        } else proposed
+        return com.grinningfrog.atlas.runtime.TurnDiagnostics.project(turn, calls, events, proposed.size)
     }
 
     fun loadActiveTurn(sessionId: String): AgentTurn? = readableDatabase.rawQuery(

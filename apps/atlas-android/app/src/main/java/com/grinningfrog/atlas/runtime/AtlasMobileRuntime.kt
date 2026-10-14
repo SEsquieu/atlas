@@ -503,7 +503,7 @@ class AtlasMobileRuntime(
                     database.appendEvent(session.id, "execution.slice_yielded", JSONObject().put("turnId", turnId).put("execution_task_id", lease.taskId).put("reason", "per_tool_allowance").put("tool", call.name).put("limit", toolLimit))
                     return false
                 }
-                if (!executionTasks.reserveTool(lease)) { executionTasks.control(lease.taskId, ExecutionState.WAITING, "task_allowance"); database.updateTurn(turnId, TurnStatus.YIELDED); return false }
+                if (!executionTasks.reserveTool(lease, turnId, call.id)) { executionTasks.control(lease.taskId, ExecutionState.WAITING, "task_allowance"); database.updateTurn(turnId, TurnStatus.YIELDED); return false }
                 sliceTools++
                 sliceToolsByName[call.name] = sliceToolsByName.getOrDefault(call.name, 0) + 1
                 val captured = executeToolLocked(call)

@@ -20,6 +20,7 @@ data class TurnDiagnostics(
     val revisionIds: List<String>,
     val lateToolCalls: Int,
     val inferencePending: Boolean,
+    val proposedToolCalls: Int = toolCalls,
 ) {
     val terminal: Boolean get() = turn.status in setOf(TurnStatus.COMPLETED, TurnStatus.COMPLETED_LATE,
         TurnStatus.YIELDED, TurnStatus.FAILED, TurnStatus.CANCELLED, TurnStatus.HARD_CANCELLED, TurnStatus.INTERRUPTED)
@@ -39,14 +40,14 @@ data class TurnDiagnostics(
         put("turn_id", turn.id); put("status", turn.status.name); put("outcome", headline)
         put("elapsed_ms", elapsedMs(nowMs)); put("inference_ms", inferenceMs); put("inference_pending", inferencePending)
         put("steps_used", turn.stepCount); put("steps_limit", AgentLoopPolicy.MAX_STEPS)
-        put("tool_calls_used", toolCalls); put("tool_calls_limit", AgentLoopPolicy.MAX_TOOL_CALLS)
+        put("proposed_tool_calls", proposedToolCalls); put("tool_calls_used", toolCalls); put("tool_calls_limit", AgentLoopPolicy.MAX_TOOL_CALLS)
         put("wall_time_limit_ms", AgentLoopPolicy.MAX_WALL_TIME_MS); put("interaction_deadline_ms", 60_000)
         put("schema", schema); put("migration", migration); put("tests", tests)
         put("committed_revision_ids", JSONArray(revisionIds)); put("late_unexecuted_tool_calls", lateToolCalls)
         runningTool?.let { put("running_tool", it) }; turn.error?.let { put("reason", it) }
     }
     companion object {
-        fun project(turn: AgentTurn, calls: List<AtlasToolCall>, events: List<AtlasEvent>): TurnDiagnostics {
+        fun project(turn: AgentTurn, calls: List<AtlasToolCall>, events: List<AtlasEvent>, proposedToolCalls: Int = calls.size): TurnDiagnostics {
             val own = events.mapNotNull { event ->
                 runCatching { JSONObject(event.dataJson) }.getOrNull()?.takeIf { it.optString("turnId") == turn.id }?.let { event to it }
             }
@@ -70,7 +71,7 @@ data class TurnDiagnostics(
                 when { evidence?.has("simulation_passed") == true -> if (evidence.optBoolean("simulation_passed")) "${evidence.optInt("tests_run")}/${evidence.optInt("tests_run")} passed" else "failed: ${evidence.optJSONArray("test_failures")}"; else -> "not reported" },
                 committed.map { it.second.getString("revision_id") },
                 own.filter { it.first.type == "provider.completed_late" }.sumOf { it.second.optInt("toolCallCount") },
-                (turn.status in setOf(TurnStatus.WAITING_FOR_MODEL, TurnStatus.SOFT_TIMED_OUT) || (requested - finished).isNotEmpty()) && !turn.status.let { it in setOf(TurnStatus.COMPLETED, TurnStatus.YIELDED, TurnStatus.FAILED, TurnStatus.CANCELLED, TurnStatus.HARD_CANCELLED, TurnStatus.INTERRUPTED, TurnStatus.COMPLETED_LATE) })
+                (turn.status in setOf(TurnStatus.WAITING_FOR_MODEL, TurnStatus.SOFT_TIMED_OUT) || (requested - finished).isNotEmpty()) && !turn.status.let { it in setOf(TurnStatus.COMPLETED, TurnStatus.YIELDED, TurnStatus.FAILED, TurnStatus.CANCELLED, TurnStatus.HARD_CANCELLED, TurnStatus.INTERRUPTED, TurnStatus.COMPLETED_LATE) }, proposedToolCalls)
         }
     }
 }

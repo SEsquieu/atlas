@@ -125,7 +125,12 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         if(count>=3) control(task.id,ExecutionState.WAITING,"context_cutoff")
         !truncated
     }
-    fun reserveTool(lease: ExecutionLease): Boolean = atomic { check(lease);val t=get(lease.taskId)!!;if(!available(t.id)) return@atomic false;t.usage.put("tool_calls",t.usage.optLong("tool_calls")+1);save(t.copy(leaseUntil=now()+LEASE_MS));true }
+    fun reserveTool(lease: ExecutionLease, executionTurnId: String? = null, operationId: String? = null): Boolean = atomic {
+        check(lease);val task=get(lease.taskId)!!;if(!available(task.id)) return@atomic false
+        task.usage.put("tool_calls",task.usage.optLong("tool_calls")+1);save(task.copy(leaseUntil=now()+LEASE_MS))
+        if(executionTurnId!=null && operationId!=null) event(task,"execution.tool_dispatched",JSONObject().put("turnId",executionTurnId).put("operation_id",operationId))
+        true
+    }
     fun finish(lease: ExecutionLease, outcome: SliceOutcome, activeMs: Long): ExecutionTask? = atomic {
         if(!valid(lease)) return@atomic get(lease.taskId)
         val task=get(lease.taskId)!!;task.usage.put("active_ms",task.usage.optLong("active_ms")+activeMs.coerceAtLeast(0));task.document.remove("active_started_at")

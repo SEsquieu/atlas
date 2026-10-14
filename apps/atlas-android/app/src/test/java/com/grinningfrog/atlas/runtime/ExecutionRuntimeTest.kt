@@ -95,6 +95,7 @@ class ExecutionRuntimeTest {
         assertEquals(ExecutionState.COMPLETED,task.state)
         assertEquals(20L,task.usage.getLong("tool_calls"))
         assertTrue(ExecutionTaskStore(db).pending(task.id).isEmpty())
+        assertEquals(listOf(12,8),ExecutionTaskStore(db).turns(task.id).map { db.turnDiagnostics(db.loadTurn(it)!!).toolCalls })
     }
     @Test fun installedToolAllowanceCarriesARealRecordBatchAcrossSlicesWithoutRejection() = runTest {
         val workspace=db.createComposableWorkspace("Records","",RecordEditingFixture.definition().toString(),session.workspaceId)
@@ -109,6 +110,7 @@ class ExecutionRuntimeTest {
         assertEquals(3,store.turns(task.id).size);assertEquals(2,requests)
         assertEquals(18,db.listWorkspaceRecords(workspace.id,"entries",50).size)
         assertEquals(18L,task.usage.getLong("tool_calls"))
+        assertEquals(listOf(6,6,6),store.turns(task.id).map { db.turnDiagnostics(db.loadTurn(it)!!).toolCalls })
         assertTrue(store.calls(task.id).all { it.status==ToolCallStatus.COMPLETED })
     }
 
