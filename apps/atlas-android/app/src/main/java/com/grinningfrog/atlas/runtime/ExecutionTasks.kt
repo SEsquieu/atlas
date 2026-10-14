@@ -51,6 +51,8 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
     }
     fun forTurn(turnId: String): ExecutionTask? = database.readableDatabase.rawQuery("SELECT task_id FROM execution_slices WHERE turn_id=?", arrayOf(turnId)).use { c -> if(c.moveToFirst()) get(c.getString(0)) else null }
     fun list(sessionId: String): List<ExecutionTask> = database.readableDatabase.rawQuery("SELECT task_id FROM execution_tasks WHERE session_id=? ORDER BY rowid DESC LIMIT 100", arrayOf(sessionId)).use { c -> buildList { while(c.moveToNext()) get(c.getString(0))?.let(::add) } }
+    // Ownership and recovery must never depend on the bounded UI history projection.
+    private fun running(sessionId: String): List<ExecutionTask> = database.readableDatabase.rawQuery("SELECT task_id FROM execution_tasks WHERE session_id=? AND state='RUNNING'",arrayOf(sessionId)).use { c -> buildList { while(c.moveToNext()) get(c.getString(0))?.let(::add) } }
     fun turns(taskId: String): List<String> = database.readableDatabase.rawQuery("SELECT turn_id FROM execution_slices WHERE task_id=? ORDER BY ordinal", arrayOf(taskId)).use { c -> buildList { while(c.moveToNext()) add(c.getString(0)) } }
     fun calls(taskId: String): List<AtlasToolCall> = database.loadExecutionToolCalls(taskId)
     fun pending(taskId: String): List<AtlasToolCall> = database.loadExecutionToolCalls(taskId, 10000, true)
@@ -78,7 +80,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val session = database.loadSession(task.sessionId) ?: return@atomic null
         if(session.status != SessionStatus.ACTIVE || session.workspaceId != task.document.getJSONObject("scope").getString("realm_id") || (session.actorId ?: "") != task.document.getJSONObject("scope").optString("actor_id", "").let { if(it=="null") "" else it }) return@atomic null
         if(task.state != ExecutionState.READY || task.nextRunAt > now()) return@atomic null
-        if(list(task.sessionId).any { it.id != task.id && it.state == ExecutionState.RUNNING && it.leaseUntil >= now() }) return@atomic null
+        if(running(task.sessionId).any { it.id != task.id && it.state == ExecutionState.RUNNING && it.leaseUntil >= now() }) return@atomic null
         task.document.put("active_started_at",now())
         val claimed = task.copy(state=ExecutionState.RUNNING,owner=owner,generation=task.generation+1,leaseUntil=now()+LEASE_MS)
         save(claimed); event(claimed,"execution.claimed"); ExecutionLease(taskId,owner,claimed.generation)
@@ -189,7 +191,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         }
     }
     fun recover(sessionId: String) = atomic {
-        list(sessionId).filter {it.state==ExecutionState.RUNNING}.forEach { task ->
+        running(sessionId).forEach { task ->
             task.usage.put("active_ms",task.usage.optLong("active_ms")+(now()-task.document.optLong("active_started_at",now())).coerceIn(0,LEASE_MS));task.document.remove("active_started_at")
             reconcileLocal(task)
             val unknown=pending(task.id).any {it.status==ToolCallStatus.UNKNOWN}

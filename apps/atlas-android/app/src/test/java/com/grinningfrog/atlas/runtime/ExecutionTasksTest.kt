@@ -63,6 +63,15 @@ class ExecutionTasksTest {
         assertTrue(runCatching { store.localOperation(c,lease) {effects++;ToolExecutionResult("{}") } }.exceptionOrNull() is CancellationException)
         assertEquals(0,effects)
     }
+    @Test fun liveOwnerCannotBeHiddenByMoreThanOneHundredNewerTasks() {
+        val older=task();store.claim(older.id,"older owner")!!
+        repeat(100) { task() }
+        val newer=task()
+        assertFalse(store.list(session.id).any {it.id==older.id})
+        assertNull(store.claim(newer.id,"second owner"))
+        db.recoverInterruptedRuntime(session.id);store.recover(session.id)
+        assertEquals(ExecutionState.READY,store.get(older.id)!!.state)
+    }
     @Test fun committedReceiptIsReplayableWithoutRepeatingEffectAndRejectsChangedArguments() {
         val t=task();val lease=store.claim(t.id,"owner")!!;val c=call(t);db.insertToolCall(c)
         var effects=0
