@@ -10,6 +10,9 @@ import com.grinningfrog.atlas.media.MediaRepository
 import com.grinningfrog.atlas.model.*
 import com.grinningfrog.atlas.provider.*
 import com.grinningfrog.atlas.workspace.*
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.*
 import org.json.JSONObject
@@ -35,7 +38,7 @@ class ExecutionRuntimeTest {
         session=db.loadSession(session.id)!!
     }
     @After fun cleanup() { db.close() }
-    private fun runtime(scope: kotlinx.coroutines.CoroutineScope, tools: List<AtlasToolAdapter>, respond: (InferenceRequest)->InferenceResponse): AtlasMobileRuntime {
+    private fun runtime(scope: kotlinx.coroutines.CoroutineScope, tools: List<AtlasToolAdapter>, respond: suspend (InferenceRequest)->InferenceResponse): AtlasMobileRuntime {
         val app=RuntimeEnvironment.getApplication<Application>()
         val motion=MotionMonitor(app);val media=MediaRepository(app)
         val owner=object:LifecycleOwner {override val lifecycle:Lifecycle=LifecycleRegistry(this)}
@@ -55,6 +58,19 @@ class ExecutionRuntimeTest {
         override val definition=ToolDefinition("diagnostic","Read-only diagnostic","{}",ToolRisk.READ_ONLY,maxCallsPerTurn=32)
         override suspend fun execute(call:AtlasToolCall):ToolExecutionResult {execute();return ToolExecutionResult("{\"ok\":true}")}
     }
+    @Test fun cancellingActivityWaitDoesNotCancelServiceOwnedTask() = runTest {
+        val entered=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>()
+        val runtime=runtime(backgroundScope,emptyList()) { request -> entered.complete(Unit);release.await();response(request) }
+        val activity=launch { runtime.ask("Reply when ready") }
+        entered.await()
+        activity.cancel();activity.join()
+        val task=ExecutionTaskStore(db).list(session.id).single()
+        assertEquals(ExecutionState.RUNNING,task.state)
+        release.complete(Unit)
+        repeat(10) { if(ExecutionTaskStore(db).get(task.id)?.state!=ExecutionState.COMPLETED) delay(1) }
+        assertEquals(ExecutionState.COMPLETED,ExecutionTaskStore(db).get(task.id)!!.state)
+    }
+
     @Test fun productionRunnerAutomaticallyContinuesAfterEightSteps() = runTest {
         var requests=0;var executions=0;val turns=mutableListOf<String>()
         val runtime=runtime(backgroundScope,listOf(diagnostic {executions++})) { request ->

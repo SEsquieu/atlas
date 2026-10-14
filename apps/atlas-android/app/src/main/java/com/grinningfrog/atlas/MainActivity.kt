@@ -435,7 +435,7 @@ private fun AtlasHomePage(
                 }
             }
 
-            snapshot.executionTasks.firstOrNull()?.let { task ->
+            (snapshot.executionTasks.firstOrNull { it.state !in setOf(com.grinningfrog.atlas.runtime.ExecutionState.COMPLETED, com.grinningfrog.atlas.runtime.ExecutionState.CANCELLED, com.grinningfrog.atlas.runtime.ExecutionState.FAILED) } ?: snapshot.executionTasks.firstOrNull())?.let { task ->
                 item {
                     InstrumentCard {
                         Text("Task · ${task.state.name.lowercase()}", style = MaterialTheme.typography.labelLarge)

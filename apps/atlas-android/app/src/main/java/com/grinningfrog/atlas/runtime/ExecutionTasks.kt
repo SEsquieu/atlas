@@ -132,7 +132,9 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val last=all.groupBy { it.name }.values.mapNotNull { it.lastOrNull() }
         val failures=last.filter { call -> call.status in setOf(ToolCallStatus.FAILED,ToolCallStatus.REJECTED) || runCatching { JSONObject(call.resultJson.orEmpty()).let { it.has("valid")&&!it.optBoolean("valid") || it.has("ok")&&!it.optBoolean("ok") } }.getOrDefault(false) }
         val signature=failures.joinToString("|") { it.name+":"+(it.error ?: it.resultJson.orEmpty()).take(1000) }
-        val repeated=if(signature.isNotBlank() && signature==task.document.optString("failure_signature")) task.document.optInt("repeated_failures")+1 else if(signature.isNotBlank()) 1 else 0
+        val failedThisSlice=failures.any { it.turnId==currentTurn(task.id) }
+        val madeProgress=all.any { it.turnId==currentTurn(task.id) && it.status==ToolCallStatus.COMPLETED && it !in failures }
+        val repeated=if(signature.isNotBlank() && (failedThisSlice || !madeProgress) && signature==task.document.optString("failure_signature")) task.document.optInt("repeated_failures")+1 else if(failedThisSlice) 1 else 0
         task.document.put("failure_signature",signature).put("repeated_failures",repeated)
         val recent=all.takeLast(20)
         val definitionId=all.lastOrNull { runCatching {JSONObject(it.argumentsJson).has("definition")}.getOrDefault(false) }?.id ?: task.document.getJSONObject("checkpoint").optString("latest_definition_operation_id").takeIf { it.isNotBlank() && it!="null" }

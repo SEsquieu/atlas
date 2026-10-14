@@ -43,6 +43,7 @@ import com.grinningfrog.atlas.intent.AndroidIdleRuntime
 import com.grinningfrog.atlas.intent.IdleRuntimeStatus
 import com.grinningfrog.atlas.intent.IntentAutonomyMode
 import com.grinningfrog.atlas.intent.IntentState
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -80,6 +81,7 @@ class AtlasMobileRuntime(
     private val onLiveContextChanged: (Boolean) -> Unit = {},
 ) {
     private val operations = Mutex()
+    private val taskRunner = Mutex()
     private val generation = AtomicLong(0)
     private val mutableState = MutableStateFlow(RuntimeSnapshot())
     val state: StateFlow<RuntimeSnapshot> = mutableState.asStateFlow()
@@ -108,7 +110,12 @@ class AtlasMobileRuntime(
 
     suspend fun initialize() {
         val session = database.loadLatestSession()
-        session?.let { database.recoverInterruptedRuntime(it.id); executionTasks.recover(it.id) }
+        session?.let {
+            database.recoverInterruptedRuntime(it.id); executionTasks.recover(it.id)
+            if (it.status == SessionStatus.ACTIVE) executionTasks.list(it.id).filter { task -> task.state == ExecutionState.PAUSED && task.waitReason == "runner interrupted" }.forEach { task ->
+                executionTasks.control(task.id, ExecutionState.READY, "runtime restarted")?.takeIf { resumed -> resumed.state == ExecutionState.READY }?.let { resumed -> executionTasks.nextTurn(resumed.id) }
+            }
+        }
         session?.let { database.expirePendingClarification(it.id) }
         val observation = session?.let { database.loadLatestObservation(it.id) }
         val latestResponse = session?.let { database.loadMessages(it.id, limit = 80).lastOrNull { message -> message.role == MessageRole.ASSISTANT && message.content.isNotBlank() }?.content }
@@ -273,10 +280,16 @@ class AtlasMobileRuntime(
     }
 
     suspend fun ask(text: String, voice: Boolean = false) {
+        require(text.isNotBlank()) { "Ask Atlas something first" }
+        if (activeTurnJob?.isActive == true || lateTurnJob?.isActive == true) cancelActiveTurn("superseded by a new user turn")
+        // Activity cancellation only stops waiting; the service owns execution until explicit cancellation.
+        scope.async { taskRunner.withLock { askOwned(text, voice) } }.await()
+    }
+
+    private suspend fun askOwned(text: String, voice: Boolean) {
         idleRuntime?.onUserInteraction()
         require(text.isNotBlank()) { "Ask Atlas something first" }
         idleRuntime?.observeUserText(text)
-        if (activeTurnJob?.isActive == true || lateTurnJob?.isActive == true) cancelActiveTurn("superseded by a new user turn")
         cancelLateTurn("superseded by a new user turn")
         compactionJob?.cancel(); compactionJob = null
         val job = currentCoroutineContext()[Job]
@@ -369,16 +382,16 @@ class AtlasMobileRuntime(
     }
 
     private fun resumeReadyExecution(sessionId: String) {
-        scope.launch {
-            if (mutableState.value.session?.id != sessionId || mutableState.value.session?.status != SessionStatus.ACTIVE || activeTurnJob?.isActive == true) return@launch
-            val task = executionTasks.list(sessionId).firstOrNull { it.state == ExecutionState.READY } ?: return@launch
+        scope.launch { taskRunner.withLock {
+            if (mutableState.value.session?.id != sessionId || mutableState.value.session?.status != SessionStatus.ACTIVE || activeTurnJob?.isActive == true) return@withLock
+            val task = executionTasks.list(sessionId).firstOrNull { it.state == ExecutionState.READY } ?: return@withLock
             val job = currentCoroutineContext()[Job]
             activeTurnJob = job
             try { runExecution(task.id, false) }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { fail(error) }
             finally { if (activeTurnJob === job) { activeTurnJob = null; activeTurnId = null; activeExecutionTaskId = null; activeExecutionLease = null; mutableState.value.session?.takeIf { it.status == SessionStatus.ACTIVE }?.let { resumeReadyExecution(it.id) } }; publish() }
-        }
+        } }
     }
 
     private suspend fun runExecution(taskId: String, voice: Boolean) {
