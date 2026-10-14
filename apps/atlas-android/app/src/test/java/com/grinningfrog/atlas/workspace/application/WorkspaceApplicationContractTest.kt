@@ -20,6 +20,7 @@ object PackageFixture {
 class WorkspaceApplicationContractTest {
     @Test fun validPackageHasExplicitNonExecutableDescriptor() {
         assertEquals(emptyList<String>(), WorkspaceApplicationContract.validate(PackageFixture.bundle()))
+        assertEquals(emptyList<String>(), WorkspaceApplicationContract.validate(WorkspaceApplicationContract.example()))
         val descriptor = WorkspaceApplicationContract.descriptor()
         assertFalse(descriptor.getBoolean("execution_available"))
         assertFalse(descriptor.getBoolean("activation_available"))
@@ -73,6 +74,15 @@ class WorkspaceApplicationContractTest {
         b.getJSONArray("a").put(0, 2).put(1, 1)
         assertNotEquals(WorkspaceApplicationContract.canonical(a), WorkspaceApplicationContract.canonical(b))
     }
+    @Test fun hostileNestingAndInvalidUnicodeFailBeforeNativeJsonParsing() {
+        val deep = "{\"value\":" + "[".repeat(2000) + "0" + "]".repeat(2000) + "}"
+        assertThrows(IllegalArgumentException::class.java) { WorkspaceApplicationContract.parseObject(deep) }
+        val quotedBrackets = "[{\\\"}]"
+        assertEquals(quotedBrackets, WorkspaceApplicationContract.parseObject(JSONObject().put("value", quotedBrackets).toString()).getString("value"))
+        assertThrows(IllegalArgumentException::class.java) { WorkspaceApplicationContract.checkJson("\uD800") }
+        WorkspaceApplicationContract.checkJson("\uD83D\uDE00")
+    }
+
     @Test fun protocolCannotSupplyItsOwnPrincipalOrIdempotencyAuthority() {
         val raw = JSONObject("""{"api_version":1,"request_id":"client-1","method":"host.describe","params":{}}""")
         assertEquals("client-1", WorkspaceHostProtocol.request(raw.toString()).getString("request_id"))

@@ -26,7 +26,15 @@ object WorkspaceApplicationContract {
         require(depth <= MAX_JSON_DEPTH) { "JSON nesting exceeds $MAX_JSON_DEPTH" }
         when (value) {
             null, JSONObject.NULL -> Unit
-            is String, is Boolean -> Unit
+            is String -> {
+                var i = 0
+                while (i < value.length) {
+                    val c = value[i++]
+                    if (Character.isHighSurrogate(c)) require(i < value.length && Character.isLowSurrogate(value[i++])) { "Unpaired Unicode surrogate" }
+                    else require(!Character.isLowSurrogate(c)) { "Unpaired Unicode surrogate" }
+                }
+            }
+            is Boolean -> Unit
             is Number -> {
                 val number = value.toDouble()
                 require(number.isFinite() && kotlin.math.abs(number) <= 9_007_199_254_740_991.0) { "Unsafe JSON number" }
@@ -35,6 +43,26 @@ object WorkspaceApplicationContract {
             is JSONArray -> for (i in 0 until value.length()) checkJson(value.get(i), depth + 1)
             else -> error("Value is not strict JSON")
         }
+    }
+
+    fun parseObject(raw: String): JSONObject {
+        require(raw.toByteArray(Charsets.UTF_8).size <= MAX_MESSAGE_BYTES) { "QUOTA_EXCEEDED" }
+        var quoted = false
+        var escaped = false
+        var depth = 0
+        for (c in raw) {
+            if (quoted) {
+                if (escaped) escaped = false
+                else if (c == '\\') escaped = true
+                else if (c == '"') quoted = false
+            } else when (c) {
+                '"' -> quoted = true
+                '{', '[' -> { depth++; require(depth <= MAX_JSON_DEPTH) { "JSON nesting exceeds $MAX_JSON_DEPTH" } }
+                '}', ']' -> { depth--; require(depth >= 0) { "Malformed JSON" } }
+            }
+        }
+        require(!quoted && depth == 0) { "Malformed JSON" }
+        return JSONObject(raw).also { checkJson(it) }
     }
 
     fun exactKeys(value: JSONObject, allowed: Set<String>, required: Set<String> = emptySet()) {
@@ -130,6 +158,22 @@ object WorkspaceApplicationContract {
         .put("limits", JSONObject().put("package_bytes", MAX_PACKAGE_BYTES).put("files", MAX_FILES).put("file_bytes", MAX_FILE_BYTES)
             .put("message_bytes", MAX_MESSAGE_BYTES).put("json_depth", MAX_JSON_DEPTH).put("measurement_status", "provisional_staging_limits"))
         .put("schema", WorkspaceJsonSchema.describe())
+        .put("manifest_contract", JSONObject()
+            .put("required_fields", JSONArray(listOf("format", "title", "host_api", "entry", "data_schema_version", "capabilities", "exports", "tests", "dependencies")))
+            .put("unknown_fields", "rejected")
+            .put("capability_request", "{name:string,operations:exact-string[],resources:exact-string[]}; no wildcard or automatic grant")
+            .put("export", "{module:packaged-js-path,function:identifier,input_schema:closed-schema,output_schema:closed-schema,mode:pure}")
+            .put("test", "{name:string,export:export-key,input:JSON,expected:JSON}; structural validation does not run it")
+            .put("dependency", "{path:packaged-path,sha256:exact-file-hash,source:provenance,license:license-identifier}")
+            .put("file_formats", JSONArray(extensions.sorted())).put("files", "path -> UTF-8 text; reserved atlas/ paths cannot be authored"))
+        .put("example_bundle", example())
+
+    fun example(): JSONObject = JSONObject().put("manifest", JSONObject()
+        .put("format", FORMAT).put("title", "My application").put("host_api", API_VERSION).put("entry", "ui/index.html")
+        .put("data_schema_version", 1).put("capabilities", JSONArray()).put("exports", JSONObject()).put("tests", JSONArray()).put("dependencies", JSONArray()))
+        .put("files", JSONObject().put("ui/index.html", "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><link rel=\"stylesheet\" href=\"./style.css\"></head><body><main id=\"app\"></main><script type=\"module\" src=\"./app.js\"></script></body></html>")
+            .put("ui/style.css", "body { background: #101010; color: #fafafa; font-family: sans-serif; } main { padding: 1rem; }")
+            .put("ui/app.js", "document.querySelector('#app').textContent = 'Ready';"))
 }
 
 /** Closed subset, deliberately rejecting unsupported keywords rather than silently ignoring them. */

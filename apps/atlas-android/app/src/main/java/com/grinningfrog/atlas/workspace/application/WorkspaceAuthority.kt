@@ -60,7 +60,7 @@ object WorkspaceHostProtocol {
     private val statuses = setOf("succeeded", "failed", "pending", "waiting_user")
     fun request(raw: String): JSONObject {
         require(raw.toByteArray(Charsets.UTF_8).size <= WorkspaceApplicationContract.MAX_MESSAGE_BYTES) { "QUOTA_EXCEEDED" }
-        val value = JSONObject(raw)
+        val value = WorkspaceApplicationContract.parseObject(raw)
         WorkspaceApplicationContract.checkJson(value)
         WorkspaceApplicationContract.exactKeys(value, setOf("api_version", "request_id", "method", "params"), setOf("api_version", "request_id", "method", "params"))
         require(value.get("api_version") is Number && value.getDouble("api_version") == 1.0) { "UNSUPPORTED_HOST_VERSION" }
