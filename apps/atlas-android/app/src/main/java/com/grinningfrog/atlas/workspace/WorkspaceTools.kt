@@ -20,7 +20,7 @@ private const val AUTHORING_GUIDE = "Inspect workspace_capabilities before decla
 object WorkspaceTools {
     fun create(database: AtlasDatabase, mediaRepository: MediaRepository? = null): List<AtlasToolAdapter> = listOf(
         Capabilities(database), ListWorkspaces(database), TargetWorkspace(database), UpdateMetadata(database), ValidateDefinition(database), CreateWorkspace(database), InspectWorkspace(database), ReplaceDefinition(database), PatchDefinition(database), AddRecord(database), UpdateRecord(database), DeleteRecord(database), RestoreRecord(database), RenderDiagnostics(database),
-    ) + if (mediaRepository == null) emptyList() else listOf(CaptureWorkspace(database, mediaRepository))
+    ) + com.grinningfrog.atlas.workspace.application.WorkspacePackageTools.create(database) + if (mediaRepository == null) emptyList() else listOf(CaptureWorkspace(database, mediaRepository))
 }
 
 private abstract class WorkspaceAdapter(protected val database: AtlasDatabase) : AtlasToolAdapter {

@@ -1,0 +1,202 @@
+package com.grinningfrog.atlas.workspace.application
+
+import org.json.JSONArray
+import org.json.JSONObject
+import java.security.MessageDigest
+
+/** This is the package contract, not evidence that an execution substrate is installed. */
+object WorkspaceApplicationContract {
+    const val FORMAT = "atlas.workspace.web.v1"
+    const val API_VERSION = 1
+    const val MAX_PACKAGE_BYTES = 1024 * 1024
+    const val MAX_FILES = 128
+    const val MAX_FILE_BYTES = 256 * 1024
+    const val MAX_MESSAGE_BYTES = 64 * 1024
+    const val MAX_JSON_DEPTH = 32
+    private val path = Regex("[A-Za-z0-9_-]+(?:/[A-Za-z0-9_.-]+)*\\.[A-Za-z0-9]+")
+    private val extensions = setOf("html", "css", "js", "json", "txt", "svg")
+    private val identifier = Regex("[A-Za-z][A-Za-z0-9_]{0,63}")
+
+    fun validPath(value: String): Boolean = value.length <= 200 && value.matches(path) &&
+        value.split('/').none { it == "." || it == ".." || it.startsWith('.') } &&
+        value.substringAfterLast('.').lowercase() in extensions && !value.startsWith("atlas/")
+
+    /** Rejects values that would change meaning across Kotlin, JavaScript, JSON and SQLite. */
+    fun checkJson(value: Any?, depth: Int = 0) {
+        require(depth <= MAX_JSON_DEPTH) { "JSON nesting exceeds $MAX_JSON_DEPTH" }
+        when (value) {
+            null, JSONObject.NULL -> Unit
+            is String, is Boolean -> Unit
+            is Number -> {
+                val number = value.toDouble()
+                require(number.isFinite() && kotlin.math.abs(number) <= 9_007_199_254_740_991.0) { "Unsafe JSON number" }
+            }
+            is JSONObject -> value.keys().asSequence().forEach { checkJson(value.get(it), depth + 1) }
+            is JSONArray -> for (i in 0 until value.length()) checkJson(value.get(i), depth + 1)
+            else -> error("Value is not strict JSON")
+        }
+    }
+
+    fun exactKeys(value: JSONObject, allowed: Set<String>, required: Set<String> = emptySet()) {
+        require(value.keys().asSequence().all { it in allowed }) { "Unknown fields: ${value.keys().asSequence().filter { it !in allowed }.toList()}" }
+        require(required.all { value.has(it) && !value.isNull(it) }) { "Missing required fields: ${required.filter { !value.has(it) || value.isNull(it) }}" }
+    }
+
+    fun canonical(value: Any?): String = when (value) {
+        null, JSONObject.NULL -> "null"
+        is JSONObject -> value.keys().asSequence().sorted().joinToString(",", "{", "}") { JSONObject.quote(it) + ":" + canonical(value.get(it)) }
+        is JSONArray -> (0 until value.length()).joinToString(",", "[", "]") { canonical(value.get(it)) }
+        is String -> JSONObject.quote(value)
+        is Boolean, is Number -> value.toString()
+        else -> error("Value is not strict JSON")
+    }
+
+    fun hash(value: String): String = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
+    fun validate(bundle: JSONObject): List<String> = runCatching {
+        require(bundle.toString().toByteArray(Charsets.UTF_8).size <= MAX_PACKAGE_BYTES) { "Package exceeds 1 MiB staging limit" }
+        checkJson(bundle)
+        exactKeys(bundle, setOf("manifest", "files"), setOf("manifest", "files"))
+        val manifest = bundle.getJSONObject("manifest")
+        exactKeys(manifest, setOf("format", "title", "host_api", "entry", "data_schema_version", "capabilities", "exports", "tests", "dependencies"),
+            setOf("format", "title", "host_api", "entry", "data_schema_version", "capabilities", "exports", "tests", "dependencies"))
+        require(manifest.get("format") == FORMAT) { "format must be $FORMAT" }
+        require(manifest.get("title") is String && manifest.getString("title").length in 1..120) { "Invalid package title" }
+        require(manifest.get("host_api") is Number && manifest.getDouble("host_api") == API_VERSION.toDouble()) { "UNSUPPORTED_HOST_VERSION" }
+        val schemaVersion = manifest.get("data_schema_version")
+        require(schemaVersion is Number && schemaVersion.toDouble() == schemaVersion.toInt().toDouble() && schemaVersion.toInt() in 1..1_000_000) { "Invalid data_schema_version" }
+        val files = bundle.getJSONObject("files")
+        val paths = files.keys().asSequence().toList()
+        require(paths.size in 1..MAX_FILES) { "Package requires 1..$MAX_FILES files" }
+        require(paths.map { it.lowercase(java.util.Locale.ROOT) }.distinct().size == paths.size) { "Case-colliding package paths" }
+        for (name in paths) {
+            require(validPath(name)) { "Invalid package path: $name" }
+            require(files.get(name) is String) { "Files must be UTF-8 text" }
+            require(files.getString(name).toByteArray(Charsets.UTF_8).size <= MAX_FILE_BYTES) { "File exceeds 256 KiB: $name" }
+            require(!files.getString(name).contains('\u0000')) { "NUL in text file: $name" }
+        }
+        val entry = manifest.getString("entry")
+        require(validPath(entry) && entry.endsWith(".html") && files.has(entry)) { "Entry must identify a packaged HTML file" }
+        val capabilities = manifest.getJSONArray("capabilities")
+        val requested = mutableSetOf<String>()
+        for (i in 0 until capabilities.length()) {
+            val cap = capabilities.getJSONObject(i)
+            exactKeys(cap, setOf("name", "operations", "resources"), setOf("name", "operations", "resources"))
+            require(cap.get("name") is String && cap.getString("name").matches(Regex("[a-z][a-z0-9_.]{0,63}"))) { "Invalid capability name" }
+            require(requested.add(cap.getString("name"))) { "Duplicate capability request" }
+            for (key in listOf("operations", "resources")) {
+                val scopes = cap.getJSONArray(key)
+                require(scopes.length() in 1..64) { "Capability $key requires 1..64 exact scopes" }
+                for (j in 0 until scopes.length()) require(scopes.get(j) is String && scopes.getString(j).length in 1..200 && scopes.getString(j) != "*") { "Invalid capability scope" }
+            }
+        }
+        val exports = manifest.getJSONObject("exports")
+        require(exports.length() <= 64) { "Too many exports" }
+        for (name in exports.keys()) {
+            require(name.matches(identifier) && !name.startsWith("atlas_")) { "Invalid export name" }
+            val export = exports.getJSONObject(name)
+            exactKeys(export, setOf("module", "function", "input_schema", "output_schema", "mode"), setOf("module", "function", "input_schema", "output_schema", "mode"))
+            require(export.getString("mode") == "pure") { "Only pure exports are supported by contract v1" }
+            require(export.getString("function").matches(identifier)) { "Invalid export function" }
+            require(export.getString("module").endsWith(".js") && files.has(export.getString("module"))) { "Export module is missing" }
+            WorkspaceJsonSchema.check(export.getJSONObject("input_schema"))
+            WorkspaceJsonSchema.check(export.getJSONObject("output_schema"))
+        }
+        val tests = manifest.getJSONArray("tests")
+        require(tests.length() <= 128) { "Too many tests" }
+        for (i in 0 until tests.length()) {
+            val test = tests.getJSONObject(i)
+            exactKeys(test, setOf("name", "export", "input", "expected"), setOf("name", "export", "input", "expected"))
+            require(test.getString("name").length in 1..120 && exports.has(test.getString("export"))) { "Invalid test export or name" }
+            val export = exports.getJSONObject(test.getString("export"))
+            WorkspaceJsonSchema.validate(export.getJSONObject("input_schema"), test.get("input"))
+            WorkspaceJsonSchema.validate(export.getJSONObject("output_schema"), test.get("expected"))
+        }
+        val dependencies = manifest.getJSONArray("dependencies")
+        require(dependencies.length() <= 64) { "Too many dependencies" }
+        for (i in 0 until dependencies.length()) {
+            val dep = dependencies.getJSONObject(i)
+            exactKeys(dep, setOf("path", "sha256", "source", "license"), setOf("path", "sha256", "source", "license"))
+            val name = dep.getString("path")
+            require(files.has(name) && dep.getString("sha256") == hash(files.getString(name))) { "Dependency hash mismatch" }
+            require(dep.getString("source").length in 1..500 && dep.getString("license").length in 1..200) { "Dependency provenance required" }
+        }
+        emptyList<String>()
+    }.getOrElse { listOf(it.message ?: "Invalid package") }
+
+    fun descriptor(): JSONObject = JSONObject().put("format", FORMAT).put("api_version", API_VERSION)
+        .put("authoring_status", "staging_only").put("execution_available", false).put("activation_available", false)
+        .put("reason", "Presentation containment, worker isolation and activation recovery gates have not passed")
+        .put("limits", JSONObject().put("package_bytes", MAX_PACKAGE_BYTES).put("files", MAX_FILES).put("file_bytes", MAX_FILE_BYTES)
+            .put("message_bytes", MAX_MESSAGE_BYTES).put("json_depth", MAX_JSON_DEPTH).put("measurement_status", "provisional_staging_limits"))
+        .put("schema", WorkspaceJsonSchema.describe())
+}
+
+/** Closed subset, deliberately rejecting unsupported keywords rather than silently ignoring them. */
+object WorkspaceJsonSchema {
+    private val types = setOf("object", "array", "string", "integer", "number", "boolean", "null")
+    fun describe() = JSONObject().put("types", JSONArray(types.sorted())).put("keywords", JSONArray(listOf("type", "properties", "required", "additionalProperties", "items", "maxItems", "maxLength", "enum")))
+
+    fun check(schema: JSONObject, depth: Int = 0) {
+        require(depth <= 16) { "Schema nesting exceeds 16" }
+        WorkspaceApplicationContract.exactKeys(schema, setOf("type", "properties", "required", "additionalProperties", "items", "maxItems", "maxLength", "enum"), setOf("type"))
+        val type = schema.get("type")
+        require(type is String && type in types) { "Unsupported schema type" }
+        if (type == "object") {
+            require(schema.opt("additionalProperties") == false) { "Object schemas require additionalProperties:false" }
+            val properties = schema.getJSONObject("properties")
+            require(properties.length() <= 128) { "Too many schema properties" }
+            properties.keys().asSequence().forEach { check(properties.getJSONObject(it), depth + 1) }
+            val required = schema.getJSONArray("required")
+            for (i in 0 until required.length()) require(required.get(i) is String && properties.has(required.getString(i))) { "Invalid required field" }
+        } else require(listOf("properties", "required", "additionalProperties").none { schema.has(it) }) { "Object keyword on non-object schema" }
+        if (type == "array") {
+            check(schema.getJSONObject("items"), depth + 1)
+            require(schema.has("maxItems")) { "Arrays require maxItems" }
+        } else require(!schema.has("items") && !schema.has("maxItems")) { "Array keyword on non-array schema" }
+        if (schema.has("maxLength")) require(type == "string") { "maxLength requires string" }
+        for (key in listOf("maxItems", "maxLength")) if (schema.has(key)) {
+            val value = schema.get(key)
+            require(value is Number && value.toDouble() == value.toInt().toDouble() && value.toInt() in 0..10_000) { "Invalid $key" }
+        }
+        if (schema.has("enum")) {
+            val values = schema.getJSONArray("enum")
+            require(values.length() in 1..128) { "Invalid enum" }
+            for (i in 0 until values.length()) {
+                WorkspaceApplicationContract.checkJson(values.get(i))
+                validate(JSONObject(schema.toString()).apply { remove("enum") }, values.get(i))
+            }
+        }
+    }
+
+    fun validate(schema: JSONObject, value: Any?, depth: Int = 0) {
+        require(depth <= 32) { "Value nesting exceeds 32" }
+        WorkspaceApplicationContract.checkJson(value)
+        val valid = when (schema.getString("type")) {
+            "object" -> value is JSONObject
+            "array" -> value is JSONArray
+            "string" -> value is String
+            "integer" -> value is Number && value.toDouble() % 1.0 == 0.0
+            "number" -> value is Number
+            "boolean" -> value is Boolean
+            "null" -> value == null || value == JSONObject.NULL
+            else -> false
+        }
+        require(valid) { "Schema type mismatch: expected ${schema.getString("type")}" }
+        if (value is JSONObject) {
+            val props = schema.getJSONObject("properties")
+            val required = schema.getJSONArray("required")
+            require(value.keys().asSequence().all { props.has(it) }) { "Unknown object field" }
+            for (i in 0 until required.length()) require(value.has(required.getString(i))) { "Missing required field" }
+            value.keys().asSequence().forEach { validate(props.getJSONObject(it), value.get(it), depth + 1) }
+        }
+        if (value is JSONArray) {
+            require(value.length() <= schema.getInt("maxItems")) { "Array exceeds maxItems" }
+            for (i in 0 until value.length()) validate(schema.getJSONObject("items"), value.get(i), depth + 1)
+        }
+        if (value is String && schema.has("maxLength")) require(value.length <= schema.getInt("maxLength")) { "String exceeds maxLength" }
+        if (schema.has("enum")) require((0 until schema.getJSONArray("enum").length()).any {
+            WorkspaceApplicationContract.canonical(schema.getJSONArray("enum").get(it)) == WorkspaceApplicationContract.canonical(value)
+        }) { "Value is outside enum" }
+    }
+}

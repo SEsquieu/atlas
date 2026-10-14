@@ -69,7 +69,7 @@ data class ChatGptUsageSummary(
     val lastHostedSearchStatus: String? = null,
 )
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 14) {
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 15) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         db.setForeignKeyConstraintsEnabled(true)
@@ -382,11 +382,13 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         createAgentRuntimeTables(db)
         createIntentRuntimeTables(db)
         createComposableWorkspaceTables(db)
+        com.grinningfrog.atlas.workspace.application.WorkspacePackageRepository.createTables(db)
         createArchiveTables(db)
         com.grinningfrog.atlas.runtime.ExecutionTaskStore.createTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 15) com.grinningfrog.atlas.workspace.application.WorkspacePackageRepository.createTables(db)
         if (oldVersion < 14) com.grinningfrog.atlas.runtime.ExecutionTaskStore.createTables(db)
         if (oldVersion < 13) createWorkspaceUndoTable(db)
         if (oldVersion < 2) {
@@ -1171,6 +1173,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 "active_composable_workspace_id = ?", arrayOf(workspaceId))
             delete("archive_imports", "kind='workspace' AND destination_id=?", arrayOf(workspaceId))
             delete("workspace_records", "composable_workspace_id = ?", arrayOf(workspaceId))
+            delete("workspace_package_candidates", "workspace_id = ?", arrayOf(workspaceId))
             delete("workspace_revisions", "composable_workspace_id = ?", arrayOf(workspaceId))
             check(delete("composable_workspaces", "composable_workspace_id = ?", arrayOf(workspaceId)) == 1) { "Workspace deletion failed" }
         }
