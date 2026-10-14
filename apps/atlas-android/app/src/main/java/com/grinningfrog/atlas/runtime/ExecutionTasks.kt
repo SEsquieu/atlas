@@ -153,7 +153,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val t=get(taskId) ?: return@atomic null
         if(t.state in setOf(ExecutionState.COMPLETED,ExecutionState.CANCELLED,ExecutionState.FAILED)) return@atomic t
         if(t.state==ExecutionState.RUNNING) { t.usage.put("active_ms",t.usage.optLong("active_ms")+(now()-t.document.optLong("active_started_at",now())).coerceAtLeast(0));t.document.remove("active_started_at") }
-        if(state==ExecutionState.READY) reconcileLocal(t)
+        if(state in setOf(ExecutionState.READY,ExecutionState.PAUSED,ExecutionState.CANCELLED)) reconcileLocal(t)
         if(state==ExecutionState.READY && pending(taskId).any {it.status==ToolCallStatus.UNKNOWN || it.status==ToolCallStatus.RUNNING}) return@atomic t
         if(state==ExecutionState.CANCELLED) {
             pending(taskId).filter { it.status in setOf(ToolCallStatus.PROPOSED,ToolCallStatus.APPROVED,ToolCallStatus.WAITING_FOR_CONFIRMATION) }.forEach { call ->

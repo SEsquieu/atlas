@@ -81,6 +81,15 @@ class ExecutionTasksTest {
         assertEquals(ToolCallStatus.COMPLETED,db.loadToolCall(c.id)!!.status)
         assertTrue(runCatching { store.receipt(c.copy(argumentsJson="{\"x\":1}")) }.isFailure)
     }
+    @Test fun cancellationReconcilesAnEffectThatCommittedBeforeTheInterruptionMark() {
+        val t=task();val lease=store.claim(t.id,"owner")!!;val c=call(t);db.insertToolCall(c)
+        store.localOperation(c,lease) {ToolExecutionResult("{\"ok\":true}")}
+        // Simulate a cancellation observer that read RUNNING just before the atomic commit.
+        db.updateToolCall(c.id,ToolCallStatus.UNKNOWN,error="Interruption observed")
+        store.control(t.id,ExecutionState.CANCELLED,"user cancelled")
+        assertEquals(ToolCallStatus.COMPLETED,db.loadToolCall(c.id)!!.status)
+        assertNotNull(store.receipt(c));assertEquals(ExecutionState.CANCELLED,store.get(t.id)!!.state)
+    }
     @Test fun failedAtomicEffectRollsBackMemoryAndReceiptTogether() {
         val t=task();val lease=store.claim(t.id,"owner")!!;val c=call(t);db.insertToolCall(c)
         assertTrue(runCatching { store.localOperation(c,lease) {
