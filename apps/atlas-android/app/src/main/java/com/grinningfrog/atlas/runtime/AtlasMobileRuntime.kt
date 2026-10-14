@@ -370,7 +370,7 @@ class AtlasMobileRuntime(
 
     private fun resumeReadyExecution(sessionId: String) {
         scope.launch {
-            if (activeTurnJob?.isActive == true) return@launch
+            if (mutableState.value.session?.id != sessionId || mutableState.value.session?.status != SessionStatus.ACTIVE || activeTurnJob?.isActive == true) return@launch
             val task = executionTasks.list(sessionId).firstOrNull { it.state == ExecutionState.READY } ?: return@launch
             val job = currentCoroutineContext()[Job]
             activeTurnJob = job
@@ -400,6 +400,9 @@ class AtlasMobileRuntime(
                         TurnStatus.SOFT_TIMED_OUT, TurnStatus.COMPLETED_LATE -> SliceOutcome.WAITING_PROVIDER
                         else -> SliceOutcome.BLOCKED
                     }
+                } catch (error: Exception) {
+                    if (error !is CancellationException) database.updateTurn(turnId, TurnStatus.FAILED, error = error.safeMessage())
+                    throw error
                 } finally { activeExecutionLease = null }
             }
         }
@@ -473,10 +476,12 @@ class AtlasMobileRuntime(
                 if (sliceTools >= AgentLoopPolicy.MAX_TOOL_CALLS || System.currentTimeMillis() - startedAt >= AgentLoopPolicy.MAX_WALL_TIME_MS) { database.updateTurn(turnId, TurnStatus.YIELDED); return false }
                 executionTasks.check(lease)
                 val policy = toolHarness.evaluate(requireActiveSession(), ToolCallProposal(call.id, call.name, call.argumentsJson))
+                if (policy.requiresConfirmation && call.status != ToolCallStatus.APPROVED) { database.updateToolCall(call.id, ToolCallStatus.WAITING_FOR_CONFIRMATION); database.updateTurn(turnId, TurnStatus.WAITING_FOR_CONFIRMATION); return false }
                 if (!policy.allowed) { database.updateToolCall(call.id, ToolCallStatus.REJECTED, error = policy.reason); recordToolResult(call, JSONObject().put("ok", false).put("error", policy.reason).toString()); continue }
                 if (!executionTasks.reserveTool(lease)) { executionTasks.control(lease.taskId, ExecutionState.WAITING, "task_allowance"); database.updateTurn(turnId, TurnStatus.YIELDED); return false }
                 sliceTools++
                 val captured = executeToolLocked(call)
+                if (database.loadToolCall(call.id)?.status == ToolCallStatus.UNKNOWN) { database.updateTurn(turnId, TurnStatus.FAILED, error = "Operation outcome requires reconciliation"); return false }
                 if (captured?.media?.purpose == MediaPurpose.WORKSPACE_UI) uiObservation = captured
                 else if (call.risk != com.grinningfrog.atlas.model.ToolRisk.READ_ONLY) uiObservation = null
             }
@@ -500,8 +505,9 @@ class AtlasMobileRuntime(
             val pendingClarification = database.loadPendingClarification(session.id)
             observation = usableLatestObservation(session.id) ?: observation
             val imageObservation = uiObservation ?: observation
-            val capability = if (uiObservation != null) RouteCapability.VISION else capabilityForTurn(messages, observation)
-            val risk = riskForTurn(messages)
+            val routingMessages = if (messages.any { it.role == MessageRole.USER && it.turnId in taskTurnIds }) messages else messages + AtlasMessage(sessionId = session.id, turnId = turnId, role = MessageRole.USER, content = task.objective, createdAtMs = System.currentTimeMillis())
+            val capability = if (uiObservation != null) RouteCapability.VISION else capabilityForTurn(routingMessages, observation)
+            val risk = riskForTurn(routingMessages)
             val latestToolCall = database.loadTurnToolCalls(turnId).lastOrNull()
             val attachImage = imageObservation != null && (uiObservation != null || capability == RouteCapability.VISION ||
                 (latestToolCall?.name == "capture_current_view" && latestToolCall.status == ToolCallStatus.COMPLETED))
@@ -595,6 +601,10 @@ class AtlasMobileRuntime(
                     .put("title", citation.title).put("url", citation.url) }))
             })
             capabilityDiscovery.hostedResearch(session.id, turnId, response)
+            if (!executionTasks.observeResponse(lease, response.finishReason)) {
+                database.updateTurn(turnId, TurnStatus.YIELDED, stepCount = step, error = "Incomplete provider output; continuation required")
+                return
+            }
             require(response.toolCalls.map { it.id }.distinct().size == response.toolCalls.size) {
                 "Provider returned duplicate tool-call ids in one response"
             }
@@ -967,7 +977,7 @@ class AtlasMobileRuntime(
             throw cancelled
         } catch (error: Exception) {
             val result = ToolFailurePayload.json(error, error.safeMessage()).toString()
-            database.updateToolCall(call.id, ToolCallStatus.FAILED, resultJson = result, error = error.safeMessage())
+            database.updateToolCall(call.id, if (call.risk == com.grinningfrog.atlas.model.ToolRisk.EXTERNAL_EFFECT) ToolCallStatus.UNKNOWN else ToolCallStatus.FAILED, resultJson = result, error = error.safeMessage())
             database.appendEvent(call.sessionId, "tool.failed", JSONObject().put("tool", call.name).put("error", error.safeMessage()))
             val count = database.loadRecentEvents(call.sessionId, 100).count { event ->
                 event.type == "tool.failed" && runCatching { JSONObject(event.dataJson).optString("tool") == call.name }.getOrDefault(false)

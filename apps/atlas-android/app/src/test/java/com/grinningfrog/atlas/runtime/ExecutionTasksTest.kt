@@ -2,6 +2,7 @@ package com.grinningfrog.atlas.runtime
 
 import android.app.Application
 import com.grinningfrog.atlas.data.AtlasDatabase
+import com.grinningfrog.atlas.data.ArchiveCodec
 import com.grinningfrog.atlas.model.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
@@ -136,10 +137,18 @@ class ExecutionTasksTest {
         }
         assertEquals(3,slices);assertEquals("repeated_failure",store.get(t.id)!!.waitReason)
     }
+    @Test fun repeatedProviderCutoffsWaitWithoutClaimingCompletion() = runTest {
+        val t=task();var slices=0
+        executor().run(t.id) { lease,_ -> slices++;assertFalse(store.observeResponse(lease,"length"));SliceOutcome.YIELDED }
+        assertEquals(3,slices);assertEquals(ExecutionState.WAITING,store.get(t.id)!!.state)
+        assertEquals("context_cutoff",store.get(t.id)!!.waitReason)
+    }
     @Test fun exportedSnapshotsNeverImportExecutableAuthorityAndDeleteRemovesJournal() {
         val t=task();val lease=store.claim(t.id,"owner")!!;val c=call(t);db.insertToolCall(c);store.localOperation(c,lease){ToolExecutionResult("{}")}
         val archive=db.exportSession(session.id)
         assertEquals(1,archive.getJSONArray("executionTaskSnapshots").length())
+        val imported=db.importArchive(ArchiveCodec.preview(archive))
+        assertTrue(store.list(imported.id).isEmpty())
         db.deleteSession(session.id)
         assertNull(store.get(t.id));assertNull(store.receipt(c));assertNull(store.forTurn(c.turnId))
     }

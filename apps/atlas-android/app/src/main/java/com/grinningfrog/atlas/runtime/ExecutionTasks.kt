@@ -113,6 +113,15 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
             .put("output_tokens",maxOf(0,t.usage.optLong("output_tokens")-r.optLong("output")+(output ?: r.optLong("output"))))
         t.document.remove("reservation");save(t.copy(leaseUntil=now()+LEASE_MS))
     }
+    /** Truncation yields for continuation, but repeated incomplete output is a diagnosable wait. */
+    fun observeResponse(lease: ExecutionLease, finishReason: String?): Boolean = atomic {
+        check(lease); val task=get(lease.taskId)!!
+        val truncated=finishReason in setOf("length", "max_tokens", "max_output_tokens")
+        val count=if(truncated) task.document.optInt("consecutive_cutoffs")+1 else 0
+        task.document.put("consecutive_cutoffs",count);save(task)
+        if(count>=3) control(task.id,ExecutionState.WAITING,"context_cutoff")
+        !truncated
+    }
     fun reserveTool(lease: ExecutionLease): Boolean = atomic { check(lease);val t=get(lease.taskId)!!;if(!available(t.id)) return@atomic false;t.usage.put("tool_calls",t.usage.optLong("tool_calls")+1);save(t.copy(leaseUntil=now()+LEASE_MS));true }
     fun finish(lease: ExecutionLease, outcome: SliceOutcome, activeMs: Long): ExecutionTask? = atomic {
         if(!valid(lease)) return@atomic get(lease.taskId)
@@ -198,7 +207,8 @@ class DurableTaskExecutor(private val store: ExecutionTaskStore, private val now
             val turnId=store.currentTurn(taskId)
             val started=now()
             val outcome=try { driver(lease,turnId) } catch(cancelled: CancellationException) {
-                if(store.valid(lease)) store.control(taskId,ExecutionState.PAUSED,"runner interrupted")
+                val current=store.get(taskId)
+                if(current?.state==ExecutionState.RUNNING && current.owner==lease.owner && current.generation==lease.generation) store.control(taskId,ExecutionState.PAUSED,"runner interrupted")
                 throw cancelled
             }
             catch(error: com.grinningfrog.atlas.provider.InferenceUnavailableException) {
