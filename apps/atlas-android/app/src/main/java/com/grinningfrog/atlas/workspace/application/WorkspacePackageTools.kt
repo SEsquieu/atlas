@@ -51,7 +51,7 @@ object WorkspacePackageTools {
         override val supportsLocalMutation = true
         override val definition = ToolDefinition("workspace_package_stage", "Stage immutable HTML/CSS/JS package files against the inspected task target, live base revision and optional parent candidate. files maps package paths to complete UTF-8 contents; null deletes a file. First stage requires manifest. Staging is structural validation only: it runs no code, changes no grants and does not activate. Inspect workspace_package_inspect for the current closed contract first.", STAGE_SCHEMA, ToolRisk.SESSION_WRITE, maxCallsPerTurn = 8)
         override fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision {
-            val base = super.evaluate(session, proposal)
+            val base = super<Adapter>.evaluate(session, proposal)
             val args = runCatching { JSONObject(proposal.argumentsJson) }.getOrNull()
             val target = args != null && args.optString("workspace_id") == session.activeComposableWorkspaceId && args.optLong("navigation_sequence", -1) == session.workspaceNavigationSequence
             return base.copy(allowed = base.allowed && target, reason = "Immutable staging requires the current task target and navigation token")
