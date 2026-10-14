@@ -486,6 +486,7 @@ class AtlasMobileRuntime(
         var step = database.loadTurn(turnId)?.stepCount ?: 0
         val lease = activeExecutionLease ?: error("Missing execution lease")
         var sliceTools = 0
+        val sliceToolsByName = mutableMapOf<String, Int>()
         suspend fun drainPending(): Boolean {
             val pending = executionTasks.pending(lease.taskId)
             if (pending.any { it.status == ToolCallStatus.WAITING_FOR_CONFIRMATION }) { database.updateTurn(turnId, TurnStatus.WAITING_FOR_CONFIRMATION); return false }
@@ -495,8 +496,16 @@ class AtlasMobileRuntime(
                 val policy = toolHarness.evaluate(requireActiveSession(), ToolCallProposal(call.id, call.name, call.argumentsJson))
                 if (policy.requiresConfirmation && call.status != ToolCallStatus.APPROVED) { database.updateToolCall(call.id, ToolCallStatus.WAITING_FOR_CONFIRMATION); database.updateTurn(turnId, TurnStatus.WAITING_FOR_CONFIRMATION); return false }
                 if (!policy.allowed) { database.updateToolCall(call.id, ToolCallStatus.REJECTED, error = policy.reason); recordToolResult(call, JSONObject().put("ok", false).put("error", policy.reason).toString()); continue }
+                val toolLimit = toolHarness.definition(call.name)?.maxCallsPerTurn ?: 0
+                require(toolLimit > 0) { "Installed tool has no execution allowance: ${call.name}" }
+                if (sliceToolsByName.getOrDefault(call.name, 0) >= toolLimit) {
+                    database.updateTurn(turnId, TurnStatus.YIELDED, error = "Per-tool slice allowance reached: ${call.name}")
+                    database.appendEvent(session.id, "execution.slice_yielded", JSONObject().put("turnId", turnId).put("execution_task_id", lease.taskId).put("reason", "per_tool_allowance").put("tool", call.name).put("limit", toolLimit))
+                    return false
+                }
                 if (!executionTasks.reserveTool(lease)) { executionTasks.control(lease.taskId, ExecutionState.WAITING, "task_allowance"); database.updateTurn(turnId, TurnStatus.YIELDED); return false }
                 sliceTools++
+                sliceToolsByName[call.name] = sliceToolsByName.getOrDefault(call.name, 0) + 1
                 val captured = executeToolLocked(call)
                 if (database.loadToolCall(call.id)?.status == ToolCallStatus.UNKNOWN) { database.updateTurn(turnId, TurnStatus.FAILED, error = "Operation outcome requires reconciliation"); return false }
                 if (captured?.media?.purpose == MediaPurpose.WORKSPACE_UI) uiObservation = captured
@@ -946,9 +955,8 @@ class AtlasMobileRuntime(
         require(proposal.id.isNotBlank()) { "Provider returned a tool call without an id" }
         require(priorCalls.none { it.id == proposal.id }) { "Provider reused tool-call id ${proposal.id}" }
         val definition = toolHarness.definition(proposal.name)
-        val sameToolCount = priorCalls.count { it.name == proposal.name } + earlierInBatch
         val policy = toolHarness.evaluate(session, proposal)
-        val withinBudget = definition != null && sameToolCount < definition.maxCallsPerTurn
+        val withinBudget = definition != null
         val accepted = policy.allowed && withinBudget
         val timestamp = System.currentTimeMillis()
         return AtlasToolCall(
@@ -968,7 +976,7 @@ class AtlasMobileRuntime(
             reason = proposal.reason ?: policy.reason,
             error = when {
                 !policy.allowed -> policy.reason
-                !withinBudget -> "Per-turn limit reached for ${proposal.name}"
+                !withinBudget -> "Tool is not installed: ${proposal.name}"
                 else -> null
             },
             createdAtMs = timestamp,

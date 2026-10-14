@@ -96,6 +96,22 @@ class ExecutionRuntimeTest {
         assertEquals(20L,task.usage.getLong("tool_calls"))
         assertTrue(ExecutionTaskStore(db).pending(task.id).isEmpty())
     }
+    @Test fun installedToolAllowanceCarriesARealRecordBatchAcrossSlicesWithoutRejection() = runTest {
+        val workspace=db.createComposableWorkspace("Records","",RecordEditingFixture.definition().toString(),session.workspaceId)
+        db.activateComposableWorkspace(session.id,workspace.id);session=db.loadSession(session.id)!!
+        var requests=0
+        val runtime=runtime(this,WorkspaceTools.create(db)) { request ->
+            response(request,if(++requests==1) (1..18).map { index -> ToolCallProposal("record-$index","workspace_add_record",JSONObject().put("workspace_id",workspace.id).put("collection","entries").put("data",RecordEditingFixture.data("Item $index")).toString()) } else emptyList())
+        }
+        runtime.ask("Add the records to the workspace")
+        val store=ExecutionTaskStore(db);val task=store.list(session.id).single()
+        assertEquals(ExecutionState.COMPLETED,task.state)
+        assertEquals(3,store.turns(task.id).size);assertEquals(2,requests)
+        assertEquals(18,db.listWorkspaceRecords(workspace.id,"entries",50).size)
+        assertEquals(18L,task.usage.getLong("tool_calls"))
+        assertTrue(store.calls(task.id).all { it.status==ToolCallStatus.COMPLETED })
+    }
+
     @Test fun discoveryValidationAndCommitCrossSliceBoundaryThroughProductionHarness() = runTest {
         val definition=RecordEditingFixture.definition()
         val workspace=db.createComposableWorkspace("Test","",definition.toString(),session.workspaceId)

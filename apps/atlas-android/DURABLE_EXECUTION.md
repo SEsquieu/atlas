@@ -1,6 +1,6 @@
 # Durable interactive execution
 
-A user request creates one durable execution task. Each model/tool loop runs in a bounded slice (eight model steps, twelve local tool dispatches, three minutes). A boundary commits a checkpoint, yields the coroutine and creates a continuation turn without another user message. Provider-hosted research is recorded separately from local tool dispatches.
+A user request creates one durable execution task. Each model/tool loop runs in a bounded slice (eight model steps, twelve local tool dispatches, three minutes, with installed per-tool allowances also reset per slice). A boundary commits a checkpoint, yields the coroutine and creates a continuation turn without another user message. Provider-hosted research is recorded separately from local tool dispatches.
 
 SQLite owns the task objective, original realm/actor scope, cumulative resource usage, linked turns and operation receipts. A generated reply ends the response; it does not certify that the objective was achieved. The checkpoint and tool receipts remain the evidence for committed effects. Context compaction cannot remove these receipts or the latest authoring artifact pointer.
 
