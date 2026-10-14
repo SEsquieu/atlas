@@ -79,6 +79,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         if(session.status != SessionStatus.ACTIVE || session.workspaceId != task.document.getJSONObject("scope").getString("realm_id") || (session.actorId ?: "") != task.document.getJSONObject("scope").optString("actor_id", "").let { if(it=="null") "" else it }) return@atomic null
         if(task.state != ExecutionState.READY || task.nextRunAt > now()) return@atomic null
         if(list(task.sessionId).any { it.id != task.id && it.state == ExecutionState.RUNNING && it.leaseUntil >= now() }) return@atomic null
+        task.document.put("active_started_at",now())
         val claimed = task.copy(state=ExecutionState.RUNNING,owner=owner,generation=task.generation+1,leaseUntil=now()+LEASE_MS)
         save(claimed); event(claimed,"execution.claimed"); ExecutionLease(taskId,owner,claimed.generation)
     }
@@ -125,7 +126,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
     fun reserveTool(lease: ExecutionLease): Boolean = atomic { check(lease);val t=get(lease.taskId)!!;if(!available(t.id)) return@atomic false;t.usage.put("tool_calls",t.usage.optLong("tool_calls")+1);save(t.copy(leaseUntil=now()+LEASE_MS));true }
     fun finish(lease: ExecutionLease, outcome: SliceOutcome, activeMs: Long): ExecutionTask? = atomic {
         if(!valid(lease)) return@atomic get(lease.taskId)
-        val task=get(lease.taskId)!!;task.usage.put("active_ms",task.usage.optLong("active_ms")+activeMs.coerceAtLeast(0))
+        val task=get(lease.taskId)!!;task.usage.put("active_ms",task.usage.optLong("active_ms")+activeMs.coerceAtLeast(0));task.document.remove("active_started_at")
         save(task)
         task.document.put("consecutive_retries",0)
         val all=calls(task.id);val pending=pending(task.id).any { it.status==ToolCallStatus.UNKNOWN || it.status==ToolCallStatus.RUNNING }
@@ -149,6 +150,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
     fun control(taskId: String, state: ExecutionState, reason: String, budget: ExecutionBudget? = null): ExecutionTask? = atomic {
         val t=get(taskId) ?: return@atomic null
         if(t.state in setOf(ExecutionState.COMPLETED,ExecutionState.CANCELLED,ExecutionState.FAILED)) return@atomic t
+        if(t.state==ExecutionState.RUNNING) { t.usage.put("active_ms",t.usage.optLong("active_ms")+(now()-t.document.optLong("active_started_at",now())).coerceAtLeast(0));t.document.remove("active_started_at") }
         if(state==ExecutionState.READY) reconcileLocal(t)
         if(state==ExecutionState.READY && pending(taskId).any {it.status==ToolCallStatus.UNKNOWN || it.status==ToolCallStatus.RUNNING}) return@atomic t
         if(state==ExecutionState.CANCELLED) {
@@ -165,7 +167,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
     }
     fun retry(lease: ExecutionLease, reason: String, activeMs: Long = 0): ExecutionTask? = atomic {
         if(!valid(lease)) return@atomic get(lease.taskId)
-        val t=get(lease.taskId)!!;t.usage.put("active_ms",t.usage.optLong("active_ms")+activeMs.coerceAtLeast(0));val n=t.document.optInt("consecutive_retries")+1;t.document.put("consecutive_retries",n).put("wait_reason",reason)
+        val t=get(lease.taskId)!!;t.usage.put("active_ms",t.usage.optLong("active_ms")+activeMs.coerceAtLeast(0));t.document.remove("active_started_at");val n=t.document.optInt("consecutive_retries")+1;t.document.put("consecutive_retries",n).put("wait_reason",reason)
         val result=t.copy(state=if(n>=8) ExecutionState.WAITING else ExecutionState.READY,owner=null,leaseUntil=0,nextRunAt=now()+minOf(60_000L,1000L shl minOf(n,6)))
         save(result);event(result,"execution.provider_retry",JSONObject().put("attempt",n).put("next_run_at",result.nextRunAt));result
     }
@@ -188,6 +190,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
     }
     fun recover(sessionId: String) = atomic {
         list(sessionId).filter {it.state==ExecutionState.RUNNING}.forEach { task ->
+            task.usage.put("active_ms",task.usage.optLong("active_ms")+(now()-task.document.optLong("active_started_at",now())).coerceIn(0,LEASE_MS));task.document.remove("active_started_at")
             reconcileLocal(task)
             val unknown=pending(task.id).any {it.status==ToolCallStatus.UNKNOWN}
             task.document.put("wait_reason",if(unknown) "unknown_operation_outcome" else "process_restart")
@@ -196,13 +199,13 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         }
     }
     fun receipt(call: AtlasToolCall): String? = database.readableDatabase.rawQuery("SELECT session_id,arguments_hash,result_json FROM local_operation_receipts WHERE operation_id=?",arrayOf(call.id)).use { c ->
-        if(!c.moveToFirst()) null else {require(c.getString(0)==call.sessionId&&c.getString(1)==hash(call.argumentsJson)){"Operation ID reused with different scope or arguments"};c.getString(2)} }
+        if(!c.moveToFirst()) null else {require(c.getString(0)==call.sessionId&&c.getString(1)==hash(call.name+"\n"+call.argumentsJson)){"Operation ID reused with different scope or arguments"};c.getString(2)} }
     fun localOperation(call: AtlasToolCall, lease: ExecutionLease?, execute: () -> ToolExecutionResult): ToolExecutionResult = atomic {
         receipt(call)?.let { return@atomic ToolExecutionResult(it) }
         forTurn(call.turnId)?.let { task -> require(lease != null && lease.taskId == task.id) { "A task effect requires its execution lease" };check(lease) }
         val result=execute()
         lease?.let(::check)
-        database.writableDatabase.insertOrThrow("local_operation_receipts",null,ContentValues().apply {put("operation_id",call.id);put("session_id",call.sessionId);put("arguments_hash",hash(call.argumentsJson));put("result_json",result.resultJson)})
+        database.writableDatabase.insertOrThrow("local_operation_receipts",null,ContentValues().apply {put("operation_id",call.id);put("session_id",call.sessionId);put("arguments_hash",hash(call.name+"\n"+call.argumentsJson));put("result_json",result.resultJson)})
         if(database.loadToolCall(call.id)!=null) database.updateToolCall(call.id,ToolCallStatus.COMPLETED,resultJson=result.resultJson)
         result
     }

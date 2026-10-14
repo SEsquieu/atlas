@@ -438,7 +438,7 @@ private fun AtlasHomePage(
             (snapshot.executionTasks.firstOrNull { it.state !in setOf(com.grinningfrog.atlas.runtime.ExecutionState.COMPLETED, com.grinningfrog.atlas.runtime.ExecutionState.CANCELLED, com.grinningfrog.atlas.runtime.ExecutionState.FAILED) } ?: snapshot.executionTasks.firstOrNull())?.let { task ->
                 item {
                     InstrumentCard {
-                        Text("Task · ${task.state.name.lowercase()}", style = MaterialTheme.typography.labelLarge)
+                        Text("Task · ${if (task.state == com.grinningfrog.atlas.runtime.ExecutionState.COMPLETED) "response finished" else task.state.name.lowercase()}", style = MaterialTheme.typography.labelLarge)
                         Text(task.objective, maxLines = 3)
                         Text("${task.document.optInt("slice_count")} slices · ${task.usage.optLong("model_steps")} model steps · ${task.usage.optLong("tool_calls")} tools", style = MaterialTheme.typography.bodySmall)
                         if (task.waitReason.isNotBlank()) Text("Reason: ${task.waitReason.replace('_', ' ')}", color = AtlasAmber)

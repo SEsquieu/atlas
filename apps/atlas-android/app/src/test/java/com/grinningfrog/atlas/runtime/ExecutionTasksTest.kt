@@ -115,6 +115,11 @@ class ExecutionTasksTest {
         executor().run(t.id) {_,_->clock+=50;slices++;SliceOutcome.YIELDED}
         assertEquals(1,slices);assertEquals("task_allowance",store.get(t.id)!!.waitReason)
     }
+    @Test fun pauseChargesActiveSliceTimeRatherThanResettingAllowance() {
+        val t=task(ExecutionBudget(activeMs=50));store.claim(t.id,"owner")!!;clock+=50
+        store.control(t.id,ExecutionState.PAUSED,"user pause")
+        assertEquals(50L,store.get(t.id)!!.usage.getLong("active_ms"));assertFalse(store.available(t.id))
+    }
     @Test fun driverCancellationPausesInsteadOfLeavingLiveOwner() = runTest {
         val t=task()
         assertTrue(runCatching { executor().run(t.id) {_,_->throw CancellationException("cancel")} }.exceptionOrNull() is CancellationException)
