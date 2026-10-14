@@ -905,6 +905,25 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     @Synchronized
+    fun updateWorkspaceMetadata(workspaceId: String, baseRevisionId: String, expectedName: String, expectedDescription: String,
+        name: String?, description: String?, sessionId: String, turnId: String, nowMs: Long = System.currentTimeMillis()): ComposableWorkspace {
+        require(name != null || description != null) { "Supply a name or description" }
+        require(name == null || (name.isNotBlank() && name.length <= 120)) { "Name must be 1..120 characters" }
+        require(description == null || description.length <= 1000) { "Description must be at most 1000 characters" }
+        writableDatabase.transaction {
+            val changed = update("composable_workspaces", ContentValues().apply {
+                name?.let { put("name", it.trim()) }; description?.let { put("description", it.trim()) }; put("updated_at", nowMs)
+            }, "composable_workspace_id = ? AND live_revision_id = ? AND name = ? AND description = ? AND status = 'ACTIVE'",
+                arrayOf(workspaceId, baseRevisionId, expectedName, expectedDescription))
+            check(changed == 1) { "Workspace metadata or revision changed; inspect again" }
+            appendEventLocked(this, sessionId, "workspace.metadata_updated", nowMs,
+                JSONObject().put("workspace_id", workspaceId).put("turnId", turnId).put("prior_name", expectedName).put("prior_description", expectedDescription)
+                    .put("name", name?.trim() ?: expectedName).put("description", description?.trim() ?: expectedDescription).toString())
+        }
+        return loadComposableWorkspace(workspaceId)!!
+    }
+
+    @Synchronized
     fun setComposableWorkspaceArchived(workspaceId: String, archived: Boolean, nowMs: Long = System.currentTimeMillis()) {
         check(writableDatabase.update("composable_workspaces", ContentValues().apply {
             put("status", if (archived) WorkspaceStatus.ARCHIVED.name else WorkspaceStatus.ACTIVE.name); put("updated_at", nowMs)
@@ -1719,7 +1738,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     fun cancelOpenSessionWork(sessionId: String, reason: String, nowMs: Long = System.currentTimeMillis()) {
         writableDatabase.transaction {
             update("turns", ContentValues().apply { put("status", TurnStatus.CANCELLED.name); put("updated_at", nowMs); put("error", reason.take(1_000)) },
-                "session_id = ? AND status NOT IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED')", arrayOf(sessionId))
+                "session_id = ? AND status NOT IN ('COMPLETED','COMPLETED_LATE','FAILED','CANCELLED','HARD_CANCELLED','INTERRUPTED','YIELDED')", arrayOf(sessionId))
             update("tool_calls", ContentValues().apply { put("status", ToolCallStatus.REJECTED.name); put("updated_at", nowMs); put("error", reason.take(1_000)) },
                 "session_id = ? AND status IN ('PROPOSED','WAITING_FOR_CONFIRMATION','APPROVED')", arrayOf(sessionId))
             appendEventLocked(this, sessionId, "runtime.open_work_cancelled", nowMs, JSONObject().put("reason", reason).toString())

@@ -23,10 +23,12 @@ npm run check:public
 
 ```bash
 cd apps/atlas-android
-./gradlew testSecureDebugUnitTest testLanDebugUnitTest
-./gradlew lintSecureDebug lintLanDebug
-./gradlew assembleSecureDebug assembleLanDebug
+./gradlew testSecureDebugUnitTest
+./gradlew lintSecureDebug
+./gradlew assembleSecureDebug
 ```
+
+Routine delivery is the Secure standard APK only. The Android workflow supports manual opt-in `lan` and `developer` inputs for targeted validation and signed builds; see [developer build policy](./developer-build.md). Increment the alpha version for each user-facing runtime release; record the commit and CI version code.
 
 The secure flavor rejects cleartext transport. The visibly separate LAN flavor permits cleartext for trusted private-network endpoints and has an application ID suffix. Debug APKs are development artifacts, not signed releases.
 

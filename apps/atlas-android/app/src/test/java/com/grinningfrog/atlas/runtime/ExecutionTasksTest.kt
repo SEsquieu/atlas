@@ -193,4 +193,38 @@ class ExecutionTasksTest {
         db.deleteSession(session.id)
         assertNull(store.get(t.id));assertNull(store.receipt(c));assertNull(store.forTurn(c.turnId))
     }
+    @Test fun committedWorkspaceReceiptAllowsRedundantResumeAuditFailureWithoutHidingMutationFailures() {
+        val t = task(atomicTools = listOf("workspace_replace_definition"))
+        val lease = store.claim(t.id, "owner")!!
+        val edit = call(t, "workspace_replace_definition"); db.insertToolCall(edit)
+        store.localOperation(edit, lease) { ToolExecutionResult("{\"ok\":true}") }
+        val audit = call(t, CapabilityDiscovery.TOOL, """{"stage":"resume_local","reason":"Already working locally"}""")
+        db.insertToolCall(audit); db.updateToolCall(audit.id, ToolCallStatus.FAILED,
+            resultJson = """{"ok":false,"error_code":"missing_blocker"}""", error = "No blocker")
+        val result = store.finish(lease, SliceOutcome.RESPONDED, 1)!!
+        assertEquals(ExecutionState.COMPLETED, result.state)
+        assertEquals(audit.id, result.document.getJSONObject("checkpoint").getJSONArray("diagnostic_operation_ids").getString(0))
+        assertEquals(ToolCallStatus.FAILED, db.loadToolCall(audit.id)!!.status)
+
+        val broken = task(); val brokenLease = store.claim(broken.id, "next")!!
+        val mutation = call(broken, "workspace_replace_definition"); db.insertToolCall(mutation)
+        db.updateToolCall(mutation.id, ToolCallStatus.FAILED, error = "Revision mismatch")
+        assertEquals("unresolved_tool_failure", store.finish(brokenLease, SliceOutcome.RESPONDED, 1)!!.waitReason)
+    }
+    @Test fun redundantAuditFailureWithoutCommittedEffectStillWaits() {
+        val t = task(); val lease = store.claim(t.id, "owner")!!
+        val audit = call(t, CapabilityDiscovery.TOOL, """{"stage":"resume_local","reason":"No proof"}""")
+        db.insertToolCall(audit); db.updateToolCall(audit.id, ToolCallStatus.FAILED, resultJson = """{"ok":false,"error_code":"missing_blocker"}""")
+        assertEquals(ExecutionState.WAITING, store.finish(lease, SliceOutcome.RESPONDED, 1)!!.state)
+    }
+    @Test fun endingSessionPreservesYieldedAndCompletedLateHistory() {
+        val yielded = db.createTurn(session.id, "text"); db.updateTurn(yielded.id, TurnStatus.YIELDED)
+        val late = db.createTurn(session.id, "text"); db.updateTurn(late.id, TurnStatus.COMPLETED_LATE)
+        val active = db.createTurn(session.id, "text")
+        db.cancelOpenSessionWork(session.id, "session ended")
+        assertEquals(TurnStatus.YIELDED, db.loadTurn(yielded.id)!!.status)
+        assertEquals(TurnStatus.COMPLETED_LATE, db.loadTurn(late.id)!!.status)
+        assertEquals(TurnStatus.CANCELLED, db.loadTurn(active.id)!!.status)
+    }
+
 }

@@ -2,6 +2,12 @@
 
 `developer` is a build type sharing `main` with standard Atlas. Secure DEV uses `com.grinningfrog.atlas.dev`; LAN DEV uses `com.grinningfrog.atlas.lan.dev`. These coexist with standard apps, use separate Android data/Keystore storage, and require their own sign-in. They use the persistent alpha signing key for updates. The app label and System panel say DEV.
 
+## Build and delivery policy
+
+The primary purpose of DEV builds is targeted, per-use diagnostic tooling. Do not refresh or upload developer APKs after ordinary Core changes. Build one when a concrete investigation needs the probe panel or new instrumentation; reuse the existing diagnostic install otherwise.
+
+Routine CI validates Secure standard and produces only its signed APK. LAN and developer validation/builds are opt-in via the Android workflow's manual `lan` and `developer` inputs. LAN is retained for deliberate trusted-network cleartext tests, not routine delivery. Flavor, transport, signing or developer-source changes should explicitly select the affected optional variants for validation. Drive delivery follows the selected build set; do not add extra variants by habit or delete prior builds without instruction.
+
 ## Request isolation
 
 Open System → DEV · Diagnostics. Connect the provider on Inference first. Start with Minimal and “Reply exactly OK”, then compare Tools only and Search only. The combined preset adds Atlas system instructions, all installed tools, and hosted search. Individual tool selection can bisect schema problems. The instruction override and test prompt are independently editable. History/workspace checkboxes attach only state from the current session in the DEV app; import an archive through Data & logs for reproduction.
@@ -16,6 +22,6 @@ ChatGPT exchanges emit `provider.http_diagnostic` with request metadata, respons
 
 ## Source separation and validation
 
-The actual panel and probe builder/runner live under `app/src/developer`. Standard debug/release compile only the no-op `src/standard` hook. Removing developer build support does not require runtime flags throughout Core. CI tests Secure/LAN standard and developer variants, lints/builds all four, verifies persistent signing, and checks DEX markers to ensure developer implementation is absent from standard APKs.
+The actual panel and probe builder/runner live under `app/src/developer`. Standard debug/release compile only the no-op `src/standard` hook. Removing developer build support does not require runtime flags throughout Core. CI tests/lints the selected variants, verifies persistent signing, and checks DEX markers to ensure developer implementation is absent from standard APKs.
 
 The automated tests use mock HTTP responses, including 520. They prove request isolation and logging contracts, not availability of a live ChatGPT account. Phone probe exports supply that missing live evidence. New diagnostic modules should remain in the developer source set, reuse production entry points, and preserve the no-execution default.

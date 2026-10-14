@@ -1,6 +1,16 @@
 name: Android
 
 on:
+  workflow_dispatch:
+    inputs:
+      lan:
+        description: Build LAN variants for a specific cleartext-network test
+        type: boolean
+        default: false
+      developer:
+        description: Build DEV variants for targeted diagnostic tooling
+        type: boolean
+        default: false
   push:
     paths:
       - "apps/atlas-android/**"
@@ -9,6 +19,10 @@ on:
     paths:
       - "apps/atlas-android/**"
       - ".github/workflows/android.yml"
+
+env:
+  INCLUDE_LAN: ${{ github.event_name == 'workflow_dispatch' && inputs.lan }}
+  INCLUDE_DEV: ${{ github.event_name == 'workflow_dispatch' && inputs.developer }}
 
 permissions:
   contents: read
@@ -27,12 +41,26 @@ jobs:
           java-version: "17"
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
       - name: Unit tests
-        run: ./gradlew testSecureDebugUnitTest testLanDebugUnitTest testSecureDeveloperUnitTest testLanDeveloperUnitTest
-      - name: Lint and debug APKs
-        run: ./gradlew lintSecureDebug lintLanDebug lintSecureDeveloper lintLanDeveloper assembleSecureDebug assembleLanDebug assembleSecureDeveloper assembleLanDeveloper
+        run: |
+          tasks=(testSecureDebugUnitTest)
+          if [ "$INCLUDE_LAN" = true ]; then tasks+=(testLanDebugUnitTest); fi
+          if [ "$INCLUDE_DEV" = true ]; then
+            tasks+=(testSecureDeveloperUnitTest)
+            if [ "$INCLUDE_LAN" = true ]; then tasks+=(testLanDeveloperUnitTest); fi
+          fi
+          ./gradlew "${tasks[@]}"
+      - name: Lint selected variants
+        run: |
+          tasks=(lintSecureDebug)
+          if [ "$INCLUDE_LAN" = true ]; then tasks+=(lintLanDebug); fi
+          if [ "$INCLUDE_DEV" = true ]; then
+            tasks+=(lintSecureDeveloper)
+            if [ "$INCLUDE_LAN" = true ]; then tasks+=(lintLanDeveloper); fi
+          fi
+          ./gradlew "${tasks[@]}"
 
   installable:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
     environment: closed-alpha
@@ -65,11 +93,16 @@ jobs:
           ATLAS_ANDROID_KEY_PASSWORD: ${{ secrets.ATLAS_ANDROID_KEY_PASSWORD }}
         run: |
           export ATLAS_ANDROID_VERSION_CODE=$((1000 + GITHUB_RUN_NUMBER))
-          ./gradlew assembleSecureDebug assembleLanDebug assembleSecureDeveloper assembleLanDeveloper
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/secure/debug/app-secure-debug.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/lan/debug/app-lan-debug.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/secure/developer/app-secure-developer.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/lan/developer/app-lan-developer.apk
+          tasks=(assembleSecureDebug)
+          if [ "$INCLUDE_LAN" = true ]; then tasks+=(assembleLanDebug); fi
+          if [ "$INCLUDE_DEV" = true ]; then
+            tasks+=(assembleSecureDeveloper)
+            if [ "$INCLUDE_LAN" = true ]; then tasks+=(assembleLanDeveloper); fi
+          fi
+          ./gradlew "${tasks[@]}"
+          find app/build/outputs/apk -name '*.apk' -print0 | while IFS= read -r -d '' apk; do
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk"
+          done
           python3 - <<'PYCODE'
           import zipfile
           from pathlib import Path
@@ -84,6 +117,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: atlas-android-installable
+          if-no-files-found: error
           path: |
             apps/atlas-android/app/build/outputs/apk/*/debug/*.apk
             apps/atlas-android/app/build/outputs/apk/*/developer/*.apk

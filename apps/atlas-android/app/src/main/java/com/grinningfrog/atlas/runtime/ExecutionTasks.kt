@@ -159,7 +159,8 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         task.document.put("consecutive_retries",0)
         val all=calls(task.id);val pending=pending(task.id).any { it.status==ToolCallStatus.UNKNOWN || it.status==ToolCallStatus.RUNNING }
         val last=all.groupBy { it.name }.values.mapNotNull { it.lastOrNull() }
-        val failures=last.filter { call -> call.status in setOf(ToolCallStatus.FAILED,ToolCallStatus.REJECTED) || runCatching { JSONObject(call.resultJson.orEmpty()).let { it.has("valid")&&!it.optBoolean("valid") || it.has("ok")&&!it.optBoolean("ok") } }.getOrDefault(false) }
+        val diagnosticFailures=last.filter { nonBlockingAuditFailure(it, task, all) }
+        val failures=last.filter { it !in diagnosticFailures }.filter { call -> call.status in setOf(ToolCallStatus.FAILED,ToolCallStatus.REJECTED) || runCatching { JSONObject(call.resultJson.orEmpty()).let { it.has("valid")&&!it.optBoolean("valid") || it.has("ok")&&!it.optBoolean("ok") } }.getOrDefault(false) }
         val signature=failures.joinToString("|") { it.name+":"+(it.error ?: it.resultJson.orEmpty()).take(1000) }
         val failedThisSlice=failures.any { it.turnId==currentTurn(task.id) }
         val madeProgress=all.any { it.turnId==currentTurn(task.id) && it.status==ToolCallStatus.COMPLETED && it !in failures }
@@ -168,12 +169,24 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val recent=all.takeLast(20)
         val definitionId=all.lastOrNull { runCatching {JSONObject(it.argumentsJson).has("definition")}.getOrDefault(false) }?.id ?: task.document.getJSONObject("checkpoint").optString("latest_definition_operation_id").takeIf { it.isNotBlank() && it!="null" }
         task.document.put("checkpoint",JSONObject().put("last_turn_id",currentTurn(task.id)).put("operation_ids",JSONArray(recent.map {it.id}))
+            .put("diagnostic_operation_ids", JSONArray(diagnosticFailures.map { it.id }))
             .put("completed_operations",JSONArray(recent.filter {it.status==ToolCallStatus.COMPLETED}.map {it.id}))
             .put("latest_definition_operation_id",definitionId))
         val reason=when { pending -> "unknown_operation_outcome";outcome==SliceOutcome.RESPONDED&&failures.isEmpty()->"";!available(task.id)->"task_allowance";repeated>=3->"repeated_failure";outcome==SliceOutcome.RESPONDED&&failures.isNotEmpty()->"unresolved_tool_failure";else->when(outcome){SliceOutcome.WAITING_USER->"clarification";SliceOutcome.WAITING_PERMISSION->"authorization";SliceOutcome.WAITING_PROVIDER->"provider";SliceOutcome.BLOCKED->"runtime_blocker";else->""} }
         task.document.put("wait_reason",reason).put("completion_kind",if(outcome==SliceOutcome.RESPONDED&&reason.isBlank()) "response_finished; consult operation receipts for effects" else JSONObject.NULL)
         val state=if(reason.isNotBlank()) ExecutionState.WAITING else if(outcome==SliceOutcome.RESPONDED) ExecutionState.COMPLETED else ExecutionState.READY
         val result=task.copy(state=state,owner=null,leaseUntil=0,nextRunAt=0);save(result);event(result,"execution.checkpoint",JSONObject().put("outcome",outcome.name).put("checkpoint",task.document.getJSONObject("checkpoint")).put("wait_reason",reason));result
+    }
+    private fun nonBlockingAuditFailure(call: AtlasToolCall, task: ExecutionTask, all: List<AtlasToolCall>): Boolean {
+        if (call.name != CapabilityDiscovery.TOOL || call.status != ToolCallStatus.FAILED) return false
+        val args = runCatching { JSONObject(call.argumentsJson) }.getOrNull() ?: return false
+        val result = runCatching { JSONObject(call.resultJson.orEmpty()) }.getOrNull() ?: return false
+        if (args.optString("stage") != "resume_local" || args.has("blocker_id") || result.optString("error_code") != "missing_blocker") return false
+        if (CapabilityDiscovery(database).active(currentTurn(task.id))) return false
+        val mutations = setOf("workspace_create", "workspace_replace_definition", "workspace_patch_definition", "workspace_update_metadata",
+            "workspace_add_record", "workspace_update_record", "workspace_delete_record", "workspace_restore_record")
+        // A completion claim alone is insufficient: require an atomic committed effect receipt.
+        return all.any { it.name in mutations && it.status == ToolCallStatus.COMPLETED && receipt(it) != null }
     }
     fun control(taskId: String, state: ExecutionState, reason: String, budget: ExecutionBudget? = null): ExecutionTask? = atomic {
         val t=get(taskId) ?: return@atomic null

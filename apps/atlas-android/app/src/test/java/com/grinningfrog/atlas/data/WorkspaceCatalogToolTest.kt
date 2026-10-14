@@ -103,4 +103,32 @@ class WorkspaceCatalogToolTest {
         assertNull(store.workspaceSession(db.loadSession(session.id)!!, next.id).activeComposableWorkspaceId)
     }
 
+    @Test fun headlessMetadataEditPreservesDefinitionAndRecordsAndRejectsStaleMetadata() = runTest {
+        var session = db.createSession("Metadata", "Refresh description")
+        db.updateSessionStatus(session.id, SessionStatus.ACTIVE); session = db.loadSession(session.id)!!
+        val workspace = db.createComposableWorkspace("GraphTest", "Blank starter", realmId = session.workspaceId)
+        val record = db.addWorkspaceRecord(workspace.id, "notes", """{"text":"Keep me"}""")
+        val turn = db.createTurn(session.id, "text"); val store = ExecutionTaskStore(db)
+        val task = store.create(session, "Update GraphTest description", turn.id, ExecutionBudget(), listOf("workspace_update_metadata"))
+        val lease = store.claim(task.id, "owner")!!; val sequence = store.bindWorkspace(turn.id, workspace.id)
+        val tool = WorkspaceTools.create(db).single { it.definition.name == "workspace_update_metadata" }
+        val args = JSONObject().put("workspace_id", workspace.id).put("base_revision_id", workspace.liveRevisionId).put("navigation_sequence", sequence)
+            .put("expected_name", workspace.name).put("expected_description", workspace.description).put("description", "Presidential age chart")
+        val edit = call(session, turn, tool.definition.name, args.toString()); db.insertToolCall(edit)
+        val result = JSONObject(store.localOperation(edit, lease) { (tool as AtlasLocalMutationAdapter).executeLocal(edit) }.resultJson)
+        assertEquals("Presidential age chart", result.getString("description"))
+        assertEquals(workspace.liveRevisionId, db.loadComposableWorkspace(workspace.id)!!.liveRevisionId)
+        assertEquals(record.id, db.listWorkspaceRecords(workspace.id, "notes", 10).single().id)
+        assertNull(db.loadSession(session.id)!!.activeComposableWorkspaceId)
+        assertTrue(runCatching { tool.execute(edit.copy(id = "stale-metadata")) }.isFailure)
+        val inspection = WorkspaceTools.create(db).single { it.definition.name == "workspace_inspect" }
+        assertEquals("Presidential age chart", JSONObject(inspection.execute(call(session, turn, inspection.definition.name, "{}")).resultJson).getString("description"))
+        // A concurrent definition change also invalidates the inspected metadata revision.
+        val fresh = JSONObject(args.toString()).put("expected_description", "Presidential age chart").put("name", "New name")
+        val definition = db.loadLiveWorkspaceRevision(workspace.id)!!.definitionJson
+        db.replaceWorkspaceDefinition(workspace.id, workspace.liveRevisionId, definition, "USER", session.id, turn.id, "Concurrent change")
+        assertTrue(runCatching { tool.execute(edit.copy(id = "stale-revision", argumentsJson = fresh.toString())) }.isFailure)
+        assertEquals("GraphTest", db.loadComposableWorkspace(workspace.id)!!.name)
+    }
+
 }
