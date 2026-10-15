@@ -20,6 +20,21 @@ import kotlin.coroutines.resume
 @RunWith(AndroidJUnit4::class)
 class WorkspaceDeviceTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
+    @Test fun neonValeAuthoredBackgroundPaintsDark() = runBlocking {
+        val bundle = JSONObject(InstrumentationRegistry.getInstrumentation().context.assets.open("neon-vale-rendering.json").bufferedReader().use { it.readText() })
+        val principal = WorkspacePrincipal("test", "neon", "neon", UUID.randomUUID().toString(), 1, WorkspaceInstanceMode.PREVIEW)
+        surface(bundle, principal) { presentation ->
+            delay(600)
+            val styles = evaluate(presentation, "JSON.stringify({html:getComputedStyle(document.documentElement).background,body:getComputedStyle(document.body).background,bodyHeight:document.body.getBoundingClientRect().height,viewport:innerHeight})")
+            val location = IntArray(2)
+            withContext(Dispatchers.Main) { presentation.view.getLocationOnScreen(location) }
+            val screenshot = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+            try {
+                val color = screenshot.getPixel(location[0] + 5, location[1] + 10)
+                assertTrue("Background pixel="+Integer.toHexString(color)+" computed="+styles, android.graphics.Color.red(color)<80 && android.graphics.Color.green(color)<80 && android.graphics.Color.blue(color)<80)
+            } finally { screenshot.recycle() }
+        }
+    }
     @Test fun isolatedWorkerExecutesAndTerminatesRunawayModule() = runBlocking {
         val worker = WorkspaceWorkerSupervisor(context)
         val bundle = WorkspaceApplicationContract.example()
