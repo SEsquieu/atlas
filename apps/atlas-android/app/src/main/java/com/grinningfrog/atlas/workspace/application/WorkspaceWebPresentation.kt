@@ -200,7 +200,11 @@ class WorkspaceWebPresentation(
                 try {
                     android.view.PixelCopy.request(window,rect,bitmap,{ status ->
                         if (status==android.view.PixelCopy.SUCCESS && continuation.isActive) {
-                            continuation.resume(bitmap) { _, value, _ -> value.recycle() }
+                            val after=IntArray(2);view.getLocationInWindow(after)
+                            if (disposed || !view.isAttachedToWindow || !view.isShown || view.width!=bitmap.width || view.height!=bitmap.height || !after.contentEquals(location)) {
+                                bitmap.recycle()
+                                continuation.resumeWith(Result.failure(IllegalStateException("Workspace viewport moved during capture; retry")))
+                            } else continuation.resume(bitmap) { _, value, _ -> value.recycle() }
                         } else {
                             bitmap.recycle()
                             if (continuation.isActive) continuation.resumeWith(Result.failure(IllegalStateException("Workspace pixel copy failed: $status")))
