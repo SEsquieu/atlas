@@ -12,7 +12,10 @@ internal object ExecutionWorkState {
         val scoped = calls.filter { json(it.argumentsJson).optString("workspace_id") == target }
         val stages = scoped.filter { it.name == "workspace_package_stage" && it.status == ToolCallStatus.COMPLETED && json(it.resultJson).has("candidate_id") }
         val latest = stages.lastOrNull()
-        val candidate = latest?.let { json(it.resultJson) }
+        val candidate = latest?.let { call -> json(call.resultJson).apply {
+            val args = json(call.argumentsJson)
+            for (key in listOf("base_revision_id", "parent_candidate_id", "navigation_sequence")) if (args.has(key)) put(key, args.get(key))
+        } }
         val candidateId = candidate?.optString("candidate_id")
         val checks = scoped.filter { it.name in setOf("workspace_package_test", "workspace_package_ui_test") &&
             json(it.argumentsJson).optString("candidate_id") == candidateId && it.status == ToolCallStatus.COMPLETED }
