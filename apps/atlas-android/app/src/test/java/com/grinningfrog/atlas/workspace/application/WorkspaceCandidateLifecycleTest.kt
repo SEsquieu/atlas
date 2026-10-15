@@ -18,10 +18,11 @@ class WorkspaceCandidateLifecycleTest {
     private lateinit var db: AtlasDatabase
     @Before fun setup() { RuntimeEnvironment.getApplication().deleteDatabase("atlas.db"); db = AtlasDatabase(RuntimeEnvironment.getApplication()) }
     @After fun cleanup() { db.close() }
-    private fun candidate(): JSONObject {
+    private fun candidate(ble: Boolean = false): JSONObject {
         val session = db.createSession("Packages", "Test"); val turn = db.createTurn(session.id, "user")
         val workspace = db.createComposableWorkspace("App", "", realmId = session.workspaceId)
         val bundle = PackageFixture.bundle()
+        if (ble) bundle.getJSONObject("manifest").getJSONArray("capabilities").put(WorkspaceBleContract.descriptor().getJSONObject("manifest_example"))
         return WorkspacePackageRepository(db).stage(workspace.id, workspace.realmId, workspace.liveRevisionId, null,
             bundle.getJSONObject("manifest"), bundle.getJSONObject("files"), session.id, turn.id).put("realm_id", workspace.realmId)
     }
@@ -35,6 +36,16 @@ class WorkspaceCandidateLifecycleTest {
         WorkspaceCandidateChecks(db, runner).test(c.getString("workspace_id"), c.getString("realm_id"), c.getString("candidate_id"))
     private suspend fun activate(c: JSONObject, check: JSONObject, startup: suspend (JSONObject, WorkspacePrincipal) -> Boolean) =
         WorkspaceApplicationActivation(db).activate(c.getString("workspace_id"), c.getString("realm_id"), c.getString("candidate_id"), check.getString("check_id"), startup)
+    @Test fun bleDeclarationActivatesWithPreviewOnlyAndNoImplicitGrant() = runTest {
+        val c = candidate(ble = true)
+        val result = activate(c, checks(c)) { bundle, principal ->
+            assertEquals(WorkspaceInstanceMode.PREVIEW, principal.mode)
+            assertEquals(WorkspaceBleContract.operations, WorkspaceBleContract.requested(bundle.getJSONObject("manifest")))
+            assertFalse(WorkspaceHostRegistry.describe(principal).getBoolean("storage_authorized"))
+            true
+        }
+        assertTrue(result.getBoolean("activated"))
+    }
     @Test fun fixtureReceiptActivatesExactBytesAndSurvivesReopen() = runTest {
         val c = candidate(); val checked = checks(c)
         assertTrue(checked.toString(), checked.getBoolean("passed")); assertFalse(checked.getBoolean("activation_performed")); assertTrue(checked.getString("next_step").contains("workspace_package_activate"))

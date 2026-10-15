@@ -16,10 +16,10 @@ android {
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild { cmake { arguments += "-DANDROID_STL=c++_static" } }
-        versionCode = providers.environmentVariable("ATLAS_ANDROID_VERSION_CODE").orElse("21").get().toInt().also {
+        versionCode = providers.environmentVariable("ATLAS_ANDROID_VERSION_CODE").orElse("22").get().toInt().also {
             require(it in 1..2_100_000_000) { "ATLAS_ANDROID_VERSION_CODE is outside Android limits" }
         }
-        versionName = "0.1.0-alpha.20"
+        versionName = "0.1.0-alpha.21"
 
         manifestPlaceholders["atlasDevSuffix"] = ""
         vectorDrawables.useSupportLibrary = true
@@ -115,6 +115,7 @@ dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-service:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.compose.ui:ui")

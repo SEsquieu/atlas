@@ -115,3 +115,39 @@ The Android 15 emulator found that an initial blank child frame retained an ungu
 The message listener must match opaque origins; dispatch consequently requires Android's native main-frame flag, opaque origin `null`, the owning WebView's packaged-only navigation, and a current Core-bound principal/epoch. No subframe can dispatch even if it also has an opaque origin. The provider's source origin is not treated as a workspace identity. The device tests verify both denied parent access to child constructors and no TCP/UDP egress from a hostile srcdoc WebRTC probe. The worker instance name also uses Android's accepted alphanumeric/underscore form. These corrections were driven by failing device tests, not assumed from static inspection.
 
 Package assets may be fetched from the exact host-served virtual asset origin; this is not an outbound network adapter. CSP connect sources pin that origin, interception serves only packaged GET paths with no network fallback, and raw socket/transport APIs remain disabled. The device test checks a local packaged JSON fetch alongside the external TCP/UDP denial probes.
+
+## Alpha.21: foreground BLE host adapter
+
+`bluetooth.le` is the first installed device broker. It uses the existing main-frame transport, Core-bound workspace/revision/epoch principal, closed request validation and contained WebView. Browser Bluetooth remains disabled. Pure exports, fixture workers and activation previews have no device authority. Other device/network/background families remain unavailable.
+
+Declare only needed operations in `manifest.capabilities`:
+
+```json
+[{"name":"bluetooth.le","operations":["scan","connect","services","read","write","subscribe"],"resources":["user_selected_device"]}]
+```
+
+The resource means the one peripheral approved in Atlas's native selected-device dialog, not arbitrary nearby hardware. Activation permits supported declarations but creates no grant. Native scan consent precedes Android runtime permission. Connecting to a scanned device needs a separate native approval naming the device and requested operations. A denial blocks further prompts until the user presses **Enable requests** in the native access bar. The bar shows connection status and **Revoke**. Permissions granted to Atlas by Android never grant another workspace access.
+
+```js
+import {host,ble} from '/atlas/host.js';
+await host.ready(); // Before waiting for user hardware interaction; preview must still become ready.
+// Call these from UI controls, showing actual failures and reconnect state.
+const {devices}=await ble.scan();
+await ble.connect(devices[0].device_id); // Show a user device list; don't blindly choose the first result.
+const {services}=await ble.services();
+// Service/characteristic UUIDs identify the application protocol; opaque handles address this connection.
+const characteristic=services[0].characteristics.find(c=>c.readable);
+const {hex}=await ble.read(characteristic.characteristic_id);
+await ble.write(characteristic.characteristic_id,'0102'); // Only if writable and explicitly requested.
+await ble.subscribe(characteristic.characteristic_id,true); // Only if notifiable.
+const {events,dropped}=await ble.events(); // Drain notification queue; surface dropped samples.
+await ble.disconnect();
+```
+
+`ble.status()` reports adapter installation, Bluetooth enabled state, OS permissions, grant/request state and connection state. The host does not turn Bluetooth on. Android 12+ requests Nearby devices; older Android requests foreground fine location for scanning. `neverForLocation` can filter some beacon advertisements. Location is not derived from BLE results. Scan/permission failures must be displayed with an explicit retry action.
+
+BLE calls submit a per-instance operation and return immediately; the SDK polls `ble.operation` until completion. Receipts retain at most 32 operations. Polling never repeats a write. Read/write/subscribe/connect callbacks have a 12-second limit; the entire permission/operation flow has a 45-second limit. Unknown outcomes close the connection; writes are never automatically retried and users must inspect peripheral state before repeating them.
+
+One GATT connection per presentation; five-second scans; 64 discovered devices; at most 32 services/128 characteristics. No MAC address is exposed. Device and characteristic IDs cannot be supplied from another workspace or survive reopening. Writes use hexadecimal bytes, at most 20 bytes per acknowledged GATT write (no MTU negotiation or write-without-response in this slice). Read/notification payloads are bounded to 512 bytes and explicitly mark truncation. Notification queue holds 32 items and reports drops. No pairing automation, advertising, central background service or reconnect loop.
+
+Leaving the panel, backgrounding, revision replacement, archive/delete, permission loss, or native revocation closes scans/connections and fences delivery. Grants are ephemeral and never imported/exported. Native status is included in render diagnostics; source/fixture success is not evidence of a physical BLE transaction. Real peripheral and Samsung permission behavior require the phone test; emulator checks cover containment, transport and permission denial, while injected adapter tests cover grant and callback behavior.

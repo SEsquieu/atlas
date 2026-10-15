@@ -13,7 +13,7 @@ import java.io.ByteArrayInputStream
 import java.util.UUID
 import kotlinx.coroutines.*
 
-/** Substrate spike. No storage/device/network methods are installed and live activation is gated. */
+/** Contained package presentation with optional Core-bound storage and foreground device brokers. */
 class WorkspaceWebPresentation(
     context: Context,
     bundle: JSONObject,
@@ -22,6 +22,7 @@ class WorkspaceWebPresentation(
     private val onReady: () -> Unit,
     private val onFailure: (String) -> Unit,
     private val data: WorkspaceApplicationData? = null,
+    private val devices: WorkspaceDeviceBroker? = null,
 ) {
     private val files = JSONObject(bundle.getJSONObject("files").toString())
     private val policy = WorkspacePresentationPolicy(principal, bundle.getJSONObject("manifest").getString("entry"))
@@ -33,7 +34,7 @@ class WorkspaceWebPresentation(
     private val resources = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
     private val provider = WebViewCompat.getCurrentWebViewPackage(context)?.let { "${it.packageName}/${it.versionName}" } ?: "unknown"
     @Volatile private var ready = false
-    fun diagnostics(): JSONObject = JSONObject().put("webview_provider", provider).put("android_api", android.os.Build.VERSION.SDK_INT).put("native_canvas_fallback", "#010302").put("ready", ready).put("disposed", disposed).put("resources", org.json.JSONArray(synchronized(resources) { resources.map { JSONObject(it.toString()) } })).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } }))
+    fun diagnostics(): JSONObject = JSONObject().put("webview_provider", provider).put("android_api", android.os.Build.VERSION.SDK_INT).put("native_canvas_fallback", "#010302").put("devices", devices?.status() ?: JSONObject.NULL).put("ready", ready).put("disposed", disposed).put("resources", org.json.JSONArray(synchronized(resources) { resources.map { JSONObject(it.toString()) } })).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } }))
     val view: WebView
 
     init {
@@ -138,9 +139,14 @@ class WorkspaceWebPresentation(
             val response = runCatching {
                 val request = WorkspaceHostProtocol.request(raw); requestId = request.getString("request_id")
                 val method = request.getString("method")
-                val result = withContext(Dispatchers.IO) {
+                val params = request.getJSONObject("params")
+                val result = if (method.startsWith("ble.")) {
                     require(!disposed && current()) { "REVISION_CONFLICT" }
-                    WorkspaceHostRegistry.dispatch(principal, method, request.getJSONObject("params"), data)
+                    require(principal.mode == WorkspaceInstanceMode.FOREGROUND) { "EXECUTION_MODE_DENIED" }
+                    requireNotNull(devices) { "UNSUPPORTED_CAPABILITY" }.dispatch(method, params)
+                } else withContext(Dispatchers.IO) {
+                    require(!disposed && current()) { "REVISION_CONFLICT" }
+                    WorkspaceHostRegistry.dispatch(principal, method, params, data).also { if (method == "host.describe" || method == "host.ready") it.put("ble_authorized", devices != null).put("ble", WorkspaceBleContract.descriptor()) }
                 }
                 if (method == "host.ready" && !disposed && current()) { ready = true; onReady() }
                 val response = WorkspaceHostProtocol.response(requestId, "succeeded", operation, result)
@@ -149,7 +155,7 @@ class WorkspaceWebPresentation(
             }.getOrElse {
                 if (it is CancellationException) throw it
                 val known = setOf("REVISION_CONFLICT", "DATA_CONFLICT", "TARGET_CONFLICT", "OPERATION_CONFLICT", "OPERATION_UNAVAILABLE", "QUOTA_EXCEEDED", "RECEIPT_QUOTA_EXCEEDED", "UNSUPPORTED_CAPABILITY", "EXECUTION_MODE_DENIED", "FORMAT_TOOL_MISMATCH")
-                val code = it.message?.takeIf { message -> message in known } ?: "VALIDATION_FAILED"
+                val code = it.message?.takeIf { message -> message in known || message in WorkspaceBleContract.errors } ?: "VALIDATION_FAILED"
                 WorkspaceHostProtocol.failure(requestId, operation, code, code, if (code == "DATA_CONFLICT") "inspect_and_retry" else "never")
             }
             if (!disposed && current()) reply.postMessage(response.toString())
@@ -224,6 +230,7 @@ class WorkspaceWebPresentation(
         if (disposed) return
         disposed = true
         bridgeScope.cancel()
+        devices?.close()
         view.stopLoading()
         (view.parent as? android.view.ViewGroup)?.removeView(view)
         WebStorage.getInstance().deleteOrigin(policy.origin)

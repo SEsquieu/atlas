@@ -39,36 +39,39 @@ internal fun WorkspaceApplicationPanel(workspace: ComposableWorkspace, revision:
             failure = message
         }
         val principal = remember { WorkspacePrincipal(workspace.realmId, workspace.id, revision.id, UUID.randomUUID().toString(), epoch, WorkspaceInstanceMode.FOREGROUND) }
-        val presentation = remember {
-            runCatching {
-                WorkspaceWebPresentation(context, JSONObject(revision.definitionJson), principal,
-                    current = { runCatching { data.fence(principal); true }.getOrDefault(false) },
-                    onReady = { ready = true }, onFailure = { failed(it) }, data = data)
-            }.onFailure { failed(it.message ?: "Application could not start") }.getOrNull()
-        }
-        if (presentation != null) {
-            DisposableEffect(presentation) {
-                val token = Any()
-                com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.register(token, workspace.id, revision.id, inspect = { presentation.inspectLayout() }) {
-                    presentation.captureVisiblePixels()
-                }
-                val listener = android.view.ViewTreeObserver.OnDrawListener {
-                    com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.drawn(token, JSONObject().put("format", WorkspaceApplicationContract.FORMAT).put("revision_id", revision.id).put("runtime", presentation.diagnostics()).put("drawn_at_ms", System.currentTimeMillis()))
-                }
-                presentation.view.viewTreeObserver.addOnDrawListener(listener)
-                onDispose {
-                    com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.unregister(token)
-                    if (presentation.view.viewTreeObserver.isAlive) presentation.view.viewTreeObserver.removeOnDrawListener(listener)
-                    presentation.dispose()
-                }
+        val bundle = remember(revision.id) { JSONObject(revision.definitionJson) }
+        WorkspaceDeviceHost(principal, bundle, current = { runCatching { data.fence(principal); true }.getOrDefault(false) }, modifier = modifier) { devices, viewportModifier ->
+            val presentation = remember {
+                runCatching {
+                    WorkspaceWebPresentation(context, JSONObject(revision.definitionJson), principal,
+                        current = { runCatching { data.fence(principal); true }.getOrDefault(false) },
+                        onReady = { ready = true }, onFailure = { failed(it) }, data = data, devices = devices)
+                }.onFailure { failed(it.message ?: "Application could not start") }.getOrNull()
             }
-            LaunchedEffect(presentation) { delay(10_000); if (!ready) failed("Application did not signal readiness. Records are preserved.") }
-            AndroidView(factory = {
-                android.widget.FrameLayout(context).apply {
-                    addView(presentation.view, android.widget.FrameLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT))
-                    presentation.view.doOnAttach { view -> view.doOnLayout { presentation.loadAttached() } }
+            if (presentation != null) {
+                DisposableEffect(presentation) {
+                    val token = Any()
+                    com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.register(token, workspace.id, revision.id, inspect = { presentation.inspectLayout() }) {
+                        presentation.captureVisiblePixels()
+                    }
+                    val listener = android.view.ViewTreeObserver.OnDrawListener {
+                        com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.drawn(token, JSONObject().put("format", WorkspaceApplicationContract.FORMAT).put("revision_id", revision.id).put("runtime", presentation.diagnostics()).put("drawn_at_ms", System.currentTimeMillis()))
+                    }
+                    presentation.view.viewTreeObserver.addOnDrawListener(listener)
+                    onDispose {
+                        com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.unregister(token)
+                        if (presentation.view.viewTreeObserver.isAlive) presentation.view.viewTreeObserver.removeOnDrawListener(listener)
+                        presentation.dispose()
+                    }
                 }
-            }, modifier = modifier)
+                LaunchedEffect(presentation) { delay(10_000); if (!ready) failed("Application did not signal readiness. Records are preserved.") }
+                AndroidView(factory = {
+                    android.widget.FrameLayout(context).apply {
+                        addView(presentation.view, android.widget.FrameLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT))
+                        presentation.view.doOnAttach { view -> view.doOnLayout { presentation.loadAttached() } }
+                    }
+                }, modifier = viewportModifier)
+            }
         }
     }
 }

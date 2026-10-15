@@ -153,14 +153,14 @@ class WorkspaceDeviceTest {
     private suspend fun evaluate(p: WorkspaceWebPresentation, script: String): String = withContext(Dispatchers.Main) {
         suspendCancellableCoroutine { continuation -> p.view.evaluateJavascript(script) { if (continuation.isActive) continuation.resume(it) } }
     }
-    private suspend fun surface(bundle: JSONObject, principal: WorkspacePrincipal, store: WorkspaceApplicationData? = null,
+    private suspend fun surface(bundle: JSONObject, principal: WorkspacePrincipal, store: WorkspaceApplicationData? = null, devices: WorkspaceDeviceBroker? = null,
         check: suspend (WorkspaceWebPresentation) -> Unit) {
         val ready = CompletableDeferred<Unit>()
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         var presentation: WorkspaceWebPresentation? = null
         try {
             scenario.onActivity { activity ->
-                presentation = WorkspaceWebPresentation(activity, bundle, principal, { true }, { ready.complete(Unit) }, { ready.completeExceptionally(IllegalStateException(it)) }, store)
+                presentation = WorkspaceWebPresentation(activity, bundle, principal, { true }, { ready.complete(Unit) }, { ready.completeExceptionally(IllegalStateException(it)) }, store, devices)
                 val container = android.widget.FrameLayout(activity).apply {
                     addView(presentation!!.view, android.widget.FrameLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT))
                 }
@@ -197,6 +197,7 @@ class WorkspaceDeviceTest {
                 const image=new Image();image.src=target;document.body.append(image);
                 const script=document.createElement('script');script.src=target;document.head.append(script);
                 const unsupported=await host.request('device.ble.connect',{device:'forged'});if(unsupported.status!=='failed')issues.push('device bridge');
+                const bleDenied=await host.request('ble.scan',{});if(bleDenied.error?.code!=='EXECUTION_MODE_DENIED')issues.push('preview BLE');
                 const storage=await host.request('data.query',{collection:'notes'});if(storage.status!=='failed')issues.push('preview storage');
                 document.body.dataset.results=JSON.stringify(issues);await host.ready();
             """.trimIndent())
@@ -213,6 +214,86 @@ class WorkspaceDeviceTest {
             }
         } finally { server.close(); udp.close(); thread.join(1000); udpThread.join(1000) }
     }
+    @Test fun bleSdkUsesRealTransportAndOperationPollingWithInjectedRadio() = runBlocking {
+        val calls = mutableListOf<String>()
+        val radio = object : WorkspaceBleAdapter {
+            override fun permitted() = true
+            override fun status() = JSONObject().put("installed", true)
+            override suspend fun scan(): JSONArray { delay(30); calls.add("scan"); return JSONArray().put(JSONObject().put("device_id", "seen")) }
+            override fun deviceLabel(id: String) = "Bench fixture"
+            override suspend fun connect(id: String): JSONObject { calls.add("connect"); return JSONObject().put("connected", true) }
+            override fun services() = JSONArray().put(JSONObject().put("uuid", "test-service").put("characteristics", JSONArray().put(JSONObject().put("characteristic_id", "char"))))
+            override suspend fun read(id: String): JSONObject { calls.add("read"); return JSONObject().put("hex", "1234") }
+            override suspend fun write(id: String, hex: String): JSONObject { calls.add("write:"+hex); return JSONObject().put("acknowledged", true) }
+            override suspend fun subscribe(id: String, enabled: Boolean): JSONObject { calls.add("subscribe"); return JSONObject().put("enabled", enabled) }
+            override fun events() = JSONObject().put("events", JSONArray().put(JSONObject().put("hex", "5678"))).put("dropped", 0)
+            override fun close() { calls.add("close") }
+        }
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
+        val principal=WorkspacePrincipal("test","ble","ble",UUID.randomUUID().toString(),1,WorkspaceInstanceMode.FOREGROUND)
+        val broker=WorkspaceDeviceBroker(principal,WorkspaceBleContract.operations,{true},radio,{true},{true},scope)
+        val bundle=WorkspaceApplicationContract.example()
+        bundle.getJSONObject("files").put("ui/app.js", """
+            import {host,ble} from '/atlas/host.js';
+            const {devices}=await ble.scan(); await ble.connect(devices[0].device_id);
+            const {services}=await ble.services();const id=services[0].characteristics[0].characteristic_id;
+            const reading=await ble.read(id);await ble.write(id,'0102');await ble.subscribe(id,true);
+            const events=await ble.events();
+            document.body.dataset.results=JSON.stringify({reading,events});await host.ready();
+        """.trimIndent())
+        try {
+            surface(bundle,principal,devices=broker) { presentation ->
+                val raw=evaluate(presentation,"document.body.dataset.results")
+                val result=JSONObject(JSONArray("[$raw]").getString(0))
+                assertEquals("1234",result.getJSONObject("reading").getString("hex"))
+                assertEquals("5678",result.getJSONObject("events").getJSONArray("events").getJSONObject(0).getString("hex"))
+                assertEquals(listOf("scan","connect","read","write:0102","subscribe"),calls)
+            }
+        } finally { withContext(Dispatchers.Main) { broker.close() };scope.cancel() }
+    }
+    @Test fun nativeBleDenialBlocksPageRequestsUntilNativeReenabled() = runBlocking {
+        val db=(context.applicationContext as AtlasApplication).database
+        val bundle=WorkspaceApplicationContract.example()
+        bundle.getJSONObject("manifest").getJSONArray("capabilities").put(WorkspaceBleContract.descriptor().getJSONObject("manifest_example"))
+        bundle.getJSONObject("files").put("ui/app.js", """
+            import {host,ble} from '/atlas/host.js';
+            globalThis.tryBle=async()=>{try{await ble.scan();document.body.dataset.ble='unexpected-success'}catch(error){document.body.dataset.ble=error.code}};
+            await host.ready();
+        """.trimIndent())
+        val workspace=db.createComposableWorkspace("BLE native denial","",bundle.toString())
+        val revision=db.loadLiveWorkspaceRevision(workspace.id)!!
+        WorkspaceApplicationData(db).setEnabled(workspace.id,revision.id,true)
+        val scenario=ActivityScenario.launch(MainActivity::class.java)
+        var web: android.webkit.WebView?=null
+        suspend fun evaluatePage(script:String):String=withContext(Dispatchers.Main) { suspendCancellableCoroutine { c -> web!!.evaluateJavascript(script) { if(c.isActive)c.resume(it) } } }
+        try {
+            scenario.onActivity { activity -> activity.setContent { MaterialThemeForTest { WorkspaceApplicationPanel(workspace,revision,db,Modifier.fillMaxSize()) } } }
+            withTimeout(15_000) { while(com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(workspace.id,revision.id)?.optJSONObject("runtime")?.optBoolean("ready")!=true)delay(100) }
+            scenario.onActivity { activity ->
+                fun find(view:android.view.View):android.webkit.WebView? { if(view is android.webkit.WebView)return view;if(view is android.view.ViewGroup)for(i in 0 until view.childCount)find(view.getChildAt(i))?.let{return it};return null }
+                web=find(activity.findViewById(android.R.id.content))
+            }
+            evaluatePage("tryBle();void 0")
+            val automation=InstrumentationRegistry.getInstrumentation().uiAutomation
+            withTimeout(8_000) {
+                var clicked=false
+                while(!clicked) {
+                    val root=automation.rootInActiveWindow
+                    val matches=root?.findAccessibilityNodeInfosByText("Deny").orEmpty()
+                    for(match in matches) {
+                        var node:android.view.accessibility.AccessibilityNodeInfo?=match
+                        repeat(4) { if(node?.isClickable==true)clicked=node!!.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK) || clicked else node=node?.parent }
+                    }
+                    if(!clicked)delay(100)
+                }
+            }
+            withTimeout(8_000) { while(evaluatePage("document.body.dataset.ble")!="\"WORKSPACE_GRANT_REQUIRED\"")delay(100) }
+            evaluatePage("document.body.dataset.ble='';tryBle();void 0")
+            withTimeout(8_000) { while(evaluatePage("document.body.dataset.ble")!="\"WORKSPACE_GRANT_REQUIRED\"")delay(100) }
+            assertFalse(com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(workspace.id,revision.id)!!.getJSONObject("runtime").getJSONObject("devices").getBoolean("requests_enabled"))
+        } finally { scenario.close();db.deleteComposableWorkspace(workspace.id) }
+    }
+    @androidx.compose.runtime.Composable private fun MaterialThemeForTest(content:@androidx.compose.runtime.Composable ()->Unit) { androidx.compose.material3.MaterialTheme(content=content) }
     @Test fun realStorageBridgeRejectsForgedScopeAndPersistsExactlyOneRecord() = runBlocking {
         val db = (context.applicationContext as AtlasApplication).database
         val bundle = WorkspaceApplicationContract.example()
