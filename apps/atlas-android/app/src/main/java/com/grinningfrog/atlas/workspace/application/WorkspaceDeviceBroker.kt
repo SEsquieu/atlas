@@ -18,6 +18,7 @@ class WorkspaceDeviceBroker internal constructor(
     internal constructor(principal: WorkspacePrincipal, requested: Set<String>, current: () -> Boolean, adapter: WorkspaceBleAdapter,
         consent: suspend (String)->Boolean, permission: suspend ()->Boolean, scope: CoroutineScope, changed: ()->Unit = {}, audit: (JSONObject)->Unit = {}) :
         this(principal,listOf(WorkspaceBleCapability(requested,adapter)),current,consent,{permission()},scope,changed,audit)
+    val errorCodes: Set<String> get() = adapters.flatMap{it.errors+setOf(it.busyCode,it.failureCode,it.timeoutCode)}.toSet()
     val capabilityNames: Set<String> get() = adapters.map { it.name }.toSet()
     private val grants=WorkspaceCapabilityGrants()
     private var generation=0L
@@ -71,7 +72,13 @@ class WorkspaceDeviceBroker internal constructor(
     private fun summary(receipt: JSONObject) = JSONObject().put("operation_id",receipt.getString("operation_id")).put("method",receipt.getString("method"))
         .put("status",receipt.getString("status")).put("started_at_ms",receipt.getLong("started_at_ms"))
         .put("finished_at_ms",receipt.opt("finished_at_ms") ?: JSONObject.NULL).put("error_code",receipt.optJSONObject("error")?.optString("code") ?: JSONObject.NULL)
-    fun dispatch(method: String, params: JSONObject): JSONObject {
+    fun dispatch(method: String, params: JSONObject): JSONObject = try { dispatchChecked(method,params) } catch(failure: Exception) {
+        val adapter=adapters.singleOrNull{method.startsWith(it.namespace+".")}
+        val code=failure.message?.takeIf{it in (adapter?.let{it.errors+setOf(it.busyCode,it.failureCode,it.timeoutCode)} ?: emptySet())} ?: "VALIDATION_FAILED"
+        event("request_rejected",adapter,JSONObject().put("method",method.take(64)).put("code",code))
+        throw failure
+    }
+    private fun dispatchChecked(method: String, params: JSONObject): JSONObject {
         refreshAuthority(); fence()
         val adapter=adapters.singleOrNull { method.startsWith(it.namespace+".") } ?: error("UNSUPPORTED_CAPABILITY")
         require(adapter.requested.isNotEmpty()) { "UNSUPPORTED_CAPABILITY" }

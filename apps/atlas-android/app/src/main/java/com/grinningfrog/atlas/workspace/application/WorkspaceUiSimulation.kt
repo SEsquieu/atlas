@@ -47,7 +47,7 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
         val base=candidate.getString("base_revision_id");val hash=candidate.getString("content_hash");val version=WorkspaceApplicationData(database).version(workspaceId)
         val bundle=candidate.getJSONObject("bundle")
         val requested=WorkspaceCapabilityRegistry.requested(bundle.getJSONObject("manifest"))[WorkspaceBleContract.CAPABILITY].orEmpty()
-        val reports=JSONArray();val radio=Radio()
+        val reports=JSONArray();val radio=Radio();var runtimeEvidence:JSONObject?=null
         withContext(Dispatchers.Main.immediate) {
             val ready=CompletableDeferred<Unit>();val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
             val principal=WorkspacePrincipal(realmId,workspaceId,"simulation-$candidateId",UUID.randomUUID().toString(),0,WorkspaceInstanceMode.TEST)
@@ -65,19 +65,19 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
                     if(action=="wait_text") { val end=android.os.SystemClock.elapsedRealtime()+3_000;while(outcome!="\"ok\"" && android.os.SystemClock.elapsedRealtime()<end) { delay(100);outcome=evaluate(script) } }
                     val passed=outcome=="\"ok\""
                     reports.put(JSONObject().put("index",i).put("action",action).put("selector",step.getString("selector")).put("passed",passed).put("outcome",outcome.take(100)))
-                    if(!passed)break
+                    if(!passed) { reports.getJSONObject(reports.length()-1).put("actual_text",evaluate("(()=>document.querySelector($selector)?.textContent?.slice(0,500)||'')()"));break }
                     // Let asynchronous UI handlers dispatch their host requests before the next assertion/action.
                     delay(300)
                 }
                 if(requested.contains("subscribe")) { val end=android.os.SystemClock.elapsedRealtime()+2_000;while((radio.calls["events"] ?: 0)==0 && (radio.calls["subscribe"] ?: 0)>0 && android.os.SystemClock.elapsedRealtime()<end)delay(100) }
-            } finally { presentation?.dispose();broker?.close();scope.cancel() }
+            } finally { runtimeEvidence=presentation?.diagnostics();presentation?.dispose();broker?.close();scope.cancel() }
         }
         val required=requested+if("subscribe" in requested)setOf("events") else emptySet()
         val missing=required.filter { (radio.calls[it] ?: 0)==0 }
         val passed=reports.length()==steps.length() && (0 until reports.length()).all { reports.getJSONObject(it).getBoolean("passed") } && missing.isEmpty()
         val id=UUID.randomUUID().toString()
         val result=JSONObject().put("check_id",id).put("candidate_id",candidateId).put("content_hash",hash).put("base_revision_id",base).put("data_version",version)
-            .put("kind","ui_simulation").put("passed",passed).put("steps",reports).put("operation_counts",JSONObject(radio.calls as Map<*,*>)).put("missing_operations",JSONArray(missing))
+            .put("runtime",runtimeEvidence ?: JSONObject.NULL).put("kind","ui_simulation").put("passed",passed).put("steps",reports).put("operation_counts",JSONObject(radio.calls as Map<*,*>)).put("missing_operations",JSONArray(missing))
             .put("evidence_scope","DOM controls and simulated BLE responses only. No physical device, Android/native consent dialog, painted pixels, or saved records were verified.")
         currentCoroutineContext().ensureActive()
         WorkspaceApplicationData(database).atomic {

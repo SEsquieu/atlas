@@ -34,7 +34,7 @@ class WorkspaceWebPresentation(
     private val resources = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
     private val provider = WebViewCompat.getCurrentWebViewPackage(context)?.let { "${it.packageName}/${it.versionName}" } ?: "unknown"
     @Volatile private var ready = false
-    fun diagnostics(): JSONObject = JSONObject().put("webview_provider", provider).put("android_api", android.os.Build.VERSION.SDK_INT).put("native_canvas_fallback", "#010302").put("devices", devices?.status() ?: JSONObject.NULL).put("ready", ready).put("disposed", disposed).put("resources", org.json.JSONArray(synchronized(resources) { resources.map { JSONObject(it.toString()) } })).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } }))
+    fun diagnostics(): JSONObject = JSONObject().put("instance_mode",principal.mode.name.lowercase()).put("simulation",devices?.isSimulation==true).put("webview_provider", provider).put("android_api", android.os.Build.VERSION.SDK_INT).put("native_canvas_fallback", "#010302").put("devices", devices?.status() ?: JSONObject.NULL).put("ready", ready).put("disposed", disposed).put("resources", org.json.JSONArray(synchronized(resources) { resources.map { JSONObject(it.toString()) } })).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } }))
     val view: WebView
 
     init {
@@ -146,7 +146,7 @@ class WorkspaceWebPresentation(
                     requireNotNull(devices) { "UNSUPPORTED_CAPABILITY" }.dispatch(method, params)
                 } else withContext(Dispatchers.IO) {
                     require(!disposed && current()) { "REVISION_CONFLICT" }
-                    WorkspaceHostRegistry.dispatch(principal, method, params, data, capabilityBindings = devices?.capabilityNames.orEmpty()).also { if(devices?.isSimulation==true && method in setOf("host.describe","host.ready")) it.put("ble_available",true).put("simulation",true).put("storage_authorized",false) }
+                    WorkspaceHostRegistry.dispatch(principal, method, params, data, capabilityBindings = devices?.capabilityNames.orEmpty()).also { if(devices?.isSimulation==true && method in setOf("host.describe","host.ready")) it.put("ble_available",true).put("simulation",true).put("storage_authorized",false).apply { val methods=WorkspaceCapabilityRegistry.methods(devices.capabilityNames);for(name in methods.keys())getJSONObject("methods").put(name,methods.getJSONObject(name)) } }
                 }
                 if (method == "host.ready" && !disposed && current()) { ready = true; onReady() }
                 val response = WorkspaceHostProtocol.response(requestId, "succeeded", operation, result)
@@ -155,7 +155,7 @@ class WorkspaceWebPresentation(
             }.getOrElse {
                 if (it is CancellationException) throw it
                 val known = setOf("REVISION_CONFLICT", "DATA_CONFLICT", "TARGET_CONFLICT", "OPERATION_CONFLICT", "OPERATION_UNAVAILABLE", "QUOTA_EXCEEDED", "RECEIPT_QUOTA_EXCEEDED", "UNSUPPORTED_CAPABILITY", "EXECUTION_MODE_DENIED", "FORMAT_TOOL_MISMATCH")
-                val code = it.message?.takeIf { message -> message in known || message in WorkspaceBleContract.errors } ?: "VALIDATION_FAILED"
+                val code = it.message?.takeIf { message -> message in known || message in WorkspaceBleContract.errors || message in devices?.errorCodes.orEmpty() } ?: "VALIDATION_FAILED"
                 WorkspaceHostProtocol.failure(requestId, operation, code, code, if (code == "DATA_CONFLICT") "inspect_and_retry" else "never")
             }
             if (!disposed && current()) reply.postMessage(response.toString())
