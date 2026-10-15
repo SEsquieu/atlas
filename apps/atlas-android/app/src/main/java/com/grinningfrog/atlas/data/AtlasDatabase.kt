@@ -305,6 +305,14 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         )""".trimIndent())
     }
 
+    /** Acquire the Java monitor before SQLite's writer, consistently across all stores.
+     * Blocks must be synchronous; never suspend or wait for UI work inside a transaction. */
+    fun <T> writeTransaction(block: SQLiteDatabase.() -> T): T = synchronized(this) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try { val result = db.block(); db.setTransactionSuccessful(); result } finally { db.endTransaction() }
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         createOwnershipTables(db)
         db.execSQL(
@@ -482,11 +490,11 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     @Synchronized
-    fun importArchive(preview: ArchivePreview): ArchiveImportResult = writableDatabase.transaction {
+    fun importArchive(preview: ArchivePreview): ArchiveImportResult = writeTransaction {
         val archive = ArchiveCodec.preview(preview.root)
         val existing = rawQuery("SELECT destination_id FROM archive_imports WHERE kind=? AND source_id=? AND digest=?", arrayOf(archive.kind, archive.sourceId, archive.digest)).use { if (it.moveToFirst()) it.getString(0) else null }
         if (existing != null && (if (archive.kind == "workspace") loadComposableWorkspace(existing) != null else loadSession(existing) != null)) {
-            return@transaction ArchiveImportResult(archive.kind, existing, true, archive.warnings)
+            return@writeTransaction ArchiveImportResult(archive.kind, existing, true, archive.warnings)
         }
         val root = archive.root
         val now = System.currentTimeMillis()
@@ -640,7 +648,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     @Synchronized
     fun saveClarification(clarification: PendingClarification) {
-        writableDatabase.transaction {
+        writeTransaction {
             val supersededIds = mutableListOf<String>()
             rawQuery("SELECT clarification_id FROM clarifications WHERE session_id = ? AND status IN ('WAITING','DEFERRED')", arrayOf(clarification.sessionId)).use { cursor ->
                 while (cursor.moveToNext()) supersededIds += cursor.getString(0)
@@ -676,7 +684,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         normalizedAnswer: String? = null,
         nowMs: Long = System.currentTimeMillis(),
     ) {
-        writableDatabase.transaction {
+        writeTransaction {
             val identity = rawQuery("SELECT session_id,deferred_count FROM clarifications WHERE clarification_id = ?", arrayOf(clarificationId)).use { cursor ->
                 if (!cursor.moveToFirst()) null else cursor.getString(0) to cursor.getInt(1)
             } ?: error("Unknown clarification $clarificationId")
@@ -722,7 +730,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             workspaceId = workspaceId, actorId = actorId, siteId = siteId,
             stationId = stationId, taskRunId = taskRunId,
         )
-        writableDatabase.transaction {
+        writeTransaction {
             insertOrThrow("sessions", null, ContentValues().apply {
                 put("session_id", session.id); put("name", name); put("goal", goal)
                 put("workspace_id", workspaceId); put("actor_id", actorId); put("site_id", siteId)
@@ -739,7 +747,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     @Synchronized
     fun updateSessionStatus(sessionId: String, status: SessionStatus, nowMs: Long = System.currentTimeMillis()) {
-        writableDatabase.transaction {
+        writeTransaction {
             update("sessions", ContentValues().apply { put("status", status.name); put("updated_at", nowMs) }, "session_id = ?", arrayOf(sessionId))
             appendEventLocked(this, sessionId, "session.${status.name.lowercase()}", nowMs, "{}")
         }
@@ -747,7 +755,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     @Synchronized
     fun updateContextMode(sessionId: String, mode: ContextMode, nowMs: Long = System.currentTimeMillis()) {
-        writableDatabase.transaction {
+        writeTransaction {
             update("sessions", ContentValues().apply { put("context_mode", mode.name); put("updated_at", nowMs) }, "session_id = ?", arrayOf(sessionId))
             appendEventLocked(this, sessionId, "context.${mode.name.lowercase()}", nowMs, JSONObject().put("mode", mode.name).toString())
         }
@@ -788,7 +796,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     @Synchronized
-    fun activateComposableWorkspace(sessionId: String, workspaceId: String?, nowMs: Long = System.currentTimeMillis()): Long = writableDatabase.transaction {
+    fun activateComposableWorkspace(sessionId: String, workspaceId: String?, nowMs: Long = System.currentTimeMillis()): Long = writeTransaction {
         if (workspaceId != null) {
             check(rawQuery("SELECT 1 FROM composable_workspaces c JOIN sessions s ON s.session_id = ? WHERE c.composable_workspace_id = ? AND c.realm_id = s.workspace_id AND c.status = 'ACTIVE'", arrayOf(sessionId, workspaceId)).use { it.moveToFirst() }) {
                 "Workspace is unavailable to this session"
@@ -829,7 +837,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         val workspaceId = UUID.randomUUID().toString()
         val revisionId = UUID.randomUUID().toString()
         val workspace = ComposableWorkspace(workspaceId, realmId, name.trim().take(120), description.trim().take(1_000), WorkspaceStatus.ACTIVE, revisionId, nowMs, nowMs)
-        writableDatabase.transaction {
+        writeTransaction {
             insertOrThrow("composable_workspaces", null, ContentValues().apply {
                 put("composable_workspace_id", workspaceId); put("realm_id", realmId); put("name", workspace.name)
                 put("description", workspace.description); put("status", workspace.status.name); put("live_revision_id", revisionId)
@@ -894,7 +902,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         val recordMigration = if (definition.optString("format") == WorkspaceRuntimeV2.FORMAT) workspaceRecordMigration(workspaceId, definition) else null
         val revisionId = UUID.randomUUID().toString()
         val revision = WorkspaceRevision(revisionId, workspaceId, baseRevisionId, definitionJson, sha256(definitionJson), authorType, sourceSessionId, sourceTurnId, purpose.take(500), nowMs)
-        writableDatabase.transaction {
+        writeTransaction {
             val changed = update("composable_workspaces", ContentValues().apply { put("live_revision_id", revisionId); put("updated_at", nowMs) },
                 "composable_workspace_id = ? AND live_revision_id = ? AND status = 'ACTIVE'", arrayOf(workspaceId, baseRevisionId))
             check(changed == 1) { "Workspace revision changed; inspect it again before applying this update" }
@@ -923,7 +931,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         require(name != null || description != null) { "Supply a name or description" }
         require(name == null || (name.isNotBlank() && name.length <= 120)) { "Name must be 1..120 characters" }
         require(description == null || description.length <= 1000) { "Description must be at most 1000 characters" }
-        writableDatabase.transaction {
+        writeTransaction {
             val changed = update("composable_workspaces", ContentValues().apply {
                 name?.let { put("name", it.trim()) }; description?.let { put("description", it.trim()) }; put("updated_at", nowMs)
             }, "composable_workspace_id = ? AND live_revision_id = ? AND name = ? AND description = ? AND status = 'ACTIVE'",
@@ -1031,7 +1039,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     private fun persistWorkspaceExecution(workspaceId: String, result: WorkspaceExecutionResult, nowMs: Long, source: String, actionId: String): List<String> {
         val undoTokens = mutableListOf<String>()
-        writableDatabase.transaction {
+        writeTransaction {
             result.mutations.filterIsInstance<WorkspaceMutation.InsertRecord>().groupingBy { it.collection }.eachCount().forEach { (collection, additions) ->
                 val existing = rawQuery("SELECT COUNT(*) FROM workspace_records WHERE composable_workspace_id = ? AND collection_name = ?", arrayOf(workspaceId, collection)).use { cursor ->
                     cursor.moveToFirst(); cursor.getInt(0)
@@ -1126,7 +1134,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         val result = WorkspaceRuntimeV2.executeRecordStep(definition, loadWorkspaceRuntimeState(workspaceId, definition), workspaceExecutionRecords(workspaceId, definition),
             JSONObject().put("type", "insert").put("collection", row.collection).put("data", data))
         val restored = result.copy(mutations = result.mutations.map { if (it is WorkspaceMutation.InsertRecord) it.copy(recordId = row.id, createdAtMs = row.createdAtMs) else it })
-        writableDatabase.transaction {
+        writeTransaction {
             persistWorkspaceExecution(workspaceId, restored, nowMs, source, "restore_record")
             check(delete("workspace_record_undo", "composable_workspace_id = ? AND undo_token = ?", arrayOf(workspaceId, undoToken)) == 1)
         }
@@ -1155,7 +1163,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         return listWorkspaceRecords(workspaceId, limit = 5000, archiveOrder = true)
     }
 
-    fun exportComposableWorkspace(workspaceId: String): JSONObject = writableDatabase.transaction {
+    fun exportComposableWorkspace(workspaceId: String): JSONObject = writeTransaction {
         val workspace = loadComposableWorkspace(workspaceId) ?: error("Unknown workspace")
         val revision = loadLiveWorkspaceRevision(workspaceId) ?: error("Workspace revision is unavailable")
         JSONObject().apply {
@@ -1180,7 +1188,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     @Synchronized
     fun deleteComposableWorkspace(workspaceId: String) {
         val workspace = loadComposableWorkspace(workspaceId) ?: error("Unknown workspace")
-        writableDatabase.transaction {
+        writeTransaction {
             execSQL("UPDATE sessions SET active_composable_workspace_id=NULL, workspace_navigation_sequence=workspace_navigation_sequence+1 WHERE active_composable_workspace_id=?", arrayOf(workspaceId))
             delete("archive_imports", "kind='workspace' AND destination_id=?", arrayOf(workspaceId))
             for (table in listOf("workspace_device_audit", "workspace_application_activations", "workspace_application_operations", "workspace_application_checks", "workspace_application_lifecycle")) delete(table, "workspace_id=?", arrayOf(workspaceId))
@@ -1209,7 +1217,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 it.moveToFirst(); it.getInt(0)
             })
             if (definition.optString("format") == WorkspaceRuntimeV2.FORMAT) put("runtimeState", loadWorkspaceRuntimeState(id, definition))
-            put("editingHint", if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(definition)) "Inspect workspace_package_inspect and workspace_package_read_file before staging a complete revision. Get task target/navigation token with workspace_target." else "Historical native workspace. Preserve its records. New apps use workspace_package_create; converting a nonempty legacy workspace requires an explicit migration.")
+            put("editingHint", if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(definition)) "Inspect workspace_package_inspect and workspace_package_read_file before staging a complete revision. Get task target/navigation token with workspace_target." else if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.isEmptyDraft(definition) && listWorkspaceRecords(id, limit = 1).isEmpty()) "Empty package draft. Stage manifest and files in this workspace; creating another workspace is unnecessary." else "Historical native workspace. Preserve its records; conversion requires inspecting migration requirements.")
         }.toString()
     }
 
@@ -1243,7 +1251,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     /** Complete, portable state bundle for an explicit user export. Secrets are never stored here. */
-    fun exportSession(sessionId: String): JSONObject = writableDatabase.transaction { JSONObject().apply {
+    fun exportSession(sessionId: String): JSONObject = writeTransaction { JSONObject().apply {
         requireNotNull(loadSession(sessionId)) { "Unknown session" }
         put("format", "atlas.session.v1")
         put("exportedAtMs", System.currentTimeMillis())
@@ -1292,7 +1300,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     @Synchronized
     fun deleteSession(sessionId: String): List<String> {
         val mediaKeys = mediaKeys("o.session_id = ?", arrayOf(sessionId))
-        writableDatabase.transaction {
+        writeTransaction {
             delete("archive_imports", "kind='session' AND destination_id=?", arrayOf(sessionId))
             execSQL("DELETE FROM execution_slices WHERE task_id IN (SELECT task_id FROM execution_tasks WHERE session_id=?)", arrayOf(sessionId))
             delete("execution_tasks", "session_id=?", arrayOf(sessionId))
@@ -1390,7 +1398,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     @Synchronized
     fun saveObservation(observation: VisualObservation) {
-        writableDatabase.transaction {
+        writeTransaction {
             val scope = sessionScope(this, observation.sessionId)
             insertOrThrow("observations", null, ContentValues().apply {
                 put("observation_id", observation.id); put("session_id", observation.sessionId); put("media_path", observation.media.storageKey)
@@ -1522,7 +1530,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     @Synchronized
     fun createTurn(sessionId: String, trigger: String, turnId: String = UUID.randomUUID().toString(), nowMs: Long = System.currentTimeMillis()): AgentTurn {
         val turn = AgentTurn(turnId, sessionId, TurnStatus.CREATED, trigger, nowMs, nowMs)
-        writableDatabase.transaction {
+        writeTransaction {
             insertOrThrow("turns", null, ContentValues().apply {
                 put("turn_id", turn.id); put("session_id", sessionId); put("status", turn.status.name)
                 put("trigger", trigger); put("created_at", nowMs); put("updated_at", nowMs); put("step_count", 0)
@@ -1534,7 +1542,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     @Synchronized
     fun updateTurn(turnId: String, status: TurnStatus, stepCount: Int? = null, error: String? = null, nowMs: Long = System.currentTimeMillis()) {
-        writableDatabase.transaction {
+        writeTransaction {
             val sessionId = checkNotNull(sessionIdForTurn(this, turnId)) { "Unknown turn $turnId" }
             update("turns", ContentValues().apply {
                 put("status", status.name); put("updated_at", nowMs); if (stepCount != null) put("step_count", stepCount)
@@ -1578,7 +1586,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     @Synchronized
     fun insertMessage(message: AtlasMessage): AtlasMessage {
         var sequence = 0L
-        writableDatabase.transaction {
+        writeTransaction {
             sequence = insertOrThrow("messages", null, ContentValues().apply {
                 put("message_id", message.id); put("session_id", message.sessionId); put("turn_id", message.turnId)
                 put("role", message.role.name); put("kind", message.kind.name); put("content", message.content)
@@ -1632,7 +1640,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     @Synchronized
     fun saveSpeechSegment(segment: SpeechSegment) {
-        writableDatabase.transaction {
+        writeTransaction {
             insertOrThrow("speech_segments", null, ContentValues().apply {
                 put("segment_id", segment.id); put("message_id", segment.messageId); put("session_id", segment.sessionId)
                 put("turn_id", segment.turnId); put("sentence_index", segment.sentenceIndex); put("text", segment.text)
@@ -1648,10 +1656,10 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     @Synchronized
     fun updateSpeechSegment(segmentId: String, status: SpeechSegmentStatus, atMs: Long = System.currentTimeMillis(), error: String? = null) {
-        writableDatabase.transaction {
+        writeTransaction {
             val identity = rawQuery("SELECT message_id,session_id,turn_id FROM speech_segments WHERE segment_id = ?", arrayOf(segmentId)).use { cursor ->
                 if (!cursor.moveToFirst()) null else Triple(cursor.getString(0), cursor.getString(1), cursor.getString(2))
-            } ?: return@transaction
+            } ?: return@writeTransaction
             update("speech_segments", ContentValues().apply {
                 put("status", status.name)
                 if (status == SpeechSegmentStatus.STARTED) put("started_at", atMs)
@@ -1666,7 +1674,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     @Synchronized
     fun refreshMessageDelivery(messageId: String, fallbackStatus: DeliveryStatus? = null) {
-        writableDatabase.transaction { refreshMessageDeliveryLocked(this, messageId, fallbackStatus) }
+        writeTransaction { refreshMessageDeliveryLocked(this, messageId, fallbackStatus) }
     }
 
     private fun refreshMessageDeliveryLocked(db: SQLiteDatabase, messageId: String, fallbackStatus: DeliveryStatus? = null) {
@@ -1699,7 +1707,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     @Synchronized
     fun insertToolCall(call: AtlasToolCall) {
-        writableDatabase.transaction {
+        writeTransaction {
             insertOrThrow("tool_calls", null, ContentValues().apply {
                 put("tool_call_id", call.id); put("session_id", call.sessionId); put("turn_id", call.turnId); put("name", call.name)
                 put("arguments_json", call.argumentsJson); put("status", call.status.name); put("risk", call.risk.name)
@@ -1715,7 +1723,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     @Synchronized
     fun updateToolCall(callId: String, status: ToolCallStatus, resultJson: String? = null, error: String? = null, nowMs: Long = System.currentTimeMillis()) {
-        writableDatabase.transaction {
+        writeTransaction {
             val call = loadToolCallLocked(this, callId) ?: error("Unknown tool call $callId")
             update("tool_calls", ContentValues().apply {
                 put("status", status.name); put("updated_at", nowMs)
@@ -1748,8 +1756,8 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     @Synchronized
     fun markRunningToolsUnknown(turnId: String, reason: String, nowMs: Long = System.currentTimeMillis()) {
-        writableDatabase.transaction {
-            val sessionId = sessionIdForTurn(this, turnId) ?: return@transaction
+        writeTransaction {
+            val sessionId = sessionIdForTurn(this, turnId) ?: return@writeTransaction
             val changed = update("tool_calls", ContentValues().apply {
                 put("status", ToolCallStatus.UNKNOWN.name); put("updated_at", nowMs); put("error", reason.take(1_000))
             }, "turn_id = ? AND status = 'RUNNING'", arrayOf(turnId))
@@ -1759,7 +1767,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     @Synchronized
     fun cancelOpenSessionWork(sessionId: String, reason: String, nowMs: Long = System.currentTimeMillis()) {
-        writableDatabase.transaction {
+        writeTransaction {
             update("turns", ContentValues().apply { put("status", TurnStatus.CANCELLED.name); put("updated_at", nowMs); put("error", reason.take(1_000)) },
                 "session_id = ? AND status NOT IN ('COMPLETED','COMPLETED_LATE','FAILED','CANCELLED','HARD_CANCELLED','INTERRUPTED','YIELDED')", arrayOf(sessionId))
             update("tool_calls", ContentValues().apply { put("status", ToolCallStatus.REJECTED.name); put("updated_at", nowMs); put("error", reason.take(1_000)) },
@@ -1770,7 +1778,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     @Synchronized
     fun saveMemory(item: MemoryItem) {
-        writableDatabase.transaction {
+        writeTransaction {
             val sessionScope = sessionScope(this, item.sessionId)
             check(item.workspaceId == sessionScope.first) { "Memory workspace must match its session workspace" }
             insertWithOnConflict("memory_items", null, ContentValues().apply {
@@ -1791,10 +1799,10 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     @Synchronized
     fun forgetMemory(memoryId: String, nowMs: Long = System.currentTimeMillis(), actorSessionId: String? = null) {
-        writableDatabase.transaction {
+        writeTransaction {
             val sessionId = rawQuery("SELECT session_id FROM memory_items WHERE memory_id = ?", arrayOf(memoryId)).use { cursor ->
                 if (!cursor.moveToFirst()) null else cursor.getString(0)
-            } ?: return@transaction
+            } ?: return@writeTransaction
             update("memory_items", ContentValues().apply { put("status", MemoryStatus.FORGOTTEN.name); put("updated_at", nowMs) }, "memory_id = ?", arrayOf(memoryId))
             appendEventLocked(this, sessionId, "memory.forgotten", nowMs, JSONObject().put("memoryId", memoryId).toString())
             if (actorSessionId != null && actorSessionId != sessionId) {
@@ -1846,7 +1854,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
 
     @Synchronized
     fun saveSummary(summary: SessionSummary) {
-        writableDatabase.transaction {
+        writeTransaction {
             insertWithOnConflict("session_summaries", null, ContentValues().apply {
                 put("session_id", summary.sessionId); put("summary", summary.summary)
                 put("through_message_sequence", summary.throughMessageSequence); put("updated_at", summary.updatedAtMs)
@@ -1864,7 +1872,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     /** Never retries an ambiguous external operation after process death. */
     @Synchronized
     fun recoverInterruptedRuntime(sessionId: String, nowMs: Long = System.currentTimeMillis()) {
-        writableDatabase.transaction {
+        writeTransaction {
             val turnIds = mutableListOf<String>()
             rawQuery("SELECT turn_id FROM turns WHERE session_id = ? AND status IN ('CREATED','ASSEMBLING_CONTEXT','WAITING_FOR_MODEL','EXECUTING_TOOL','SOFT_TIMED_OUT')", arrayOf(sessionId)).use { cursor ->
                 while (cursor.moveToNext()) turnIds += cursor.getString(0)
@@ -1990,8 +1998,3 @@ private fun permissionsFromJson(raw: String?) = runCatching {
         externalActionsRequireConfirmation = json.optBoolean("externalActionsRequireConfirmation", true),
     )
 }.getOrElse { SessionPermissions() }
-
-private inline fun <T> SQLiteDatabase.transaction(block: SQLiteDatabase.() -> T): T {
-    beginTransaction()
-    return try { val result = block(); setTransactionSuccessful(); result } finally { endTransaction() }
-}

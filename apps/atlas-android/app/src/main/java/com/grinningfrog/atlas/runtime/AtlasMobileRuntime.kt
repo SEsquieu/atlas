@@ -141,7 +141,7 @@ class AtlasMobileRuntime(
 
     suspend fun activateComposableWorkspace(workspaceId: String?) = operations.withLock {
         val session = requireSession()
-        val sequence = database.activateComposableWorkspace(session.id, workspaceId)
+        val sequence = withContext(kotlinx.coroutines.Dispatchers.IO) { database.activateComposableWorkspace(session.id, workspaceId) }
         publish(session = session.copy(activeComposableWorkspaceId = workspaceId, workspaceNavigationSequence = sequence))
     }
 

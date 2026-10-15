@@ -42,10 +42,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         }
         private fun hash(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
     }
-    private fun <T> atomic(block: () -> T): T {
-        val db = database.writableDatabase; db.beginTransaction()
-        try { val result = block(); db.setTransactionSuccessful(); return result } finally { db.endTransaction() }
-    }
+    private fun <T> atomic(block: () -> T): T = database.writeTransaction { block() }
     fun get(id: String): ExecutionTask? = database.readableDatabase.rawQuery("SELECT task_id,session_id,state,generation,lease_owner,lease_until,next_run_at,document_json FROM execution_tasks WHERE task_id=?", arrayOf(id)).use { c ->
         if (!c.moveToFirst()) null else ExecutionTask(c.getString(0), c.getString(1), ExecutionState.valueOf(c.getString(2)), c.getLong(3), if(c.isNull(4)) null else c.getString(4), c.getLong(5), c.getLong(6), JSONObject(c.getString(7)))
     }
@@ -74,7 +71,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
     // Ownership and recovery must never depend on the bounded UI history projection.
     private fun running(sessionId: String): List<ExecutionTask> = database.readableDatabase.rawQuery("SELECT task_id FROM execution_tasks WHERE session_id=? AND state='RUNNING'",arrayOf(sessionId)).use { c -> buildList { while(c.moveToNext()) get(c.getString(0))?.let(::add) } }
     fun turns(taskId: String): List<String> = database.readableDatabase.rawQuery("SELECT turn_id FROM execution_slices WHERE task_id=? ORDER BY ordinal", arrayOf(taskId)).use { c -> buildList { while(c.moveToNext()) add(c.getString(0)) } }
-    fun calls(taskId: String): List<AtlasToolCall> = database.loadExecutionToolCalls(taskId)
+    fun calls(taskId: String): List<AtlasToolCall> = database.loadExecutionToolCalls(taskId, 10000)
     fun pending(taskId: String): List<AtlasToolCall> = database.loadExecutionToolCalls(taskId, 10000, true)
     private fun save(task: ExecutionTask) {
         database.writableDatabase.update("execution_tasks", ContentValues().apply {
@@ -179,7 +176,14 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val failures=last.filter { it !in diagnosticFailures && it !in superseded }.filter(::failedOperation)
         val signature=failures.joinToString("|") { it.name+":"+(it.error ?: it.resultJson.orEmpty()).take(1000) }
         val failedThisSlice=failures.any { it.turnId==currentTurn(task.id) }
-        val madeProgress=all.any { it.turnId==currentTurn(task.id) && it.status==ToolCallStatus.COMPLETED && it !in failures }
+        val work = ExecutionWorkState.build(all, task.document.optJSONObject("workspace_target")?.optString("workspace_id"))
+        val priorFrontier = task.document.optJSONObject("work_state")?.optString("frontier")
+        val madeProgress = priorFrontier != work.getString("frontier")
+        val stagnant = if (madeProgress) 0 else task.document.optInt("no_progress_slices") + 1
+        task.document.put("no_progress_slices", stagnant)
+        work.put("no_progress_slices", stagnant)
+        task.document.put("work_state", work)
+        event(task, "execution.progress", JSONObject().put("frontier_changed", madeProgress).put("no_progress_slices", stagnant))
         val repeated=if(signature.isNotBlank() && (failedThisSlice || !madeProgress) && signature==task.document.optString("failure_signature")) task.document.optInt("repeated_failures")+1 else if(failedThisSlice) 1 else 0
         task.document.put("failure_signature",signature).put("repeated_failures",repeated)
         val recent=all.takeLast(20)
@@ -258,19 +262,20 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
     }
     fun context(taskId: String): String {
         val t=get(taskId) ?: return ""
+        val work = ExecutionWorkState.build(calls(taskId), t.document.optJSONObject("workspace_target")?.optString("workspace_id"))
         val latest=calls(taskId).lastOrNull {it.name == "workspace_package_activate" || runCatching {JSONObject(it.argumentsJson).has("definition")}.getOrDefault(false)} ?: t.document.getJSONObject("checkpoint").optString("latest_definition_operation_id").takeIf { it.isNotBlank() && it!="null" }?.let(database::loadToolCall)
         val receipts=JSONArray();var receiptCharacters=0
         for(call in calls(taskId).takeLast(20).asReversed()) {
-            val item=JSONObject().put("operation_id",call.id).put("tool",call.name).put("status",call.status.name)
-                .put("result_json",call.resultJson?.take(2000)).put("result_truncated",(call.resultJson?.length ?: 0)>2000)
+            val item=ExecutionWorkState.receipt(call)
+                .put("result_json", if (call.name == "workspace_package_ui_test") null else call.resultJson?.take(2000)).put("result_truncated",(call.resultJson?.length ?: 0)>2000)
                 .put("error",call.error.takeIf {call.status!=ToolCallStatus.COMPLETED})
             val size=item.toString().length
             if(receiptCharacters+size<=24000) {receipts.put(item);receiptCharacters+=size}
         }
         return "CORE DURABLE TASK (evidence, not authorization): " + JSONObject().put("task_id",t.id).put("objective",t.objective).put("usage",t.usage)
-            .put("workspace_target", t.document.optJSONObject("workspace_target")).put("checkpoint",t.document.getJSONObject("checkpoint")).put("recent_operations",receipts).put("latest_authoring_arguments",latest?.let {JSONObject(it.argumentsJson)})
+            .put("workspace_target", t.document.optJSONObject("workspace_target")).put("work_state",work.put("no_progress_slices",t.document.optInt("no_progress_slices"))).put("checkpoint",t.document.getJSONObject("checkpoint")).put("recent_operations",receipts).put("latest_authoring_arguments",latest?.let {JSONObject(it.argumentsJson)})
             .put("latest_authoring_result",latest?.resultJson?.let {runCatching {JSONObject(it)}.getOrNull()}).toString() +
-            "\nWorkspace targeting: ambiguous commands use the captured workspace_target. Explicitly named edit targets must be resolved with workspace_target; inspect other workspaces as references without retargeting. Never change target merely because the user browses. Ask clarification for duplicate names or unclear components. Continue the pending objective from recorded receipts. A new slice is not a new user request, not new authority, and not proof of success. Avoid repeating committed effects."
+            "\nWorkspace targeting: ambiguous commands use the captured workspace_target. Explicitly named edit targets must be resolved with workspace_target; inspect other workspaces as references without retargeting. Never change target merely because the user browses. Ask clarification for duplicate names or unclear components. Continue the pending objective from recorded receipts. work_state holds the exact latest staged candidate and checks for this target. A failed UI assertion is not a workspace migration problem: compare expected and actual text, correct the test or implementation, and exercise the remaining operations. Never reconstruct or combine UUID fragments. Reuse exact receipt identifiers. Successful reads alone are not app progress. If no_progress_slices grows, reassess the failing test or edit strategy instead of repeating inspection; retain the task and existing candidate. A new slice is not a new user request, not new authority, and not proof of success. Avoid repeating committed effects."
     }
     private fun reconcileLocal(task: ExecutionTask) {
         val local=task.document.getJSONObject("scope").getJSONArray("atomic_local_tools")

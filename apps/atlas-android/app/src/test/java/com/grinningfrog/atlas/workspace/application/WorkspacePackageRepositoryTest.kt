@@ -22,6 +22,16 @@ class WorkspacePackageRepositoryTest {
     private fun stage(id: String, realm: String, base: String, session: String, turn: String, parent: String? = null, changes: JSONObject = PackageFixture.bundle().getJSONObject("files")) =
         WorkspacePackageRepository(db).stage(id, realm, base, parent, if (parent == null) PackageFixture.bundle().getJSONObject("manifest") else null, changes, session, turn)
 
+    @Test fun starterDraftIsNotMisreportedAsHistoricalMigration() {
+        val session=db.createSession("Draft","Test")
+        val w=db.createComposableWorkspace("Draft", "", realmId=session.workspaceId)
+        val draft=WorkspacePackageRepository(db).inspect(w.id,w.realmId)
+        assertEquals("empty_package_draft",draft.getString("authoring_state"))
+        assertFalse(draft.has("migration"))
+        db.addWorkspaceRecord(w.id,"notes","{}")
+        assertFalse(WorkspacePackageRepository(db).inspect(w.id,w.realmId).has("authoring_state"))
+    }
+
     @Test fun immutableBranchingPreservesLiveRevisionDataAndReopens() {
         val session = db.createSession("Staging", "Test")
         val turn = db.createTurn(session.id, "user")

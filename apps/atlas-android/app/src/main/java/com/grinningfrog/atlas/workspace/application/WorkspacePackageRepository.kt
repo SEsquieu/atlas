@@ -42,16 +42,18 @@ class WorkspacePackageRepository(private val database: AtlasDatabase) {
                     if (manifest.toString().length <= 8000) put("manifest", manifest) else put("manifest_summary", WorkspaceApplicationContract.manifestSummary(manifest))
                     put("files", JSONArray(bundle.getJSONObject("files").keys().asSequence().sorted().take(20).map { path -> JSONObject().put("path", path).put("sha256", WorkspaceApplicationContract.hash(bundle.getJSONObject("files").getString(path))).put("bytes", bundle.getJSONObject("files").getString(path).toByteArray(Charsets.UTF_8).size) }.toList()))
                     put("files_count", bundle.getJSONObject("files").length()).put("file_index_source", "atlas/files.json")
-                } else put("legacy_format", bundle.optString("format")).put("migration", "Nonempty historical workspaces require an explicit converter; create a new package workspace to preserve the original.")
+                } else if (WorkspaceApplicationContract.isEmptyDraft(bundle) && database.listWorkspaceRecords(workspaceId, limit = 1).isEmpty()) {
+                    put("authoring_state", "empty_package_draft").put("manifest_required", true)
+                    put("next_step", "Stage a manifest and files against live_revision_id in this workspace. This empty draft is expected; do not create another workspace.")
+                } else put("legacy_format", bundle.optString("format")).put("migration", "Historical workspace: preserve its data and definition. Do not create a duplicate automatically; inspect conversion requirements.")
             }
     }
 
     /** Entire file batch is validated before any row is inserted. Old candidates are never updated. */
     fun stage(workspaceId: String, realmId: String, baseRevisionId: String, parentCandidateId: String?, manifest: JSONObject?, changes: JSONObject,
-        sessionId: String, turnId: String): JSONObject {
-        val db = database.writableDatabase
-        db.beginTransaction()
-        try {
+        sessionId: String, turnId: String): JSONObject = database.writeTransaction {
+        val db = this
+        run {
             val workspace = owner(workspaceId, realmId)
             require(workspace.liveRevisionId == baseRevisionId) { "REVISION_CONFLICT" }
             val session = database.loadSession(sessionId) ?: error("Session is unavailable")
@@ -87,10 +89,9 @@ class WorkspacePackageRepository(private val database: AtlasDatabase) {
                 put("parent_candidate_id", parentCandidateId); put("content_hash", hash); put("bundle_json", canonical)
                 put("source_session_id", sessionId); put("source_turn_id", turnId); put("created_at", System.currentTimeMillis())
             })
-            db.setTransactionSuccessful()
-            return JSONObject().put("workspace_id", workspaceId).put("candidate_id", candidate).put("content_hash", hash)
+            JSONObject().put("workspace_id", workspaceId).put("candidate_id", candidate).put("content_hash", hash)
                 .put("structurally_valid", true).put("executed", false).put("activated", false).put("tests_run", 0)
-        } finally { db.endTransaction() }
+        }
     }
 
     private fun owner(workspaceId: String, realmId: String) = (database.loadComposableWorkspace(workspaceId) ?: error("Workspace is unavailable")).also {
@@ -101,7 +102,7 @@ class WorkspacePackageRepository(private val database: AtlasDatabase) {
         "SELECT base_revision_id,parent_candidate_id,content_hash,bundle_json,created_at FROM workspace_package_candidates WHERE workspace_id=? AND candidate_id=?",
         arrayOf(workspaceId, candidateId)
     ).use { cursor ->
-        require(cursor.moveToFirst()) { "Candidate is unavailable in this workspace" }
+        require(cursor.moveToFirst()) { "Candidate is unavailable in this workspace. CANDIDATE_NOT_FOUND: exact candidate_id=$candidateId is unavailable in workspace_id=$workspaceId. Inspect this workspace and copy an exact candidate_id receipt; do not combine ID fragments or infer deletion." }
         val bundle = JSONObject(cursor.getString(3))
         require(WorkspaceApplicationContract.hash(WorkspaceApplicationContract.canonical(bundle)) == cursor.getString(2)) { "PACKAGE_CORRUPT" }
         JSONObject().put("workspace_id", workspaceId).put("candidate_id", candidateId).put("base_revision_id", cursor.getString(0))

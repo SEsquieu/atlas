@@ -346,7 +346,16 @@ class WorkspaceDeviceTest {
     @Test fun candidateUiSimulationFindsMissingNotificationsAndVerifiesManagedWatcher() = runBlocking {
         val db=(context.applicationContext as AtlasApplication).database
         val session=db.createSession("UI simulation","test");val turn=db.createTurn(session.id,"user")
+        db.updateSessionStatus(session.id,com.grinningfrog.atlas.model.SessionStatus.ACTIVE)
+        val execution=com.grinningfrog.atlas.runtime.ExecutionTaskStore(db)
+        val task=execution.create(db.loadSession(session.id)!!,"Repair and verify notifications",turn.id,com.grinningfrog.atlas.runtime.ExecutionBudget())
+        execution.claim(task.id,"before-interruption")!!
         val workspace=db.createComposableWorkspace("Simulation", "",realmId=session.workspaceId)
+        execution.bindWorkspace(turn.id,workspace.id)
+        fun record(name:String,args:JSONObject,result:JSONObject) {
+            val id=UUID.randomUUID().toString()
+            db.insertToolCall(com.grinningfrog.atlas.model.AtlasToolCall(id,session.id,execution.currentTurn(task.id),name,args.toString(),com.grinningfrog.atlas.model.ToolCallStatus.COMPLETED,com.grinningfrog.atlas.model.ToolRisk.SESSION_WRITE,false,id,resultJson=result.toString(),createdAtMs=System.currentTimeMillis(),updatedAtMs=System.currentTimeMillis()))
+        }
         val bundle=WorkspaceApplicationContract.example()
         bundle.getJSONObject("manifest").getJSONArray("capabilities").put(WorkspaceBleContract.descriptor().getJSONObject("manifest_example"))
         val source=InstrumentationRegistry.getInstrumentation().context.assets.open("ble-ui-simulation.js").bufferedReader().use{it.readText()}
@@ -364,10 +373,28 @@ class WorkspaceDeviceTest {
             val first=repository.stage(workspace.id,workspace.realmId,workspace.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,turn.id)
             val bad=WorkspaceUiSimulation(context,db).test(workspace.id,workspace.realmId,first.getString("candidate_id"),steps("subscribed"))
             assertFalse(bad.toString(),bad.getBoolean("passed"));assertTrue(bad.getJSONArray("missing_operations").toString().contains("events"))
+            record("workspace_package_stage",JSONObject().put("workspace_id",workspace.id).put("files",JSONObject().put("ui/app.js",broken)),first)
+            record("workspace_package_ui_test",JSONObject().put("workspace_id",workspace.id).put("candidate_id",first.getString("candidate_id")),bad)
+            // Simulate loss of the runner. Reconstruct using durable receipts, not its JS heap or a model summary.
+            val recovered=com.grinningfrog.atlas.runtime.ExecutionTaskStore(db)
+            recovered.recover(session.id)
+            val recoveryContext=recovered.context(task.id)
+            assertTrue(recoveryContext.contains(first.getString("candidate_id")))
+            assertTrue(recoveryContext.contains("events"))
+            val continuation=recovered.nextTurn(task.id)
+            val lease=recovered.claim(task.id,"after-interruption")!!
             bundle.getJSONObject("files").put("ui/app.js",source)
-            val second=repository.stage(workspace.id,workspace.realmId,workspace.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,turn.id)
+            val second=repository.stage(workspace.id,workspace.realmId,workspace.liveRevisionId,first.getString("candidate_id"),null,JSONObject().put("ui/app.js",source),session.id,continuation)
             val good=WorkspaceUiSimulation(context,db).test(workspace.id,workspace.realmId,second.getString("candidate_id"),steps("notification 2b"))
             assertTrue(good.toString(),good.getBoolean("passed"));assertTrue(good.getString("evidence_scope").contains("simulated"))
+            record("workspace_package_stage",JSONObject().put("workspace_id",workspace.id).put("files",JSONObject().put("ui/app.js",source)),second)
+            record("workspace_package_ui_test",JSONObject().put("workspace_id",workspace.id).put("candidate_id",second.getString("candidate_id")),good)
+            val pure=WorkspaceCandidateChecks(db,WorkspaceWorkerSupervisor(context)::run).test(workspace.id,workspace.realmId,second.getString("candidate_id"))
+            assertTrue(pure.toString(),pure.getBoolean("passed"))
+            val activated=WorkspaceApplicationActivation(db).activate(context,workspace.id,workspace.realmId,second.getString("candidate_id"),pure.getString("check_id"),authorize={recovered.check(lease)})
+            assertTrue(activated.toString(),activated.getBoolean("activated"))
+            assertEquals(activated.getString("revision_id"),db.loadComposableWorkspace(workspace.id)!!.liveRevisionId)
+            recovered.finish(lease,com.grinningfrog.atlas.runtime.SliceOutcome.RESPONDED,1)
             assertEquals(0,db.listWorkspaceRecords(workspace.id,"notes").size)
         } finally {db.deleteComposableWorkspace(workspace.id)}
     }

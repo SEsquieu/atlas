@@ -16,18 +16,17 @@ class WorkspaceDeviceAudit(private val database: AtlasDatabase) {
             db.execSQL("CREATE INDEX IF NOT EXISTS workspace_device_audit_workspace ON workspace_device_audit(workspace_id,sequence)")
         }
     }
-    fun append(workspaceId: String, event: JSONObject) {
-        val db=database.writableDatabase
-        db.beginTransaction()
-        try {
+    fun append(workspaceId: String, event: JSONObject) = database.writeTransaction {
+        val db=this
+        run {
             // Teardown may race deletion. Never recreate a deleted workspace or orphan its diagnostics.
             if(database.loadComposableWorkspace(workspaceId)!=null) {
                 val raw=event.toString();require(raw.toByteArray().size<=4096)
                 db.insertOrThrow("workspace_device_audit",null,ContentValues().apply { put("workspace_id",workspaceId);put("at_ms",event.getLong("at_ms"));put("event_json",raw) })
                 db.execSQL("DELETE FROM workspace_device_audit WHERE workspace_id=? AND sequence NOT IN (SELECT sequence FROM workspace_device_audit WHERE workspace_id=? ORDER BY sequence DESC LIMIT 512)",arrayOf(workspaceId,workspaceId))
             }
-            db.setTransactionSuccessful()
-        } finally { db.endTransaction() }
+
+        }
     }
     fun snapshot(workspaceId: String, limit: Int = 512): JSONObject {
         val bounded=limit.coerceIn(1,512)

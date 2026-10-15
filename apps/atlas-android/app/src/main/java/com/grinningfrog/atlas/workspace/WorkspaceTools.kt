@@ -181,6 +181,10 @@ private class InspectWorkspace(database: AtlasDatabase) : WorkspaceAdapter(datab
             records.put(JSONObject().apply { put("id", if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(definition)) record.id.removePrefix("$id:") else record.id); put("collection", record.collection); put("data", JSONObject(record.dataJson)) })
         }
         return ToolExecutionResult(JSONObject().apply {
+            if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.isEmptyDraft(definition) && database.listWorkspaceRecords(id, limit = 1).isEmpty()) {
+                put("authoring_state", "empty_package_draft")
+                put("source_hint", "Expected empty draft. Stage manifest and files here using workspace_package_stage; do not create a replacement workspace.")
+            }
             put("workspace_id", id); put("name", workspace.name); put("description", workspace.description); put("revision_id", revision.id)
             if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(definition)) {
                 put("definition_summary", com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.manifestSummary(definition.getJSONObject("manifest")))

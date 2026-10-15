@@ -6,6 +6,11 @@ import java.security.MessageDigest
 
 /** This is the package contract, not evidence that an execution substrate is installed. */
 object WorkspaceApplicationContract {
+    fun isEmptyDraft(definition: JSONObject): Boolean = runCatching {
+        canonical(definition) == canonical(JSONObject(com.grinningfrog.atlas.workspace.WorkspaceDefinitionValidator.starter(
+            definition.getString("title"), definition.optString("description"))))
+    }.getOrDefault(false)
+
     const val FORMAT = "atlas.workspace.web.v1"
     const val API_VERSION = 1
     const val MAX_PACKAGE_BYTES = 1024 * 1024

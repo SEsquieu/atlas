@@ -188,8 +188,5 @@ class WorkspaceApplicationData(private val database: AtlasDatabase) {
         return number.toLong()
     }
     private fun collection(value: String) { require(value.matches(Regex("[A-Za-z][A-Za-z0-9_-]{0,63}")) && value != "AtlasRuntimeState") { "Invalid or reserved collection" } }
-    internal fun <T> atomic(block: SQLiteDatabase.() -> T): T {
-        val db = database.writableDatabase; db.beginTransaction()
-        return try { val result = db.block(); db.setTransactionSuccessful(); result } finally { db.endTransaction() }
-    }
+    internal fun <T> atomic(block: SQLiteDatabase.() -> T): T = database.writeTransaction(block)
 }

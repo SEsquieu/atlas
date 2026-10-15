@@ -36,6 +36,57 @@ class ExecutionTasksTest {
     private fun call(task: ExecutionTask, name: String = "local", args: String = "{}") = AtlasToolCall(UUID.randomUUID().toString(),session.id,store.currentTurn(task.id),name,args,ToolCallStatus.PROPOSED,ToolRisk.SESSION_WRITE,false,UUID.randomUUID().toString(),createdAtMs=clock,updatedAtMs=clock)
     private fun executor() = DurableTaskExecutor(store, {clock}, { clock += it })
 
+    @Test fun writerAndWorkspaceSwitchUseOneLockOrder() {
+        val w = db.createComposableWorkspace("Concurrent", "")
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try {
+            val writer = pool.submit<Boolean> {
+                db.writeTransaction {
+                    check(Thread.holdsLock(db))
+                    entered.countDown()
+                    check(release.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                    db.appendEvent(session.id, "test.concurrent_writer")
+                }
+                true
+            }
+            assertTrue(entered.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            val navigation = pool.submit<Long> { db.activateComposableWorkspace(session.id, w.id) }
+            release.countDown()
+            assertTrue(writer.get(3, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(navigation.get(3, java.util.concurrent.TimeUnit.SECONDS) > 0)
+        } finally { release.countDown(); pool.shutdownNow() }
+    }
+
+    @Test fun workStateSurvivesRestartAndReadsDoNotAdvanceTheFrontier() {
+        val w = db.createComposableWorkspace("Repair", "")
+        val t = task(); val lease = store.claim(t.id, "owner")!!
+        store.bindWorkspace(store.currentTurn(t.id), w.id)
+        val staged = call(t, "workspace_package_stage", JSONObject().put("workspace_id",w.id).put("files",JSONObject().put("ui/app.js","source")).toString())
+        db.insertToolCall(staged);db.updateToolCall(staged.id,ToolCallStatus.COMPLETED,resultJson="""{"candidate_id":"exact-candidate","content_hash":"hash","workspace_id":"${w.id}"}""")
+        val test = call(t,"workspace_package_ui_test",JSONObject().put("workspace_id",w.id).put("candidate_id","exact-candidate").toString())
+        db.insertToolCall(test);db.updateToolCall(test.id,ToolCallStatus.COMPLETED,resultJson="""{"candidate_id":"exact-candidate","passed":false,"steps":[{"passed":false,"selector":"#label","actual_text":"actual label"}],"missing_operations":["events"]}""")
+        store.finish(lease,SliceOutcome.YIELDED,1)
+        val before=store.get(t.id)!!.document.getJSONObject("work_state").getString("frontier")
+        val next=store.nextTurn(t.id);val nextLease=store.claim(t.id,"interrupted")!!
+        repeat(104) {
+            clock++
+            val read=call(t,"workspace_package_read_file",JSONObject().put("workspace_id",w.id).put("candidate_id","exact-candidate").put("path","ui/app.js").toString())
+            db.insertToolCall(read);db.updateToolCall(read.id,ToolCallStatus.COMPLETED,resultJson="""{"source":"same source"}""")
+        }
+        store.finish(nextLease,SliceOutcome.YIELDED,1)
+        val after=store.get(t.id)!!.document.getJSONObject("work_state")
+        assertEquals(before,after.getString("frontier"));assertEquals(1,after.getInt("no_progress_slices"))
+        assertEquals(104,after.getInt("repeated_identical_reads"))
+        store.nextTurn(t.id);store.claim(t.id,"crashed")
+        store.recover(session.id)
+        val context=ExecutionTaskStore(db).context(t.id)
+        assertTrue(context.contains("exact-candidate"));assertTrue(context.contains("actual label"));assertTrue(context.contains("events"))
+        assertFalse(context.contains("\"passed\":true"))
+        assertEquals(ExecutionState.READY,store.get(t.id)!!.state)
+    }
+
     @Test fun lateInferenceUsageIsReconciledOnceWithoutBorrowingANewLease() {
         val t=task();val lease=store.claim(t.id,"owner")!!;val turn=store.currentTurn(t.id)
         assertTrue(store.reserveInference(lease,100,85,"late-request"))

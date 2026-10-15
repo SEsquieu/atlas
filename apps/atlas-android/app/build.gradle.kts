@@ -16,10 +16,10 @@ android {
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild { cmake { arguments += "-DANDROID_STL=c++_static" } }
-        versionCode = providers.environmentVariable("ATLAS_ANDROID_VERSION_CODE").orElse("24").get().toInt().also {
+        versionCode = providers.environmentVariable("ATLAS_ANDROID_VERSION_CODE").orElse("25").get().toInt().also {
             require(it in 1..2_100_000_000) { "ATLAS_ANDROID_VERSION_CODE is outside Android limits" }
         }
-        versionName = "0.1.0-alpha.23"
+        versionName = "0.1.0-alpha.24"
 
         manifestPlaceholders["atlasDevSuffix"] = ""
         vectorDrawables.useSupportLibrary = true
