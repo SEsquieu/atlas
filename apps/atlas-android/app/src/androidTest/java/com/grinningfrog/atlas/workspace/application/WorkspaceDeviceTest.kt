@@ -70,6 +70,21 @@ class WorkspaceDeviceTest {
                 webView=requireNotNull(find(activity.findViewById(android.R.id.content)))
                 webView!!.getLocationOnScreen(coordinates)
             }
+            // Startup readiness is not compositor readiness. Wait for two matching painted frames,
+            // rather than treating an arbitrary sleep as proof that the initial fallback disappeared.
+            withTimeout(6_000) {
+                var stable=0
+                while(stable<2) {
+                    val screen=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                    val copied=com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.capture(w.id,revision.id).first
+                    try {
+                        val shown=screen.getPixel(coordinates[0]+5,coordinates[1]+10)
+                        val painted=android.graphics.Color.red(shown)<80 && android.graphics.Color.green(shown) in 9..79 && android.graphics.Color.blue(shown)<80
+                        stable=if(painted && shown==copied.getPixel(5,10))stable+1 else 0
+                    } finally {screen.recycle();copied.recycle()}
+                    if(stable<2)delay(100)
+                }
+            }
             val screenshot=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
             try {
                 val color=screenshot.getPixel(coordinates[0]+5,coordinates[1]+10)
@@ -103,9 +118,11 @@ class WorkspaceDeviceTest {
                 val image=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
                 return try { image.getPixel(location[0]+5,location[1]+10) } finally { image.recycle() }
             }
+            withTimeout(5_000){while(pixel()!=android.graphics.Color.rgb(1,3,2))delay(100)}
             assertEquals(android.graphics.Color.rgb(1,3,2),pixel())
             evaluate(presentation,"document.documentElement.style.background='white';document.body.style.background='white';")
             delay(300)
+            withTimeout(5_000){while(pixel()!=android.graphics.Color.WHITE)delay(100)}
             assertEquals(android.graphics.Color.WHITE,pixel())
         }
     }
