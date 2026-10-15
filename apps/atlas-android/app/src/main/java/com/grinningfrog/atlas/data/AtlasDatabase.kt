@@ -69,7 +69,7 @@ data class ChatGptUsageSummary(
     val lastHostedSearchStatus: String? = null,
 )
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 15) {
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 16) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         db.setForeignKeyConstraintsEnabled(true)
@@ -384,6 +384,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         createComposableWorkspaceTables(db)
         com.grinningfrog.atlas.workspace.application.WorkspacePackageRepository.createTables(db)
         createArchiveTables(db)
+        com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.createTables(db)
         com.grinningfrog.atlas.runtime.ExecutionTaskStore.createTables(db)
     }
 
@@ -467,6 +468,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             addColumnIfMissing(db, "sessions", "workspace_navigation_sequence", "INTEGER NOT NULL DEFAULT 0")
         }
         if (oldVersion < 12) createArchiveTables(db)
+        if (oldVersion < 16) com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.createTables(db)
     }
 
     private fun createArchiveTables(db: SQLiteDatabase) {
@@ -1172,7 +1174,9 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             update("sessions", ContentValues().apply { putNull("active_composable_workspace_id"); put("workspace_navigation_sequence", 0) },
                 "active_composable_workspace_id = ?", arrayOf(workspaceId))
             delete("archive_imports", "kind='workspace' AND destination_id=?", arrayOf(workspaceId))
+            for (table in listOf("workspace_application_operations", "workspace_application_checks", "workspace_application_lifecycle")) delete(table, "workspace_id=?", arrayOf(workspaceId))
             delete("workspace_records", "composable_workspace_id = ?", arrayOf(workspaceId))
+            delete("workspace_data_versions", "workspace_id=?", arrayOf(workspaceId))
             delete("workspace_package_candidates", "workspace_id = ?", arrayOf(workspaceId))
             delete("workspace_revisions", "composable_workspace_id = ?", arrayOf(workspaceId))
             check(delete("composable_workspaces", "composable_workspace_id = ?", arrayOf(workspaceId)) == 1) { "Workspace deletion failed" }

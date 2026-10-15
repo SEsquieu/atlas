@@ -101,7 +101,7 @@ class WorkspaceWebPresentation(
         })
         WebViewCompat.addWebMessageListener(view, "atlasTransport", setOf(policy.origin)) { _, message, source, mainFrame, reply ->
             if (!policy.acceptsMessage(source.toString(), mainFrame, !disposed && current())) return@addWebMessageListener
-            val raw = message.data ?: return@addWebMessageListener
+            val raw = runCatching { message.data }.getOrNull() ?: return@addWebMessageListener
             if (--remainingMessages < 0) { onFailure("Workspace bridge quota exceeded"); return@addWebMessageListener }
             val operation = UUID.randomUUID().toString()
             var requestId = "invalid"
