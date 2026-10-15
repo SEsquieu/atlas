@@ -580,7 +580,7 @@ class AtlasMobileRuntime(
                 systemPrompt = baseRequest.systemPrompt + if (suppressed.isEmpty()) "" else "\nCORE RETRY LIMIT: ${suppressed.joinToString()} repeatedly rejected. Do not repeat these calls. Correct a different control or report the unresolved blocker honestly; discovery resume_local only restores installed local mutations under ordinary policy.",
             )
             database.appendEvent(session.id, "context.assembled", JSONObject().apply {
-                put("turnId", turnId); put("step", step); put("messageIds", org.json.JSONArray(context.includedMessageIds))
+                put("turnId", turnId); put("step", step); put("messageIds", org.json.JSONArray(context.includedMessageIds)); put("projectedMessageIds", org.json.JSONArray(context.projectedMessageIds))
                 put("omittedMessages", context.omittedMessageCount); put("approximateCharacters", context.approximateCharacters)
                 put("memoryCount", memories.size); put("summaryThrough", summary?.throughMessageSequence); put("toolsAvailable", request.tools.size)
             })

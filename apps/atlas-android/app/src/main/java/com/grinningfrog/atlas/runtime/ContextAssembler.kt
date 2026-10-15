@@ -27,6 +27,7 @@ data class AssembledContext(
     val includedMessageIds: List<String>,
     val omittedMessageCount: Int,
     val approximateCharacters: Int,
+    val projectedMessageIds: List<String> = emptyList(),
 )
 
 /** Provider-neutral, deterministic projection of Atlas-owned state into an inference packet. */
@@ -44,7 +45,7 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
         archiveNotice: String? = null,
     ): AssembledContext {
         val eligible = compactPackageSource(messages.filter { it.kind != MessageKind.INTERNAL })
-        val protocolSafe = sanitizeToolProtocol(eligible)
+        val protocolSafe = recoverReadContext(sanitizeToolProtocol(eligible))
         val selected = selectRecentMessages(protocolSafe)
         val memoryBlock = formatMemories(memories, nowMs)
         val system = buildString {
@@ -60,7 +61,7 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
             if (toolsAvailable) appendLine(CapabilityDiscovery.instructions)
             appendLine("A provider may expose hosted web_search outside the local Atlas tool registry. If that tool is advertised, use it for research. Successful hosted-search receipts prove it ran; do not declare all research unavailable just because there is no local search adapter.")
             appendLine("Never claim a tool ran until Atlas returns its result. Never invent observations or external effects.")
-            appendLine("Workspace apps use one authoring format: atlas.workspace.web.v1 HTML/CSS/JS packages. Read workspace_package_contract, then workspace_package_create (or workspace_target), stage, test, and activate. Inspect returns bounded durable test evidence; read_file retrieves source. Legacy V1/V2 definitions are historical loading formats, not authoring choices. Do not invent legacy tools or new host capabilities. Use packaged libraries, normal JavaScript and CSS; host owns scoped storage and all permissions. Foreground Bluetooth LE is available via the ble export from /atlas/host.js. Read device_capabilities in workspace_package_contract and declare bluetooth.le with exact operations and user_selected_device resource. Native user consent and Android permissions are required at runtime; activation and fixtures grant no hardware access. Implement real controls and visible errors; never substitute mock success in the live app. Before activation run workspace_package_ui_test against the candidate, covering every declared BLE operation and notification draining; simulation is labeled and cannot verify physical effects. After activation inspect the current revision with render diagnostics and capture the visible workspace when available. No network or background adapters are installed. Test meaningful behavior, not only the starter health fixture. A passing fixture or startup handshake does not verify layout or persistence. For reported rendering problems use workspace_render_diagnostics and workspace_capture_view; authored CSS is intent, not proof of painted pixels. A user reporting white output is not contradicted by dark CSS source. For an installed package, staging automatically copies the live base and accepts changed files only.")
+            appendLine("Workspace apps use one authoring format: atlas.workspace.web.v1 HTML/CSS/JS packages. Read workspace_package_contract, then workspace_package_create (or workspace_target), stage, test, and activate. Inspect returns bounded durable test evidence; read_file retrieves source. Legacy V1/V2 definitions are historical loading formats, not authoring choices. Do not invent legacy tools or new host capabilities. Use packaged libraries, normal JavaScript and CSS; host owns scoped storage and all permissions. Foreground Bluetooth LE is available via the ble export from /atlas/host.js. Read capability_registry.capabilities in workspace_package_contract and declare bluetooth.le with exact operations and user_selected_device resource. Native user consent and Android permissions are required at runtime; activation and fixtures grant no hardware access. Implement real controls and visible errors; never substitute mock success in the live app. Before activation run workspace_package_ui_test against the candidate, covering every declared BLE operation and notification draining; simulation is labeled and cannot verify physical effects. After activation inspect the current revision with render diagnostics and capture the visible workspace when available. No network or background adapters are installed. Test meaningful behavior, not only the starter health fixture. A passing fixture or startup handshake does not verify layout or persistence. For reported rendering problems use workspace_render_diagnostics and workspace_capture_view; authored CSS is intent, not proof of painted pixels. A user reporting white output is not contradicted by dark CSS source. For an installed package, staging automatically copies the live base and accepts changed files only.")
             appendLine("For workspace UI failures, inspect package source/checks and the visible app; use workspace_render_diagnostics for the visible revision and bounded console errors and workspace_capture_view for viewport pixels. A successful startup handshake or pure fixture does not prove visual correctness. Physical camera images do not show the app screen.")
             appendLine("Treat physical observations according to their timestamps; call capture_current_view when the supplied view is insufficient or stale.")
             if (toolsAvailable) appendLine("Use atlas_remember for concise session facts, decisions, constraints, and task progress that later turns must retain. Durable user memory requires confirmation.")
@@ -109,6 +110,7 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
             includedMessageIds = selected.map { it.id },
             omittedMessageCount = eligible.size - selected.size,
             approximateCharacters = system.length + inferenceMessages.sumOf { it.content.length },
+            projectedMessageIds = selected.filter { projected -> messages.any { it.id == projected.id && it != projected } }.map { it.id },
         )
     }
 
@@ -124,7 +126,7 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
         for (turn in turns.asReversed()) {
             val cost = turn.sumOf { it.content.length + (it.toolCallsJson?.length ?: 0) + (it.providerContextJson?.length ?: 0) }
             require(selected.isNotEmpty() || (turn.size <= budget.maxMessages && cost <= budget.maxConversationCharacters)) {
-                "Context budget exceeded: latest turn has ${turn.size} messages and $cost characters (limits ${budget.maxMessages}/${budget.maxConversationCharacters}). Shorten the current request or start a new session; transcript and memory remain saved."
+                "Context budget exceeded: latest turn has ${turn.size} messages and $cost characters (limits ${budget.maxMessages}/${budget.maxConversationCharacters}). The active request still exceeds the local context budget after recoverable tool-result projection. Original transcript and memory remain saved; resume without a context change will repeat this blocker."
             }
             if (selected.isNotEmpty() && (messageCount + turn.size > budget.maxMessages || characters + cost > budget.maxConversationCharacters)) break
             selected.addFirst(turn)
@@ -208,6 +210,59 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
                 val text = receipt.toString()
                 cost -= old.content.length + (old.providerContextJson?.length ?: 0) - text.length
                 projected[i] = old.copy(content = text, providerContextJson = null)
+            }
+        }
+        return projected
+    }
+
+    /** Read results are disposable views, not the durable audit. Recover before the hard guard,
+     * including old exports whose inspection responses embedded entire duplicated contracts.
+     * Never project mutations here: their outcome receipts must remain explicit. */
+    private fun recoverReadContext(messages: List<AtlasMessage>): List<AtlasMessage> {
+        val readTools = setOf("workspace_inspect", "workspace_package_inspect", "workspace_package_contract",
+            "workspace_render_diagnostics", "workspace_package_read_file")
+        val calls = messages.flatMap { parseToolCalls(it.toolCallsJson) }.associateBy { it.id }
+        val projected = messages.map { message ->
+            val name = calls[message.toolCallId]?.name
+            if (message.role != MessageRole.TOOL || name !in readTools) return@map message
+            val json = runCatching { JSONObject(message.content) }.getOrNull() ?: return@map message
+            var changed = false
+            if (name == "workspace_package_inspect" && json.has("contract")) {
+                json.remove("contract"); json.put("contract_tool", "workspace_package_contract"); changed = true
+            }
+            if (name == "workspace_package_contract" && json.has("capability_registry") && json.has("device_capabilities")) {
+                json.remove("device_capabilities"); changed = true
+            }
+            if (changed) message.copy(content = json.toString(), providerContextJson = null) else message
+        }.toMutableList()
+        fun cost(indices: List<Int>) = indices.sumOf { i -> projected[i].let {
+            it.content.length + (it.toolCallsJson?.length ?: 0) + (it.providerContextJson?.length ?: 0)
+        } }
+        for (indices in projected.indices.groupBy { projected[it].turnId }.values) {
+            for (i in indices) {
+                if (cost(indices) <= budget.maxConversationCharacters) break
+                val old = projected[i]
+                val call = calls[old.toolCallId] ?: continue
+                if (old.role != MessageRole.TOOL || call.name !in readTools || old.content.length <= 2400) continue
+                val original = messages.first { it.id == old.id }
+                val json = runCatching { JSONObject(old.content) }.getOrNull()
+                val receipt = JSONObject().put("context_projection", true).put("tool", call.name)
+                    .put("tool_call_id", call.id).put("original_characters", original.content.length)
+                    .put("original_sha256", com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.hash(original.content))
+                    .put("notice", "Partial read evidence. Full response remains in the original audit. Repeat this read for current details; pin source reads to revision/candidate. Omitted content is unknown, not success or absence of errors.")
+                // Keep identity and outcome first; large nested reports are explicitly partial.
+                val keys = listOf("workspace_id", "revision_id", "live_revision_id", "candidate_id", "base_revision_id",
+                    "content_hash", "data_version", "epoch", "path", "status", "passed", "error", "errors", "structural_errors",
+                    "contract_tool", "render_available", "rendered", "manifest", "candidates", "checks", "device_audit")
+                val evidence = JSONObject()
+                for (key in keys) if (json?.has(key) == true) {
+                    val value = json.get(key)
+                    val text = value.toString()
+                    evidence.put(key, if (text.length <= 240) value else JSONObject().put("partial", true).put("excerpt", text.take(240)))
+                    if (evidence.toString().length > 1200) break
+                }
+                receipt.put("evidence", evidence)
+                projected[i] = old.copy(content = receipt.toString(), providerContextJson = null)
             }
         }
         return projected

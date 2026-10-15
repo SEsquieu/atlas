@@ -233,6 +233,51 @@ class ContextAssemblerTest {
         assertTrue(messages[2].content.contains("x".repeat(1000)))
     }
 
+    @Test fun legacyInspectionBatchRecoversBeforeGuardAndPreservesProtocolOnResume() {
+        val contract = org.json.JSONObject().put("capability_registry", org.json.JSONObject().put("rules", "r".repeat(5000)))
+            .put("device_capabilities", org.json.JSONObject().put("rules", "r".repeat(5000)))
+        val results = listOf(
+            "workspace_package_contract" to contract.toString(),
+            "workspace_package_inspect" to org.json.JSONObject().put("workspace_id", "bench").put("live_revision_id", "pinned")
+                .put("contract", contract).put("files", org.json.JSONArray(listOf("ui/app.js"))).toString(),
+            "workspace_render_diagnostics" to org.json.JSONObject().put("revision_id", "pinned").put("layout", "l".repeat(18000)).toString())
+        val calls = org.json.JSONArray()
+        results.forEachIndexed { i, result -> calls.put(org.json.JSONObject().put("id", "call-$i").put("name", result.first).put("arguments", "{}")) }
+        val messages = listOf(message(1, "turn", MessageRole.USER, "Repair Bench Companion"),
+            message(2, "turn", MessageRole.ASSISTANT, "").copy(toolCallsJson = calls.toString())) + results.mapIndexed { i, result ->
+            message((i + 3).toLong(), "turn", MessageRole.TOOL, result.second, MessageKind.TOOL_RESULT).copy(toolCallId = "call-$i") }
+        val assembler = ContextAssembler()
+        val first = assembler.assemble(session(), messages, emptyList(), null, null, 10)
+        val resumed = assembler.assemble(session(), messages, emptyList(), null, null, 20)
+        assertEquals(first.messages, resumed.messages)
+        assertEquals(3, first.messages[1].toolCalls.size)
+        assertEquals(listOf("call-0", "call-1", "call-2"), first.messages.drop(2).map { it.toolCallId })
+        assertFalse(org.json.JSONObject(first.messages[2].content).has("device_capabilities"))
+        assertEquals("workspace_package_contract", org.json.JSONObject(first.messages[3].content).getString("contract_tool"))
+        assertTrue(first.messages[3].content.contains("pinned"))
+        assertTrue(first.projectedMessageIds.contains("message-3"))
+        assertTrue(messages[3].content.contains("contract"))
+    }
+
+    @Test fun oversizedDiagnosticsBecomeExplicitPartialEvidenceWithoutLosingMutationReceipt() {
+        val diagnostics = org.json.JSONObject().put("revision_id", "pinned").put("structural_errors", org.json.JSONArray(listOf("BROKEN")))
+            .put("layout", "l".repeat(50000)).toString()
+        val calls = """[{"id":"read","name":"workspace_render_diagnostics","arguments":"{}"},{"id":"write","name":"workspace_package_activate","arguments":"{}"}]"""
+        val mutation = """{"activated":false,"error":"STALE_REVISION","candidate_id":"candidate"}"""
+        val messages = listOf(message(1, "turn", MessageRole.USER, "Fix it"),
+            message(2, "turn", MessageRole.ASSISTANT, "").copy(toolCallsJson = calls),
+            message(3, "turn", MessageRole.TOOL, diagnostics, MessageKind.TOOL_RESULT).copy(toolCallId = "read"),
+            message(4, "turn", MessageRole.TOOL, mutation, MessageKind.TOOL_RESULT).copy(toolCallId = "write"))
+        val context = ContextAssembler().assemble(session(), messages, emptyList(), null, null, 10)
+        val projected = org.json.JSONObject(context.messages[2].content)
+        assertTrue(projected.getBoolean("context_projection"))
+        assertTrue(projected.toString().contains("BROKEN"))
+        assertEquals(com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.hash(diagnostics), projected.getString("original_sha256"))
+        assertEquals(mutation, context.messages[3].content)
+        assertTrue(context.messages.sumOf { it.content.length } < 32000)
+        assertEquals(diagnostics, messages[2].content)
+    }
+
     private fun session() = AtlasSession("session", "test", "stay coherent", SessionStatus.ACTIVE, 0, 0)
     private fun message(sequence: Long, turn: String, role: MessageRole, content: String, kind: MessageKind = MessageKind.DIALOGUE) = AtlasMessage(
         sequence = sequence, id = "message-$sequence", sessionId = "session", turnId = turn, role = role, content = content, createdAtMs = sequence, kind = kind,

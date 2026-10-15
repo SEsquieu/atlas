@@ -174,7 +174,6 @@ object WorkspaceApplicationContract {
             .put("storage", "Use data.query({collection,limit}) -> {records:[{id,data}],data_version,next_offset}. data.prepare({expected_data_version,request_key,mutations:[{kind:'create',collection,data}]}) -> {operation_id,...}; await data.commit(operation_id). Updates require {kind:'update',collection,record_id,data}; deletes require {kind:'delete',collection,record_id}. Query after commit to recover IDs. No id alias is accepted.")
             .put("verification", "Run 1 to 16 fixtures with every pure export covered; tests prove only those fixtures. Device packages also require workspace_package_ui_test with DOM steps exercising every declared BLE operation and notification draining. Simulation verifies only those controls with fake hardware. Activation additionally proves startup readiness, not physical device effects or save/resume. Inspect visible console diagnostics and workspace pixels. Never claim interaction or persistence verification from pure fixtures alone."))
         .put("capability_registry", WorkspaceCapabilityRegistry.describe())
-        .put("device_capabilities", WorkspaceBleContract.descriptor())
         .put("schema", WorkspaceJsonSchema.describe())
         .put("manifest_contract", JSONObject()
             .put("required_fields", JSONArray(listOf("format", "title", "host_api", "entry", "data_schema_version", "capabilities", "exports", "tests", "dependencies")))

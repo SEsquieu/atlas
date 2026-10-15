@@ -34,7 +34,7 @@ class WorkspacePackageRepository(private val database: AtlasDatabase) {
         val live = database.loadLiveWorkspaceRevision(workspaceId)!!
         val bundle = JSONObject(live.definitionJson)
         return JSONObject().put("workspace_id", workspaceId).put("live_revision_id", live.id)
-            .put("candidates", rows).put("contract", WorkspaceApplicationContract.descriptor())
+            .put("candidates", rows).put("contract_tool", "workspace_package_contract")
             .put("data_version", WorkspaceApplicationData(database).version(workspaceId)).put("epoch", WorkspaceApplicationData(database).epoch(workspaceId))
             .apply {
                 if (WorkspaceApplicationData.isApplication(bundle)) {
