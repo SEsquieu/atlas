@@ -122,6 +122,11 @@ class WorkspaceDeviceTest {
             surface(bundle, p) { view ->
                 val raw = evaluate(view, "document.body.dataset.results")
                 assertEquals(raw, "[]", JSONArray("[$raw]").getString(0))
+                evaluate(view, "setTimeout(()=>{throw Error('interaction-failure-probe')},0);Promise.reject(Error('promise-failure-probe'));")
+                delay(300)
+                val console = view.diagnostics().getJSONArray("console").toString()
+                assertTrue(console, console.contains("interaction-failure-probe"))
+                assertTrue(console, console.contains("promise-failure-probe"))
                 delay(1500); assertEquals("A browser request escaped the host", 0, hits.get()); assertEquals("Child-frame WebRTC escaped the sandbox", 0, udpHits.get())
             }
         } finally { server.close(); udp.close(); thread.join(1000); udpThread.join(1000) }

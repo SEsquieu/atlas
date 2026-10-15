@@ -387,11 +387,14 @@ private open class RenderDiagnostics(database: AtlasDatabase) : WorkspaceAdapter
         if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(root)) {
             return ToolExecutionResult(JSONObject().put("workspace_id", id).put("revision_id", revision.id).put("navigation_sequence", session.workspaceNavigationSequence)
                 .put("format", com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.FORMAT)
-                .put("rendered", WorkspaceRenderSurface.diagnostics(id, revision.id)).put("epoch", com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData(database).epoch(id))
+                .put("render_available", WorkspaceRenderSurface.diagnostics(id, revision.id) != null).put("rendered", WorkspaceRenderSurface.diagnostics(id, revision.id)).put("epoch", com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData(database).epoch(id))
                 .put("structural_errors", JSONArray(com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.validate(root)))
                 .put("notice", "Only a drawn viewport or screenshot establishes visible output; startup and pure fixtures are separate evidence.").toString())
         }
-        require(root.optString("format") == WorkspaceRuntimeV2.FORMAT) { "Render diagnostics require a supported format" }
+        if (root.optString("format") != WorkspaceRuntimeV2.FORMAT) return ToolExecutionResult(JSONObject()
+            .put("workspace_id", id).put("revision_id", revision.id).put("format", root.optString("format"))
+            .put("render_available", false).put("status", "no_application_surface")
+            .put("notice", "No live application surface is available for this definition. A newly created draft must be staged, tested and activated first.").toString())
         val records = buildMap<String, List<JSONObject>> {
             root.optJSONObject("collections")?.keys()?.forEach { collection -> put(collection, database.listWorkspaceRecords(id, collection, 5_000).map { JSONObject(it.dataJson).put("_id", it.id) }) }
         }

@@ -45,6 +45,7 @@ internal class WorkspaceCandidateChecks(
                     report.put("code", if (ok) "ASSERTION_FAILED" else response.optString("code", "EXECUTION_FAILED"))
                     report.put("expected_preview", WorkspaceApplicationContract.canonical(fixture.get("expected")).take(512))
                     if (ok) report.put("actual_preview", WorkspaceApplicationContract.canonical(response.get("value")).take(512))
+                    else report.put("worker_error", response.toString().take(1200))
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled

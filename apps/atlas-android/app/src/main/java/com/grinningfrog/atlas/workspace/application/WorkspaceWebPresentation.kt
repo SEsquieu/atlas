@@ -66,6 +66,8 @@ class WorkspaceWebPresentation(
         if (WebViewFeature.isFeatureSupported(WebViewFeature.MUTE_AUDIO)) WebViewCompat.setAudioMuted(view, true)
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) WebViewCompat.addDocumentStartJavaScript(view, """
             (() => {
+              addEventListener('error', event => console.error('Uncaught application error: '+event.message));
+              addEventListener('unhandledrejection', event => console.error('Unhandled application rejection: '+String(event.reason)));
               for (const name of ['RTCPeerConnection','webkitRTCPeerConnection','mozRTCPeerConnection','AudioContext','webkitAudioContext','OfflineAudioContext','WebSocket','WebTransport','EventSource','Worker','SharedWorker','showOpenFilePicker','showSaveFilePicker','showDirectoryPicker','indexedDB','caches','openDatabase','localStorage','sessionStorage']) {
                 Object.defineProperty(globalThis,name,{value:undefined,writable:false,configurable:false});
               }

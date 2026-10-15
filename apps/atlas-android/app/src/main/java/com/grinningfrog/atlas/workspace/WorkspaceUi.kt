@@ -42,6 +42,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -84,10 +86,34 @@ fun WorkspacePage(
     var refresh by remember { mutableIntStateOf(0) }
     LaunchedEffect(displayedId) { while (displayedId != null) { delay(500); refresh++ } }
     var error by remember { mutableStateOf<String?>(null) }
-    val workspaces = remember(refresh, snapshot.session?.activeComposableWorkspaceId, snapshot.messages.size) { database.listComposableWorkspaces(includeArchived = true) }
-    val workspace = displayedId?.let(database::loadComposableWorkspace)
-    val revision = workspace?.let { database.loadLiveWorkspaceRevision(it.id) }
+    var workspaces by remember { mutableStateOf<List<ComposableWorkspace>>(emptyList()) }
+    var loaded by remember { mutableStateOf<Pair<ComposableWorkspace, WorkspaceRevision>?>(null) }
+    LaunchedEffect(refresh, displayedId, snapshot.session?.activeComposableWorkspaceId, snapshot.messages.size) {
+        val result = withContext(Dispatchers.IO) {
+            val list = database.listComposableWorkspaces(includeArchived = true)
+            val selected = displayedId?.let(database::loadComposableWorkspace)
+            val revision = selected?.let { database.loadLiveWorkspaceRevision(it.id) }
+            list to (if (selected != null && revision != null) selected to revision else null)
+        }
+        workspaces = result.first
+        loaded = result.second
+    }
+    val workspace = loaded?.first?.takeIf { it.id == displayedId }
+    val revision = loaded?.second?.takeIf { workspace != null }
     val context = LocalContext.current
+    var pendingDelete by remember { mutableStateOf<ComposableWorkspace?>(null) }
+    pendingDelete?.let { selected ->
+        WorkspaceDeleteDialog(selected, { pendingDelete = null }) {
+            pendingDelete = null
+            displayedId = null
+            actionScope.launch {
+                runCatching {
+                    if (snapshot.session?.activeComposableWorkspaceId == selected.id) runtime.activateComposableWorkspace(null)
+                    withContext(Dispatchers.IO) { database.deleteComposableWorkspace(selected.id) }
+                }.onSuccess { refresh++ }.onFailure { error = it.message ?: "Delete failed" }
+            }
+        }
+    }
     var pendingExport by remember { mutableStateOf<String?>(null) }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) runCatching {
@@ -129,7 +155,7 @@ fun WorkspacePage(
                 if (displayedId == selected.id) displayedId = null
             } },
             onRestore = { selected -> runAction { database.setComposableWorkspaceArchived(selected.id, false) } },
-            onDelete = { selected -> runAction { database.deleteComposableWorkspace(selected.id) } },
+            onDelete = { selected -> pendingDelete = selected },
             modifier = modifier,
         )
         return
@@ -142,6 +168,7 @@ fun WorkspacePage(
                 Text(workspace.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text("rev ${revision.id.take(8)}${if (snapshot.session?.activeComposableWorkspaceId == workspace.id) " · active for Atlas" else ""}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            IconButton(onClick = { pendingDelete = workspace }) { Icon(Icons.Default.Delete, "Delete workspace") }
             IconButton(onClick = { runAction {
                 if (snapshot.session?.activeComposableWorkspaceId == workspace.id) runtime.activateComposableWorkspace(null)
                 database.setComposableWorkspaceArchived(workspace.id, true); displayedId = null
@@ -176,16 +203,6 @@ private fun WorkspaceLibrary(
     var creating by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
-    var pendingDelete by remember { mutableStateOf<ComposableWorkspace?>(null) }
-    pendingDelete?.let { workspace ->
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text("Delete ${workspace.name}?") },
-            text = { Text("This permanently deletes its definition revisions and records. This cannot be undone.") },
-            confirmButton = { TextButton(onClick = { onDelete(workspace); pendingDelete = null }) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
-            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel") } },
-        )
-    }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -225,8 +242,8 @@ private fun WorkspaceLibrary(
                         IconButton(onClick = { onArchive(workspace) }) { Icon(Icons.Default.Archive, "Archive ${workspace.name}") }
                     } else {
                         IconButton(onClick = { onRestore(workspace) }) { Icon(Icons.Default.Unarchive, "Restore ${workspace.name}") }
-                        IconButton(onClick = { pendingDelete = workspace }) { Icon(Icons.Default.Delete, "Delete ${workspace.name}") }
                     }
+                    IconButton(onClick = { onDelete(workspace) }) { Icon(Icons.Default.Delete, "Delete ${workspace.name}") }
                 }
             }
         }
@@ -405,4 +422,13 @@ private fun WorkspaceCanvas(workspaceId: String, componentId: String, label: Str
             }
         }
     }
+}
+
+@Composable
+private fun WorkspaceDeleteDialog(workspace: ComposableWorkspace, dismiss: () -> Unit, confirm: () -> Unit) {
+    AlertDialog(onDismissRequest = dismiss,
+        title = { Text("Delete ${workspace.name}?") },
+        text = { Text("This permanently deletes this workspace, its saved records, source revisions and pending operations. This cannot be undone.") },
+        confirmButton = { TextButton(onClick = confirm) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
+        dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } })
 }

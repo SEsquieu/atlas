@@ -59,6 +59,22 @@ class WorkspaceDiagnosticsTest {
             assertTrue(runCatching { harness.execute(call(session, "workspace_capture_view", "{}", turn.id)) }.isFailure)
         } finally { WorkspaceRenderSurface.unregister(owner) }
     }
+    @Test fun draftAndWebPackageDiagnosticsReturnExplicitEvidence() = runTest {
+        val session = db.createSession("Draft", "Diagnose")
+        val workspace = db.createComposableWorkspace("Draft", "", realmId = session.workspaceId)
+        db.activateComposableWorkspace(session.id, workspace.id)
+        val turn = db.createTurn(session.id, "user")
+        val adapter = WorkspaceTools.create(db).single { it.definition.name == "workspace_render_diagnostics" }
+        val draft = JSONObject(adapter.execute(call(session, adapter.definition.name, "{}", turn.id)).resultJson)
+        assertEquals("no_application_surface", draft.getString("status"))
+        assertFalse(draft.getBoolean("render_available"))
+        val app = db.createComposableWorkspace("App", "", com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.example().toString(), session.workspaceId)
+        db.activateComposableWorkspace(session.id, app.id)
+        val result = JSONObject(adapter.execute(call(session, adapter.definition.name, "{}", turn.id)).resultJson)
+        assertEquals(com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.FORMAT, result.getString("format"))
+        assertFalse(result.getBoolean("render_available"))
+    }
+
     @Test fun staleRevisionAndDisposedSurfaceCannotBeCaptured() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val owner = Any()

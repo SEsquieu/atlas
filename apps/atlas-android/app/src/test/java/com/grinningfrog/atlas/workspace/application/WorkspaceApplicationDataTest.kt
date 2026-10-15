@@ -115,8 +115,15 @@ class WorkspaceApplicationDataTest {
     }
     @Test fun deletionRemovesReceiptsAndTriggerCreatedVersionRows() {
         val p = installed(); store.commit(p, prepare(p, create("Delete")))
-        db.setComposableWorkspaceArchived(p.workspaceId, true)
+        val session = db.createSession("Delete", "Delete active application")
+        db.activateComposableWorkspace(session.id, p.workspaceId)
+        val sequence = db.loadSession(session.id)!!.workspaceNavigationSequence
         db.deleteComposableWorkspace(p.workspaceId)
+        assertNull(db.loadComposableWorkspace(p.workspaceId))
+        assertNull(db.loadSession(session.id)!!.activeComposableWorkspaceId)
+        assertTrue(db.loadSession(session.id)!!.workspaceNavigationSequence > sequence)
+        assertTrue(runCatching { store.query(p, JSONObject().put("collection", "notes")) }.isFailure)
+        assertTrue(db.listWorkspaceRecords(p.workspaceId, "notes").isEmpty())
         for (table in listOf("workspace_application_operations", "workspace_application_lifecycle", "workspace_data_versions")) {
             db.readableDatabase.rawQuery("SELECT COUNT(*) FROM $table WHERE workspace_id=?", arrayOf(p.workspaceId)).use { it.moveToFirst(); assertEquals(0, it.getInt(0)) }
         }

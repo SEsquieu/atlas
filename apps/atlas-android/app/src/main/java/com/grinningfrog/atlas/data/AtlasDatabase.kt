@@ -1177,10 +1177,8 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     @Synchronized
     fun deleteComposableWorkspace(workspaceId: String) {
         val workspace = loadComposableWorkspace(workspaceId) ?: error("Unknown workspace")
-        require(workspace.status == WorkspaceStatus.ARCHIVED) { "Archive the workspace before deleting it" }
         writableDatabase.transaction {
-            update("sessions", ContentValues().apply { putNull("active_composable_workspace_id"); put("workspace_navigation_sequence", 0) },
-                "active_composable_workspace_id = ?", arrayOf(workspaceId))
+            execSQL("UPDATE sessions SET active_composable_workspace_id=NULL, workspace_navigation_sequence=workspace_navigation_sequence+1 WHERE active_composable_workspace_id=?", arrayOf(workspaceId))
             delete("archive_imports", "kind='workspace' AND destination_id=?", arrayOf(workspaceId))
             for (table in listOf("workspace_application_activations", "workspace_application_operations", "workspace_application_checks", "workspace_application_lifecycle")) delete(table, "workspace_id=?", arrayOf(workspaceId))
             delete("workspace_records", "composable_workspace_id = ?", arrayOf(workspaceId))

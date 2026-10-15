@@ -28,8 +28,13 @@ class SessionArchive(
                 if (message.getString("kind") == "DIALOGUE") appendLine("${if (message.getString("role") == "USER") "You" else "Atlas"}: ${message.getString("content")}")
             }
         }.toByteArray()
-        require(snapshot.size.toLong() + transcript.size <= ArchiveCodec.MAX_BYTES - 64 * 1024) { "Session archive plus readable transcript exceeds 32 MiB; no partial export was created" }
+        require(snapshot.size.toLong() + transcript.size <= ArchiveCodec.MAX_BYTES - 128 * 1024) { "Session archive plus readable transcript exceeds 32 MiB; no partial export was created" }
+        val diagnostics = com.grinningfrog.atlas.diagnostics.RuntimeDiagnostics.snapshot(context).toString(2).toByteArray()
+        require(diagnostics.size <= 128 * 1024) { "Runtime diagnostics exceed export limit" }
         ZipOutputStream(file.outputStream().buffered()).use { zip ->
+            zip.putNextEntry(ZipEntry("runtime-diagnostics.json"))
+            zip.write(diagnostics)
+            zip.closeEntry()
             zip.putNextEntry(ZipEntry("transcript.txt"))
             zip.write(transcript)
             zip.closeEntry()

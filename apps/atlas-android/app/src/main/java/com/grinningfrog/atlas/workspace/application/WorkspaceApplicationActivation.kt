@@ -83,6 +83,7 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
             execSQL("INSERT OR REPLACE INTO workspace_application_lifecycle(workspace_id,epoch,enabled) VALUES(?,?,1)", arrayOf(workspaceId, epoch))
             val receipt = JSONObject().put("workspace_id", workspaceId).put("candidate_id", candidateId).put("revision_id", revision).put("previous_revision_id", base)
                 .put("epoch", epoch).put("data_version", version).put("activated", true).put("still_active", true)
+                .put("evidence_scope", "Pure fixtures and startup handshake only; UI interactions and save/resume remain unverified")
             insertOrThrow("workspace_application_activations", null, ContentValues().apply {
                 put("workspace_id", workspaceId); put("candidate_id", candidateId); put("check_id", checkId); put("result_json", receipt.toString()); put("created_at", now)
             })
