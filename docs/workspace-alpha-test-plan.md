@@ -161,3 +161,13 @@ On the phone, approve scanning once and repeat scans without leaving the workspa
 Ask Atlas to repair Bench Companion's notification collection, platform error display (`last_failure.phase/platform_code`) and stale selections using the installed contract. The SDK's `ble.watch()` manages notification draining; plain `subscribe()` needs an explicit event pump. Preserve saved records and distinguish simulated UI evidence from physical BLE acceptance.
 
 Export after the task completes and after interacting with the app. Inspect `workspaces[].device_audit` in the session ZIP, or `device_audit` in the workspace export. Both include the newest 512 committed device records across sessions/revisions. `workspace_render_diagnostics` exposes the newest 32 for in-session debugging. Match timestamps, instance, revision and epoch; diagnostic history does not restore permissions or executable state on import.
+
+## Alpha.23 context recovery acceptance
+
+Retry the Bench Companion repair request in the existing session after updating. Previously persisted inspection responses must recover without deleting transcript history: the full contract embedded in package inspection is replaced by a reference to `workspace_package_contract`, and the legacy duplicate BLE descriptor is removed only when the canonical capability registry exists. New inspection responses omit the duplicated contract at the producer.
+
+When a turn remains over the conversation character budget, Core projects large workspace read responses into explicit partial evidence with original response SHA-256, call ID, size, identity and bounded outcome fields. Original database messages and mutation outcome receipts remain unchanged. `context.assembled.projectedMessageIds` identifies altered inference views. Missing details are unknown, not successful tests or absence of errors; reinspection/source reads recover details. This is deterministic request assembly and also applies when resuming older sessions.
+
+Check that Atlas proceeds past inspection to source reads, staging, meaningful pure/UI tests and activation. A successful context recovery alone does not establish that the app repair succeeded. Export the resulting session and exercise scan, connect, services, read, write and notifications to evaluate consent reuse. This release does not establish the cause of all previously reported permission dialogs.
+
+Unrecoverable requests (including user content exceeding the budget or excessive message counts) still stop with an accurate local-budget explanation; retrying unchanged context is not described as a remedy. The character limit is unchanged.

@@ -185,3 +185,13 @@ New coverage includes failed scan followed by repeated scans through the actual 
 Emulator test hardening clears stale accessibility cache entries and inspects interactive windows. The pixel test waits for two matching painted compositor frames instead of assuming a fixed delay proves painting. Its strict displayed-screen/viewport pixel equality, dark-gradient condition and authored-light checks are unchanged.
 
 Delivered `atlas-alpha22-fbe9c30-secure.apk` (69,861,206 bytes), SHA-256 `345a3ec61e1c9a77b854e615d58183445a7b536ad85bcc4eeb6c941f47908e59`; persistent signing identity unchanged. The host update preserves installed workspace source and records. Bench Companion can now be repaired by Atlas using the stronger behavior checks; its source is not patched into the APK.
+
+## Alpha.23: workspace inspection context recovery
+
+Package inspection now references `workspace_package_contract` instead of embedding its full descriptor. The authoring contract publishes installed capabilities once under `capability_registry.capabilities`; the duplicate BLE descriptor was removed.
+
+Before enforcing the existing conversation character budget, request assembly also recognizes older saved tool responses and removes those same duplicates. If the turn still exceeds the limit, large workspace inspection/contract/diagnostic/source read results become explicitly partial, bounded evidence with original call identity, character count and response hash. Tool-call/result pairs remain intact, original audit messages are preserved and mutation receipts are not reduced by this recovery path. Projected message IDs appear in `context.assembled`. This recovery runs deterministically on resume as well as the initial request.
+
+The exported failing sequence contained 42,572 characters. Replaying duplicate removal against that sequence yields approximately 23,000 characters, below the unchanged 32,000 conversation limit. Regression tests cover older duplicate-bearing inspection batches, repeat assembly, protocol pairing and large diagnostics beside a failed activation receipt. Oversized user input and excessive message counts remain explicit local blockers rather than promises that an unchanged retry can resolve them.
+
+Application commit `bd4631d313368c0045d357cae21a005feeaf343d` passed Secure unit tests and lint in [Android run 38797921299](https://github.com/SEsquieu/atlas/actions/runs/38797921299). All eleven instrumented tests passed on both API 35 and 36 in [device run 38797921127](https://github.com/SEsquieu/atlas/actions/runs/38797921127). This validates harness context recovery and existing host behavior; the Bench Companion repair still needs to run through Atlas and physical BLE interactions still need phone acceptance.
