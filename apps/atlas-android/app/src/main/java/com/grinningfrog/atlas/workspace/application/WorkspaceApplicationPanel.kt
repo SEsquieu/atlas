@@ -50,9 +50,7 @@ internal fun WorkspaceApplicationPanel(workspace: ComposableWorkspace, revision:
             DisposableEffect(presentation) {
                 val token = Any()
                 com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.register(token, workspace.id, revision.id, inspect = { presentation.inspectLayout() }) {
-                    val view = presentation.view
-                    require(view.width > 0 && view.height > 0 && view.width.toLong() * view.height <= 8_000_000L) { "Workspace has no capturable viewport" }
-                    android.graphics.Bitmap.createBitmap(view.width, view.height, android.graphics.Bitmap.Config.ARGB_8888).also { view.draw(android.graphics.Canvas(it)) }
+                    presentation.captureVisiblePixels()
                 }
                 val listener = android.view.ViewTreeObserver.OnDrawListener {
                     com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.drawn(token, JSONObject().put("format", WorkspaceApplicationContract.FORMAT).put("revision_id", revision.id).put("runtime", presentation.diagnostics()).put("drawn_at_ms", System.currentTimeMillis()))

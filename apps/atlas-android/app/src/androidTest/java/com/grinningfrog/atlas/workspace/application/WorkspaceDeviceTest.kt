@@ -64,6 +64,8 @@ class WorkspaceDeviceTest {
             val screenshot=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
             try {
                 val color=screenshot.getPixel(coordinates[0]+5,coordinates[1]+10)
+                val captured=com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.capture(w.id,revision.id).first
+                try { assertEquals("Model viewport pixels differ from the displayed window",color,captured.getPixel(5,10)) } finally { captured.recycle() }
                 val painted=android.graphics.Color.red(color)<80 && android.graphics.Color.green(color) in 9..79 && android.graphics.Color.blue(color)<80
                 var alternatives=""
                 if (!painted) {

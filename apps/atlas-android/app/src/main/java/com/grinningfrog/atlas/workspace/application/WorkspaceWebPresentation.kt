@@ -179,6 +179,41 @@ class WorkspaceWebPresentation(
         }
     }
 
+    /** Copy only this viewport from its owning app window; software redraws can differ from compositor pixels. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    suspend fun captureVisiblePixels(): android.graphics.Bitmap = withTimeout(3_000) {
+        withContext(Dispatchers.Main.immediate) {
+            check(!disposed && view.isAttachedToWindow && view.isShown) { "Workspace viewport is not visible" }
+            require(view.width > 0 && view.height > 0 && view.width.toLong()*view.height <= 8_000_000L)
+            var owner: android.content.Context = view.context
+            var activity: android.app.Activity? = null
+            repeat(8) {
+                if (owner is android.app.Activity) activity=owner as android.app.Activity
+                else (owner as? android.content.ContextWrapper)?.baseContext?.let { owner=it }
+            }
+            val window=requireNotNull(activity).window
+            val location=IntArray(2);view.getLocationInWindow(location)
+            val rect=android.graphics.Rect(location[0],location[1],location[0]+view.width,location[1]+view.height)
+            require(rect.left>=0 && rect.top>=0 && rect.right<=window.decorView.width && rect.bottom<=window.decorView.height) { "Workspace viewport is clipped" }
+            val bitmap=android.graphics.Bitmap.createBitmap(view.width,view.height,android.graphics.Bitmap.Config.ARGB_8888)
+            suspendCancellableCoroutine { continuation ->
+                try {
+                    android.view.PixelCopy.request(window,rect,bitmap,{ status ->
+                        if (status==android.view.PixelCopy.SUCCESS && continuation.isActive) {
+                            continuation.resume(bitmap) { _, value, _ -> value.recycle() }
+                        } else {
+                            bitmap.recycle()
+                            if (continuation.isActive) continuation.resumeWith(Result.failure(IllegalStateException("Workspace pixel copy failed: $status")))
+                        }
+                    },android.os.Handler(android.os.Looper.getMainLooper()))
+                } catch (failure: Exception) {
+                    bitmap.recycle()
+                    if (continuation.isActive) continuation.resumeWith(Result.failure(failure))
+                }
+            }
+        }
+    }
+
     fun loadAttached() { if (!disposed && view.isAttachedToWindow && view.width > 0 && view.height > 0) load() }
     fun load() { check(!disposed); view.loadUrl(policy.entryUrl) }
     fun dispose() {
