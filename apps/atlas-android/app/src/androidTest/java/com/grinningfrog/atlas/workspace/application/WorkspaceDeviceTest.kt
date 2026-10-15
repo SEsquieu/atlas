@@ -51,6 +51,8 @@ class WorkspaceDeviceTest {
     }
     @Test fun browserNetworkDeviceStorageAndChildFrameBypassesAreDenied() = runBlocking {
         val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1")); val hits = AtomicInteger()
+        val udp = java.net.DatagramSocket(0, InetAddress.getByName("127.0.0.1")); val udpHits = AtomicInteger()
+        val udpThread = Thread { while (!udp.isClosed) { try { val packet = java.net.DatagramPacket(ByteArray(2048), 2048); udp.receive(packet); udpHits.incrementAndGet() } catch (_: Exception) { break } } }.apply { isDaemon = true; start() }
         val thread = Thread { while (!server.isClosed) { try { server.accept().use { hits.incrementAndGet() } } catch (_: Exception) { break } } }.apply { isDaemon = true; start() }
         try {
             val bundle = WorkspaceApplicationContract.example()
@@ -61,6 +63,8 @@ class WorkspaceDeviceTest {
                 for(const name of ['bluetooth','usb','mediaDevices','geolocation','serviceWorker','credentials','clipboard','sendBeacon']) if(typeof navigator[name]!=='undefined')issues.push('navigator.'+name);
                 const iframe=document.createElement('iframe');document.body.append(iframe);
                 try{if(iframe.contentWindow && typeof iframe.contentWindow.RTCPeerConnection!=='undefined')issues.push('child.RTCPeerConnection');}catch(_){}
+                iframe.srcdoc="<script>try{const p=new RTCPeerConnection({iceServers:[{urls:'stun:127.0.0.1:${udp.localPort}'}]});p.createDataChannel('probe');p.createOffer().then(o=>p.setLocalDescription(o));}catch(_){}<"+"/script>";
+                if(globalThis.origin!=='null')issues.push('non-opaque document');
                 const target='https://127.0.0.1:${server.localPort}/bypass';
                 try{await fetch(target);issues.push('fetch');}catch(_){}
                 const image=new Image();image.src=target;document.body.append(image);
@@ -73,9 +77,9 @@ class WorkspaceDeviceTest {
             surface(bundle, p) { view ->
                 val raw = evaluate(view, "document.body.dataset.results")
                 assertEquals(raw, "[]", JSONArray("[$raw]").getString(0))
-                delay(500); assertEquals("A browser request escaped the host", 0, hits.get())
+                delay(1500); assertEquals("A browser request escaped the host", 0, hits.get()); assertEquals("Child-frame WebRTC escaped the sandbox", 0, udpHits.get())
             }
-        } finally { server.close(); thread.join(1000) }
+        } finally { server.close(); udp.close(); thread.join(1000); udpThread.join(1000) }
     }
     @Test fun realStorageBridgeRejectsForgedScopeAndPersistsExactlyOneRecord() = runBlocking {
         val db = (context.applicationContext as AtlasApplication).database
@@ -97,6 +101,12 @@ class WorkspaceDeviceTest {
                 val raw = evaluate(view, "document.body.dataset.results")
                 val page = JSONObject(JSONArray("[$raw]").getString(0)); assertEquals(1, page.getJSONArray("records").length())
                 assertEquals("Persisted", page.getJSONArray("records").getJSONObject(0).getJSONObject("data").getString("text"))
+                withContext(Dispatchers.Main) {
+                    val bitmap = android.graphics.Bitmap.createBitmap(view.view.width, view.view.height, android.graphics.Bitmap.Config.ARGB_8888)
+                    view.view.draw(android.graphics.Canvas(bitmap))
+                    java.io.File(context.cacheDir, "workspace-live-device.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                    bitmap.recycle()
+                }
             }
             assertEquals(1, db.listWorkspaceRecords(w.id, "notes").size)
         } finally { db.setComposableWorkspaceArchived(w.id, true); db.deleteComposableWorkspace(w.id) }

@@ -33,12 +33,13 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: true
-          script: cd apps/atlas-android && ./gradlew connectedSecureDebugAndroidTest
+          script: bash apps/atlas-android/verify-workspace-device.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: workspace-device-evidence
           path: |
+            apps/atlas-android/app/build/device-evidence
             apps/atlas-android/app/build/reports/androidTests
             apps/atlas-android/app/build/outputs/androidTest-results
           retention-days: 14

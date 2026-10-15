@@ -24,7 +24,13 @@ class WorkspacePresentationPolicyTest {
             principal.copy(instanceId = "new"), principal.copy(mode = WorkspaceInstanceMode.FOREGROUND))) {
             assertNotEquals(policy.origin, WorkspacePresentationPolicy(other, "ui/index.html").origin)
         }
-        assertTrue(policy.acceptsMessage(policy.origin, true, true))
+        assertTrue(policy.acceptsMessage("null", true, true))
+        assertFalse(policy.acceptsMessage(policy.origin, true, true))
+        assertFalse(policy.acceptsMessage("null", false, true))
+        assertFalse(policy.acceptsMessage("null", true, false))
+        assertTrue(policy.csp.contains("sandbox allow-scripts allow-forms"))
+        assertFalse(policy.csp.contains("allow-same-origin"))
+        assertTrue(policy.csp.contains("script-src ${policy.origin}"))
         assertFalse(policy.acceptsMessage(policy.origin, false, true))
         assertFalse(policy.acceptsMessage(policy.origin, true, false))
         assertFalse(policy.acceptsMessage("https://example.com", true, true))

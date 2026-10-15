@@ -74,7 +74,7 @@ class WorkspaceWorkerSupervisor(context: Context) {
                     }
                     connection = callback
                     bound = context.bindIsolatedService(Intent(context, WorkspaceJavaScriptService::class.java), Context.BIND_AUTO_CREATE,
-                        "workspace-${token}", context.mainExecutor, callback)
+                        "workspace_${token.replace("-", "")}", context.mainExecutor, callback)
                     if (!bound && continuation.isActive) continuation.resume(JSONObject().put("ok", false).put("code", "WORKER_UNAVAILABLE").put("summary", "Worker binding was denied"))
                 }
             }

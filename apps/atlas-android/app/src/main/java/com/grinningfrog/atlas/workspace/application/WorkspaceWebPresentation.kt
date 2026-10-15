@@ -90,6 +90,9 @@ class WorkspaceWebPresentation(
             override fun onJsPrompt(view: WebView, url: String, message: String, defaultValue: String, result: JsPromptResult): Boolean { result.cancel(); return true }
         }
         view.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                if (!policy.navigation(url)) { dispose(); onFailure("Workspace navigation escaped its package") }
+            }
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = !policy.navigation(request.url.toString())
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean = !policy.navigation(url)
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse = serve(request.url.toString(), request.method)
@@ -103,7 +106,10 @@ class WorkspaceWebPresentation(
             }
             override fun onRenderProcessResponsive(view: WebView, renderer: WebViewRenderProcess?) = Unit
         })
-        WebViewCompat.addWebMessageListener(view, "atlasTransport", setOf(policy.origin)) { _, message, source, mainFrame, reply ->
+        // The CSP sandbox gives the document an opaque origin. Android's main-frame flag,
+        // this WebView's packaged-only navigation and the bound epoch supply the authority.
+        // Subframes receive no dispatch authority even though their opaque origin is also "null".
+        WebViewCompat.addWebMessageListener(view, "atlasTransport", setOf("*")) { _, message, source, mainFrame, reply ->
             if (!policy.acceptsMessage(source.toString(), mainFrame, !disposed && current())) return@addWebMessageListener
             val raw = runCatching { message.data }.getOrNull() ?: return@addWebMessageListener
             val now = android.os.SystemClock.elapsedRealtime()
@@ -143,12 +149,12 @@ class WorkspaceWebPresentation(
         WebStorage.getInstance().deleteOrigin(policy.origin)
         view.destroy()
     }
-    private fun denied() = WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", mapOf("Content-Security-Policy" to WorkspacePresentationPolicy.CSP), ByteArrayInputStream(ByteArray(0)))
+    private fun denied() = WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", mapOf("Content-Security-Policy" to policy.csp), ByteArrayInputStream(ByteArray(0)))
     private fun serve(url: String, method: String): WebResourceResponse {
         if (disposed || !current()) return denied()
         val path = policy.resource(url, method) ?: return denied()
         val content = if (path == "atlas/host.js") WorkspaceHostRegistry.sdk() else if (files.has(path)) files.getString(path) else return denied()
         val mime = when (path.substringAfterLast('.')) { "html" -> "text/html"; "js" -> "text/javascript"; "css" -> "text/css"; "svg" -> "image/svg+xml"; "json" -> "application/json"; else -> "text/plain" }
-        return WebResourceResponse(mime, "UTF-8", 200, "OK", mapOf("Content-Security-Policy" to WorkspacePresentationPolicy.CSP, "Cache-Control" to "no-store", "X-Content-Type-Options" to "nosniff", "Referrer-Policy" to "no-referrer", "X-DNS-Prefetch-Control" to "off"), ByteArrayInputStream(content.toByteArray(Charsets.UTF_8)))
+        return WebResourceResponse(mime, "UTF-8", 200, "OK", mapOf("Content-Security-Policy" to policy.csp, "Cache-Control" to "no-store", "X-Content-Type-Options" to "nosniff", "Referrer-Policy" to "no-referrer", "X-DNS-Prefetch-Control" to "off", "Access-Control-Allow-Origin" to "*"), ByteArrayInputStream(content.toByteArray(Charsets.UTF_8)))
     }
 }
