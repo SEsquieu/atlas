@@ -42,6 +42,22 @@ class WorkspaceApplicationDataTest {
         assertEquals(first.toString(), store.inspect(p, id).toString())
         assertEquals(1, store.query(p, JSONObject().put("collection", "notes")).getJSONArray("records").length())
     }
+    @Test fun updateDeleteAndVersionedPaginationUseTheSameStore() {
+        val p = installed()
+        val receipt = store.commit(p, prepare(p, create("First"), create("Second")))
+        val id = receipt.getJSONArray("record_ids").getString(0)
+        val page = store.query(p, JSONObject().put("collection", "notes").put("limit", 1).put("expected_data_version", 2))
+        assertEquals(1, page.getJSONArray("records").length())
+        assertEquals(1, page.getInt("next_offset"))
+        val update = JSONObject().put("kind", "update").put("collection", "notes").put("record_id", id).put("data", JSONObject().put("text", "Updated"))
+        store.commit(p, prepare(p, update))
+        assertEquals("Updated", db.listWorkspaceRecords(p.workspaceId, "notes").single { it.id == id }.let { JSONObject(it.dataJson).getString("text") })
+        assertThrows(IllegalArgumentException::class.java) { store.query(p, JSONObject().put("collection", "notes").put("expected_data_version", 2)) }
+        val deletion = JSONObject().put("kind", "delete").put("collection", "notes").put("record_id", id)
+        store.commit(p, prepare(p, deletion))
+        assertEquals(4L, store.version(p.workspaceId))
+        assertEquals(1, db.listWorkspaceRecords(p.workspaceId, "notes").size)
+    }
     @Test fun failedBatchRollsBackRecordsVersionAndReceipt() {
         val p = installed()
         val missing = JSONObject().put("kind", "delete").put("collection", "notes").put("record_id", "missing")
