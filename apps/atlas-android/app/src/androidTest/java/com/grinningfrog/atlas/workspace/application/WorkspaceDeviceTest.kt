@@ -4,6 +4,8 @@ import androidx.test.core.app.ActivityScenario
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
+import androidx.core.view.doOnAttach
+import androidx.core.view.doOnLayout
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.grinningfrog.atlas.AtlasApplication
@@ -164,7 +166,10 @@ class WorkspaceDeviceTest {
             withContext(Dispatchers.Main) {
                 presentation = WorkspaceWebPresentation(context, bundle, principal, { true }, { ready.complete(Unit) }, { ready.completeExceptionally(IllegalStateException(it)) }, store)
             }
-            scenario.onActivity { it.setContentView(presentation!!.view); presentation!!.load() }
+            scenario.onActivity {
+                it.setContentView(presentation!!.view)
+                presentation!!.view.doOnAttach { view -> view.doOnLayout { presentation!!.loadAttached() } }
+            }
             withTimeout(15_000) { ready.await() }
             check(presentation!!)
         } finally {
