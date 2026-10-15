@@ -10,7 +10,7 @@ object WorkspaceHostRegistry {
     private val methods = linkedMapOf("host.describe" to emptySchema, "host.ready" to emptySchema)
     private val storageMethods = linkedMapOf(
         "data.query" to JSONObject("""{"type":"object","properties":{"collection":{"type":"string","maxLength":64},"limit":{"type":"integer"},"offset":{"type":"integer"},"expected_data_version":{"type":"integer"}},"required":["collection"],"additionalProperties":false}"""),
-        "data.prepare" to JSONObject("""{"type":"object","properties":{"expected_data_version":{"type":"integer"},"request_key":{"type":"string","maxLength":128},"mutations":{"type":"array","maxItems":32,"items":{"type":"object","description":"create: kind,collection,data; update: kind,collection,record_id,data; delete: kind,collection,record_id. data is a strict JSON object; unknown mutation fields are rejected."}}},"required":["expected_data_version","mutations"],"additionalProperties":false}"""),
+        "data.prepare" to JSONObject("""{"type":"object","properties":{"expected_data_version":{"type":"integer"},"request_key":{"type":"string","maxLength":128},"mutations":{"type":"array","maxItems":32,"items":{"type":"object","description":"create: kind,collection,data; update: kind,collection,record_id,data; delete: kind,collection,record_id. data is a strict JSON object; unknown mutation fields are rejected."}}},"required":["expected_data_version","request_key","mutations"],"additionalProperties":false}"""),
         "data.commit" to operationSchema, "data.inspect" to operationSchema, "data.cancel" to operationSchema,
     )
     fun describe(principal: WorkspacePrincipal, storage: Boolean = false): JSONObject = WorkspaceApplicationContract.descriptor()
@@ -23,7 +23,7 @@ object WorkspaceHostRegistry {
         if (schema == null) return false
         WorkspaceApplicationContract.checkJson(params)
         if (method == "data.prepare") {
-            WorkspaceApplicationContract.exactKeys(params, setOf("expected_data_version", "request_key", "mutations"), setOf("expected_data_version", "mutations"))
+            WorkspaceApplicationContract.exactKeys(params, setOf("expected_data_version", "request_key", "mutations"), setOf("expected_data_version", "request_key", "mutations"))
             params.getJSONArray("mutations") // full closed mutation validation belongs to the transaction store
         } else WorkspaceJsonSchema.validate(schema, params)
         return true

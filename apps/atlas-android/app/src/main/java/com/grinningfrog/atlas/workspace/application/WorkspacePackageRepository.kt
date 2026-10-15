@@ -31,8 +31,17 @@ class WorkspacePackageRepository(private val database: AtlasDatabase) {
             while (cursor.moveToNext()) rows.put(JSONObject().put("candidate_id", cursor.getString(0)).put("base_revision_id", cursor.getString(1))
                 .put("parent_candidate_id", if (cursor.isNull(2)) JSONObject.NULL else cursor.getString(2)).put("content_hash", cursor.getString(3)).put("created_at_ms", cursor.getLong(4)))
         }
-        return JSONObject().put("workspace_id", workspaceId).put("live_revision_id", database.loadComposableWorkspace(workspaceId)!!.liveRevisionId)
+        val live = database.loadLiveWorkspaceRevision(workspaceId)!!
+        val bundle = JSONObject(live.definitionJson)
+        return JSONObject().put("workspace_id", workspaceId).put("live_revision_id", live.id)
             .put("candidates", rows).put("contract", WorkspaceApplicationContract.descriptor())
+            .put("data_version", WorkspaceApplicationData(database).version(workspaceId)).put("epoch", WorkspaceApplicationData(database).epoch(workspaceId))
+            .apply {
+                if (WorkspaceApplicationData.isApplication(bundle)) {
+                    put("manifest", bundle.getJSONObject("manifest"))
+                    put("files", JSONArray(bundle.getJSONObject("files").keys().asSequence().sorted().map { path -> JSONObject().put("path", path).put("sha256", WorkspaceApplicationContract.hash(bundle.getJSONObject("files").getString(path))).put("bytes", bundle.getJSONObject("files").getString(path).toByteArray(Charsets.UTF_8).size) }.toList()))
+                } else put("legacy_format", bundle.optString("format")).put("migration", "Nonempty historical workspaces require an explicit converter; create a new package workspace to preserve the original.")
+            }
     }
 
     /** Entire file batch is validated before any row is inserted. Old candidates are never updated. */
@@ -95,7 +104,9 @@ class WorkspacePackageRepository(private val database: AtlasDatabase) {
             .put("bundle", bundle).put("created_at_ms", cursor.getLong(4)).put("executed", false).put("activated", false)
             .put("checks", JSONArray().apply {
                 database.readableDatabase.rawQuery("SELECT result_json FROM workspace_application_checks WHERE workspace_id=? AND candidate_id=? ORDER BY created_at DESC,check_id DESC LIMIT 5", arrayOf(workspaceId, candidateId)).use { checks ->
-                    while (checks.moveToNext()) put(JSONObject(checks.getString(0)))
+                    while (checks.moveToNext()) put(JSONObject(checks.getString(0)).apply {
+                        put("applicable_to_current_state", getString("base_revision_id") == database.loadComposableWorkspace(workspaceId)!!.liveRevisionId && getLong("data_version") == WorkspaceApplicationData(database).version(workspaceId))
+                    })
                 }
             }).also { result ->
                 result.put("executed", result.getJSONArray("checks").length() > 0)

@@ -103,7 +103,7 @@ class ToolHarness(
     fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision {
         val definition = definition(proposal.name)
             ?: return ToolPolicyDecision(false, false, ToolRisk.EXTERNAL_EFFECT, "Tool is not registered on this device")
-        if (proposal.argumentsJson.toByteArray().size > 16_384) {
+        if (proposal.argumentsJson.toByteArray(Charsets.UTF_8).size > definition.maxArgumentBytes.coerceIn(16_384, 1_100_000)) {
             return ToolPolicyDecision(false, false, definition.risk, "Tool arguments exceed the Atlas limit")
         }
         val arguments = runCatching { JSONObject(proposal.argumentsJson) }.getOrNull()

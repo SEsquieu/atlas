@@ -52,6 +52,9 @@ class WorkspaceCandidateLifecycleTest {
         assertEquals(result.getString("revision_id"), workspace.liveRevisionId)
         assertEquals(1L, WorkspaceApplicationData(db).epoch(workspace.id))
         assertEquals(c.getString("content_hash"), db.loadLiveWorkspaceRevision(workspace.id)!!.contentHash)
+        val replay = activate(c, checked) { _, _ -> error("A committed activation must not rerun startup") }
+        assertEquals(result.getString("revision_id"), replay.getString("revision_id"))
+        assertEquals(1L, replay.getLong("epoch"))
     }
     @Test fun compatibleReplacementPreservesRecordsAndFencesOldPrincipal() = runTest {
         val first = candidate(); val original = activate(first, checks(first)) { _, _ -> true }

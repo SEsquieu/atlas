@@ -6,6 +6,9 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -22,13 +25,15 @@ class WorkspaceWorkerSupervisor(context: Context) {
         require(errors.isEmpty()) { "VALIDATION_FAILED: ${errors.joinToString("; ")}" }
         val serialized = bundle.toString()
         val inputJson = WorkspaceApplicationContract.canonical(input)
-        require(serialized.toByteArray(Charsets.UTF_8).size + inputJson.toByteArray(Charsets.UTF_8).size <= 256 * 1024) { "QUOTA_EXCEEDED: isolated-worker payload" }
+        require(inputJson.toByteArray(Charsets.UTF_8).size <= WorkspaceApplicationContract.MAX_MESSAGE_BYTES - 32) { "QUOTA_EXCEEDED: worker input" }
         val export = bundle.getJSONObject("manifest").getJSONObject("exports").getJSONObject(exportName)
         WorkspaceJsonSchema.validate(export.getJSONObject("input_schema"), input)
         val token = UUID.randomUUID().toString()
         var remote: Messenger? = null
         var connection: ServiceConnection? = null
         var bound = false
+        val pipe = ParcelFileDescriptor.createPipe()
+        var writer: Job? = null
         try {
             withTimeout(5000) {
                 suspendCancellableCoroutine { continuation ->
@@ -50,9 +55,14 @@ class WorkspaceWorkerSupervisor(context: Context) {
                             val messenger = Messenger(binder); remote = messenger
                             val request = Message.obtain(null, 1).apply {
                                 replyTo = responses
-                                data = Bundle().apply { putString("token", token); putString("bundle", serialized); putString("export", exportName); putString("input", inputJson) }
+                                data = Bundle().apply { putString("token", token); putParcelable("bundle_fd", pipe[0]); putString("export", exportName); putString("input", inputJson) }
                             }
-                            runCatching { messenger.send(request) }.onFailure {
+                            runCatching {
+                                messenger.send(request)
+                                writer = CoroutineScope(continuation.context).launch(Dispatchers.IO) {
+                                    runCatching { ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { it.write(serialized.toByteArray(Charsets.UTF_8)) } }
+                                }
+                            }.onFailure {
                                 if (continuation.isActive) continuation.resume(JSONObject().put("ok", false).put("code", "WORKER_UNAVAILABLE").put("summary", "Worker request failed"))
                             }
                         }
@@ -70,6 +80,8 @@ class WorkspaceWorkerSupervisor(context: Context) {
             }
         } finally {
             // External control channel cannot be reached from generated JavaScript.
+            writer?.cancel()
+            pipe.forEach { runCatching { it.close() } }
             runCatching { remote?.send(Message.obtain(null, 2)) }
             if (bound) connection?.let { runCatching { context.unbindService(it) } }
         }

@@ -29,9 +29,18 @@ class WorkspaceJavaScriptService : Service() {
                     control.postDelayed({ Process.killProcess(Process.myPid()) }, 4000)
                     worker.execute {
                         val result = runCatching {
-                            val raw = args.getString("bundle") ?: error("Missing bundle")
-                            require(raw.toByteArray(Charsets.UTF_8).size <= 256 * 1024) { "QUOTA_EXCEEDED" }
-                            WorkspaceNativeEngine.run(JSONObject(raw), args.getString("export") ?: error("Missing export"), WorkspaceNativeEngine.input(args.getString("input") ?: "null"))
+                            val descriptor = args.getParcelable<ParcelFileDescriptor>("bundle_fd") ?: error("Missing package descriptor")
+                            val bytes = ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { stream ->
+                                val output = java.io.ByteArrayOutputStream(); val buffer = ByteArray(8192)
+                                while (true) {
+                                    val size = stream.read(buffer); if (size < 0) break
+                                    require(output.size() + size <= WorkspaceApplicationContract.MAX_PACKAGE_BYTES) { "QUOTA_EXCEEDED" }
+                                    output.write(buffer, 0, size)
+                                }
+                                output.toByteArray()
+                            }
+                            val bundle = WorkspaceApplicationContract.parseObject(bytes.toString(Charsets.UTF_8), WorkspaceApplicationContract.MAX_PACKAGE_BYTES)
+                            WorkspaceNativeEngine.run(bundle, args.getString("export") ?: error("Missing export"), WorkspaceNativeEngine.input(args.getString("input") ?: "null"))
                         }.getOrElse { JSONObject().put("ok", false).put("code", "EXECUTION_FAILED").put("summary", (it.message ?: "Worker failed").take(1000)) }
                         val response = Message.obtain(null, 1).apply { data = Bundle().apply { putString("token", token); putString("result", result.toString()) } }
                         runCatching { reply.send(response) }

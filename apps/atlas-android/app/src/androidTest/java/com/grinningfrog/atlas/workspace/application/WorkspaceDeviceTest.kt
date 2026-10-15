@@ -23,6 +23,7 @@ class WorkspaceDeviceTest {
     @Test fun isolatedWorkerExecutesAndTerminatesRunawayModule() = runBlocking {
         val worker = WorkspaceWorkerSupervisor(context)
         val bundle = WorkspaceApplicationContract.example()
+        bundle.getJSONObject("files").put("assets/one.txt", "x".repeat(200_000)).put("assets/two.txt", "y".repeat(200_000))
         assertTrue(worker.run(bundle, "health", JSONObject.NULL).getBoolean("value"))
         bundle.getJSONObject("files").put("tools/health.js", "export function health(){while(true){}}")
         assertFalse(worker.run(bundle, "health", JSONObject.NULL).getBoolean("ok"))

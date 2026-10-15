@@ -45,8 +45,8 @@ object WorkspaceApplicationContract {
         }
     }
 
-    fun parseObject(raw: String): JSONObject {
-        require(raw.toByteArray(Charsets.UTF_8).size <= MAX_MESSAGE_BYTES) { "QUOTA_EXCEEDED" }
+    fun parseObject(raw: String, maxBytes: Int = MAX_MESSAGE_BYTES): JSONObject {
+        require(raw.toByteArray(Charsets.UTF_8).size <= maxBytes) { "QUOTA_EXCEEDED" }
         var quoted = false
         var escaped = false
         var depth = 0
@@ -134,7 +134,8 @@ object WorkspaceApplicationContract {
         require(tests.length() <= 128) { "Too many tests" }
         for (i in 0 until tests.length()) {
             val test = tests.getJSONObject(i)
-            exactKeys(test, setOf("name", "export", "input", "expected"), setOf("name", "export", "input", "expected"))
+            exactKeys(test, setOf("name", "export", "input", "expected"), setOf("name", "export"))
+            require(test.has("input") && test.has("expected")) { "Missing fixture input or expected" }
             require(test.getString("name").length in 1..120 && exports.has(test.getString("export"))) { "Invalid test export or name" }
             val export = exports.getJSONObject(test.getString("export"))
             WorkspaceJsonSchema.validate(export.getJSONObject("input_schema"), test.get("input"))

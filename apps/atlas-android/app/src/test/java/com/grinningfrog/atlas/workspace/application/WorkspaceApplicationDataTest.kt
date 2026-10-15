@@ -32,6 +32,30 @@ class WorkspaceApplicationDataTest {
     private fun create(text: String) = JSONObject().put("kind", "create").put("collection", "notes").put("data", JSONObject().put("text", text))
     private fun prepare(principal: WorkspacePrincipal, vararg mutations: JSONObject): String = store.prepare(principal,
         JSONObject().put("expected_data_version", store.version(principal.workspaceId)).put("mutations", JSONArray(mutations.toList()))).getString("operation_id")
+    @Test fun requestKeysRecoverPrepareAndCancelWithoutReplayingWrites() {
+        val p = installed()
+        val request = JSONObject().put("expected_data_version", 0).put("request_key", "stable-request").put("mutations", JSONArray().put(create("Once")))
+        val first = store.prepare(p, request)
+        assertEquals(first.getString("operation_id"), store.prepare(p, request).getString("operation_id"))
+        store.commit(p, first.getString("operation_id"))
+        assertEquals("succeeded", store.prepare(p, request).getString("status"))
+        assertEquals(1, db.listWorkspaceRecords(p.workspaceId, "notes").size)
+        val changed = JSONObject(request.toString()).put("mutations", JSONArray().put(create("Other")))
+        assertThrows(IllegalArgumentException::class.java) { store.prepare(p, changed) }
+        val cancelled = prepare(p, create("Never"))
+        assertEquals("cancelled", store.cancel(p, cancelled).getString("status"))
+        assertEquals("cancelled", store.commit(p, cancelled).getString("status"))
+        assertEquals(1, db.listWorkspaceRecords(p.workspaceId, "notes").size)
+    }
+    @Test fun registryUsesBoundPrincipalAndNeverInstallsPreviewStorage() {
+        val p = installed()
+        val result = WorkspaceHostRegistry.dispatch(p, "data.query", JSONObject().put("collection", "notes"), store)
+        assertEquals(0, result.getJSONArray("records").length())
+        assertThrows(IllegalArgumentException::class.java) { WorkspaceHostRegistry.dispatch(p.copy(mode = WorkspaceInstanceMode.PREVIEW), "data.query", JSONObject().put("collection", "notes"), store) }
+        assertThrows(IllegalArgumentException::class.java) { WorkspaceHostRegistry.dispatch(p, "data.query", JSONObject().put("collection", "notes").put("workspace_id", "other"), store) }
+        assertFalse(WorkspaceHostRegistry.validate("device.ble.connect", JSONObject(), true))
+        assertFalse(WorkspaceHostRegistry.describe(p.copy(mode = WorkspaceInstanceMode.PREVIEW)).getJSONObject("methods").has("data.query"))
+    }
     @Test fun commitRetryAndReopenPreserveExactlyOneWriteAndReceipt() {
         val p = installed(); val id = prepare(p, create("Keep"))
         assertEquals("prepared", store.inspect(p, id).getString("status"))

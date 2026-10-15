@@ -172,6 +172,7 @@ data class ToolDefinition(
     val risk: ToolRisk,
     val requiresConfirmation: Boolean = false,
     val maxCallsPerTurn: Int = 2,
+    val maxArgumentBytes: Int = 16_384,
 )
 
 data class ToolCallProposal(
