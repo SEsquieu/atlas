@@ -219,6 +219,20 @@ class ContextAssemblerTest {
         assertTrue(context.approximateCharacters < 20_000)
     }
 
+    @Test fun earlierSourceReadsBecomePinnedReferencesOnlyWhenTheTurnNeedsSpace() {
+        val messages = mutableListOf(message(1, "turn", MessageRole.USER, "Inspect files"))
+        for (i in 0..2) {
+            val calls = org.json.JSONArray().put(org.json.JSONObject().put("id", "read-$i").put("name", "workspace_package_read_file").put("arguments", "{}"))
+            messages += message((2 + i * 2).toLong(), "turn", MessageRole.ASSISTANT, "").copy(toolCallsJson = calls.toString())
+            messages += message((3 + i * 2).toLong(), "turn", MessageRole.TOOL, org.json.JSONObject().put("source", "x".repeat(1000)).put("revision_id", "pinned").put("path", "file-$i.js").toString(), MessageKind.TOOL_RESULT).copy(toolCallId = "read-$i")
+        }
+        val context = ContextAssembler(ContextBudget(maxConversationCharacters = 2900)).assemble(session(), messages, emptyList(), null, null, 10)
+        assertTrue(context.messages.any { it.content.contains("source_omitted") })
+        assertTrue(context.messages.last().content.contains("x".repeat(1000)))
+        assertEquals("read-2", context.messages.last().toolCallId)
+        assertTrue(messages[2].content.contains("x".repeat(1000)))
+    }
+
     private fun session() = AtlasSession("session", "test", "stay coherent", SessionStatus.ACTIVE, 0, 0)
     private fun message(sequence: Long, turn: String, role: MessageRole, content: String, kind: MessageKind = MessageKind.DIALOGUE) = AtlasMessage(
         sequence = sequence, id = "message-$sequence", sessionId = "session", turnId = turn, role = role, content = content, createdAtMs = sequence, kind = kind,

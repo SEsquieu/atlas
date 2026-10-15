@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "apps/atlas-android/**"
+      - "!apps/atlas-android/RELEASE"
       - ".github/workflows/workspace-device.yml"
 permissions:
   contents: read

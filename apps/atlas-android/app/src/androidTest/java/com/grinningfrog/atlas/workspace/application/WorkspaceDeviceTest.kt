@@ -99,10 +99,12 @@ class WorkspaceDeviceTest {
         val thread = Thread { while (!server.isClosed) { try { server.accept().use { hits.incrementAndGet() } } catch (_: Exception) { break } } }.apply { isDaemon = true; start() }
         try {
             val bundle = WorkspaceApplicationContract.example()
+            bundle.getJSONObject("files").put("assets/fixture.json", "{\"value\":7}")
             bundle.getJSONObject("files").put("ui/app.js", """
                 import {host} from '/atlas/host.js';
                 const issues=[];
-                for(const name of ['RTCPeerConnection','WebSocket','Worker','SharedWorker','indexedDB','localStorage']) if(typeof globalThis[name]!=='undefined')issues.push(name);
+                try{const local=await fetch('/assets/fixture.json').then(r=>r.json());if(local.value!==7)issues.push('packaged JSON');}catch(_){issues.push('packaged JSON blocked');}
+                for(const name of ['RTCPeerConnection','WebSocket','WebTransport','Worker','SharedWorker','indexedDB','localStorage']) if(typeof globalThis[name]!=='undefined')issues.push(name);
                 for(const name of ['bluetooth','usb','mediaDevices','geolocation','serviceWorker','credentials','clipboard','sendBeacon']) if(typeof navigator[name]!=='undefined')issues.push('navigator.'+name);
                 const iframe=document.createElement('iframe');document.body.append(iframe);
                 try{if(iframe.contentWindow && typeof iframe.contentWindow.RTCPeerConnection!=='undefined')issues.push('child.RTCPeerConnection');}catch(_){}

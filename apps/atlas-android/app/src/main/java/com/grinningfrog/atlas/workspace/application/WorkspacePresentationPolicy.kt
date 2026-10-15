@@ -8,7 +8,7 @@ class WorkspacePresentationPolicy(val principal: WorkspacePrincipal, private val
     val entryUrl = "$origin/$entry"
     val csp: String get() = CSP.replace("'self'", origin)
     companion object {
-        const val CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; media-src 'self' blob:; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; sandbox allow-scripts allow-forms"
+        const val CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; media-src 'self' blob:; connect-src 'self'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; sandbox allow-scripts allow-forms"
     }
     fun resource(url: String, method: String): String? = runCatching {
         if (method != "GET") return null

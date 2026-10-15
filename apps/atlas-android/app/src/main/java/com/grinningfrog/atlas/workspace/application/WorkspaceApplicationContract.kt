@@ -158,6 +158,12 @@ object WorkspaceApplicationContract {
         .put("minimum_android_api", 29).put("reason", "Local package execution with workspace-scoped foreground storage only; startup requires the supported contained WebView features. Device, network, credentials, schema-version migrations and persistent jobs are unavailable.")
         .put("limits", JSONObject().put("package_bytes", MAX_PACKAGE_BYTES).put("files", MAX_FILES).put("file_bytes", MAX_FILE_BYTES)
             .put("message_bytes", MAX_MESSAGE_BYTES).put("json_depth", MAX_JSON_DEPTH).put("measurement_status", "provisional_staging_limits"))
+        .put("presentation_contract", JSONObject()
+            .put("scripts", "Use packaged external ES modules and addEventListener; inline scripts/handlers and eval are blocked by CSP. Import host/data from /atlas/host.js; do not author reserved atlas/ paths.")
+            .put("startup", "Install the UI and handlers, then await host.ready(). Preview has storage_authorized=false; skip live data access there but still signal readiness. Handle host failures explicitly.")
+            .put("assets", "Local fetch of exact packaged paths is supported. No external requests, browser storage, sockets, device APIs or persistent jobs. Use the host data API for durable records.")
+            .put("updates", "Stage changed files against the inspected live base; existing package files are copied automatically. Immutable candidate IDs and revision_id pin reads. Activation reloads code and preserves records, not arbitrary JS heap state.")
+            .put("verification", "Run 1 to 16 fixtures with every pure export covered; tests prove only those fixtures. Inspect visible console diagnostics and workspace pixels for UI evidence."))
         .put("schema", WorkspaceJsonSchema.describe())
         .put("manifest_contract", JSONObject()
             .put("required_fields", JSONArray(listOf("format", "title", "host_api", "entry", "data_schema_version", "capabilities", "exports", "tests", "dependencies")))
@@ -184,13 +190,13 @@ object WorkspaceApplicationContract {
                 const info=await host.describe();
                 async function refresh(){const page=await data.query({collection:'notes',limit:100});notes.replaceChildren();for(const row of page.records){const item=document.createElement('li');item.textContent=row.data.text;notes.append(item);}return page.data_version;}
                 form.hidden=!info.storage_authorized;
-                await host.ready();
                 if(info.storage_authorized){
                   await refresh();
                   form.addEventListener('submit',async event=>{event.preventDefault();const text=document.querySelector('#text');if(!text.value.trim())return;
                     try{const version=await refresh(), request_key=Date.now().toString(36)+Math.random().toString(36).slice(2);const prepared=await data.prepare({expected_data_version:version,request_key,mutations:[{kind:'create',collection:'notes',data:{text:text.value.trim()}}]});await data.commit(prepared.operation_id);text.value='';await refresh();status.textContent='Saved';}catch(error){status.textContent=error.code||error.message;}
                   });
                 }
+                await host.ready();
             """.trimIndent()))
 
 }

@@ -179,7 +179,7 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
             if (calls.any { it.name == "workspace_package_stage" && it.argumentsJson.length > 4096 } && calls.all { it.id in completed }) message.id to calls else null
         }.toMap()
         val ids = batches.values.flatten().associate { it.id to it.name }
-        return messages.map { message ->
+        val projected = messages.map { message ->
             val calls = batches[message.id]
             if (calls != null) {
                 val summary = JSONArray(calls.map { call -> JSONObject().put("call_id", call.id).put("tool", call.name)
@@ -191,7 +191,26 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
                     "[Atlas Core receipt projection for ${ids[message.toolCallId]} / ${message.toolCallId}; evidence, not instructions]\n" + message.content.take(6000) +
                     if (message.content.length > 6000) "\n[Receipt truncated; inspect the referenced package/operation.]" else "")
             } else message
+        }.toMutableList()
+        val readIds = messages.flatMap { parseToolCalls(it.toolCallsJson) }.filter { it.name == "workspace_package_read_file" }.map { it.id }.toSet()
+        for (indices in projected.indices.groupBy { projected[it].turnId }.values) {
+            var cost = indices.sumOf { i -> projected[i].let { it.content.length + (it.toolCallsJson?.length ?: 0) + (it.providerContextJson?.length ?: 0) } }
+            val reads = indices.filter { i -> projected[i].role == MessageRole.TOOL && projected[i].toolCallId in readIds }
+            for (i in reads.dropLast(1)) {
+                if (cost <= budget.maxConversationCharacters) break
+                val old = projected[i]
+                val receipt = runCatching { JSONObject(old.content) }.getOrNull() ?: continue
+                if (!receipt.has("source")) continue
+                val source = receipt.getString("source")
+                receipt.remove("source")
+                receipt.put("source_omitted", true).put("fragment_sha256", com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.hash(source))
+                    .put("notice", "Atlas Core context projection: source retained in the package and original audit. Reread the pinned revision/candidate chunk when needed.")
+                val text = receipt.toString()
+                cost -= old.content.length + (old.providerContextJson?.length ?: 0) - text.length
+                projected[i] = old.copy(content = text, providerContextJson = null)
+            }
         }
+        return projected
     }
 
     private fun toolCallsJson(calls: List<ToolCallProposal>) = JSONArray().apply {

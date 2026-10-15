@@ -20,7 +20,7 @@ private const val AUTHORING_GUIDE = "Inspect workspace_capabilities before decla
 object WorkspaceTools {
     fun create(database: AtlasDatabase, mediaRepository: MediaRepository? = null, applicationContext: android.content.Context? = null): List<AtlasToolAdapter> = listOf(
         Capabilities(database), ListWorkspaces(database), TargetWorkspace(database), UpdateMetadata(database), ValidateDefinition(database), CreateWorkspace(database), InspectWorkspace(database), ReplaceDefinition(database), PatchDefinition(database), AddRecord(database), UpdateRecord(database), DeleteRecord(database), RestoreRecord(database), RenderDiagnostics(database),
-    ).filter { applicationContext == null || it.definition.name in setOf("workspace_list", "workspace_target", "workspace_update_metadata", "workspace_render_diagnostics") } +
+    ).filter { applicationContext == null || it.definition.name in setOf("workspace_list", "workspace_target", "workspace_update_metadata", "workspace_render_diagnostics", "workspace_inspect") } +
         com.grinningfrog.atlas.workspace.application.WorkspacePackageTools.create(database, applicationContext) +
         (if (applicationContext != null) com.grinningfrog.atlas.workspace.application.WorkspaceLiveTools.create(database, applicationContext) else emptyList()) + if (mediaRepository == null) emptyList() else listOf(CaptureWorkspace(database, mediaRepository))
 }
@@ -161,7 +161,7 @@ private class TargetWorkspace(database: AtlasDatabase) : LocalWorkspaceMutation(
 private class InspectWorkspace(database: AtlasDatabase) : WorkspaceAdapter(database) {
     override val supportsLocalDiagnostics = true
     override val definition = ToolDefinition(
-        "workspace_inspect", "Inspect any same-realm workspace by ID; omitted ID uses the task target. Inspection of a reference does not retarget edits. Compact mode is optimized for diagnosis; request full mode only when editing the definition. Records are omitted unless explicitly requested.",
+        "workspace_inspect", "Inspect any same-realm workspace by ID; omitted ID uses the task target. Inspection of a reference does not retarget edits. Compact mode is optimized for diagnosis. Full mode may expose historical native definitions as reference evidence; those formats are not authoring choices. Use the package contract and source tools for all new app development. Records are omitted unless explicitly requested.",
         """{"type":"object","properties":{"workspace_id":{"type":"string"},"mode":{"type":"string","enum":["compact","full"]},"collection":{"type":"string"},"include_records":{"type":"boolean"},"record_limit":{"type":"integer","minimum":1,"maximum":50}},"additionalProperties":false}""",
         ToolRisk.READ_ONLY, maxCallsPerTurn = 3,
     )
@@ -178,7 +178,7 @@ private class InspectWorkspace(database: AtlasDatabase) : WorkspaceAdapter(datab
         val definition = JSONObject(revision.definitionJson)
         val records = JSONArray()
         if (args.optBoolean("include_records")) database.listWorkspaceRecords(id, args.optString("collection").takeIf(String::isNotBlank), args.optInt("record_limit", 10).coerceIn(1, 50)).forEach { record ->
-            records.put(JSONObject().apply { put("id", record.id); put("collection", record.collection); put("data", JSONObject(record.dataJson)) })
+            records.put(JSONObject().apply { put("id", if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(definition)) record.id.removePrefix("$id:") else record.id); put("collection", record.collection); put("data", JSONObject(record.dataJson)) })
         }
         return ToolExecutionResult(JSONObject().apply {
             put("workspace_id", id); put("name", workspace.name); put("description", workspace.description); put("revision_id", revision.id)

@@ -66,7 +66,7 @@ class WorkspaceWebPresentation(
         if (WebViewFeature.isFeatureSupported(WebViewFeature.MUTE_AUDIO)) WebViewCompat.setAudioMuted(view, true)
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) WebViewCompat.addDocumentStartJavaScript(view, """
             (() => {
-              for (const name of ['RTCPeerConnection','webkitRTCPeerConnection','mozRTCPeerConnection','AudioContext','webkitAudioContext','OfflineAudioContext','WebSocket','EventSource','Worker','SharedWorker','showOpenFilePicker','showSaveFilePicker','showDirectoryPicker','indexedDB','caches','openDatabase','localStorage','sessionStorage']) {
+              for (const name of ['RTCPeerConnection','webkitRTCPeerConnection','mozRTCPeerConnection','AudioContext','webkitAudioContext','OfflineAudioContext','WebSocket','WebTransport','EventSource','Worker','SharedWorker','showOpenFilePicker','showSaveFilePicker','showDirectoryPicker','indexedDB','caches','openDatabase','localStorage','sessionStorage']) {
                 Object.defineProperty(globalThis,name,{value:undefined,writable:false,configurable:false});
               }
               for (const name of ['clipboard','share','canShare','credentials','bluetooth','usb','serial','hid','contacts','wakeLock','serviceWorker','sendBeacon','mediaDevices','geolocation']) {
