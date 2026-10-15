@@ -1,2 +1,2 @@
-0.1.0-alpha.23
-Recover oversized workspace inspection context, remove duplicate contracts and identify partial inference evidence.
+0.1.0-alpha.24
+Harden database lock ordering, durable app-task recovery, actionable failure evidence and progress tracking.

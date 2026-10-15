@@ -171,3 +171,9 @@ When a turn remains over the conversation character budget, Core projects large 
 Check that Atlas proceeds past inspection to source reads, staging, meaningful pure/UI tests and activation. A successful context recovery alone does not establish that the app repair succeeded. Export the resulting session and exercise scan, connect, services, read, write and notifications to evaluate consent reuse. This release does not establish the cause of all previously reported permission dialogs.
 
 Unrecoverable requests (including user content exceeding the budget or excessive message counts) still stop with an accurate local-budget explanation; retrying unchanged context is not described as a remedy. The character limit is unchanged.
+
+## Alpha.24 phone acceptance
+
+Retry the existing Bench Companion repair task without manually patching its source. Confirm that the current target and latest candidate survive slice boundaries and app restart. When a UI test fails, the next request should retain failed selector, actual/expected text and missing operations. Atlas should correct the assertion or implementation, cover the requested interactions, and activate a verified revision while preserving records. A completed read or a merely staged candidate is not task completion.
+
+During an agent task, navigate between workspaces repeatedly and export after any stall or termination. Inspect runtime diagnostics together with `execution.progress`, `work_state`, exact candidate IDs and the final activation receipt. An unchanged frontier with increasing `no_progress_slices` is stagnation evidence, distinct from successful tests or implementation progress. The new guidance does not automatically cancel a long task.
