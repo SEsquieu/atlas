@@ -8,6 +8,9 @@ import java.util.UUID
 
 /** Internal coordinator. No agent-supplied boolean can substitute for host presentation proof. */
 internal class WorkspaceApplicationActivation(private val database: AtlasDatabase) {
+    suspend fun activate(context: android.content.Context, workspaceId: String, realmId: String, candidateId: String, checkId: String): JSONObject =
+        activate(workspaceId, realmId, candidateId, checkId) { bundle, principal -> WorkspacePresentationProbe.ready(context, bundle, principal) }
+
     /**
      * Host must own the preview and dispose it on success, failure, or cancellation. Preview has no
      * live data/device bindings. Only the live-pointer/epoch transaction below exposes live state.
