@@ -24,6 +24,17 @@ import kotlin.coroutines.resume
 
 @RunWith(AndroidJUnit4::class)
 class WorkspaceDeviceTest {
+    private fun accessibilityRoots(): List<android.view.accessibility.AccessibilityNodeInfo> {
+        val automation=InstrumentationRegistry.getInstrumentation().uiAutomation
+        val info=automation.serviceInfo
+        if(info.flags and android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS==0) {
+            info.flags=info.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            automation.serviceInfo=info
+        }
+        if(android.os.Build.VERSION.SDK_INT>=34)automation.clearCache()
+        return automation.windows.mapNotNull{it.root}.ifEmpty{listOfNotNull(automation.rootInActiveWindow)}
+            .filter{it.packageName?.toString()==context.packageName}
+    }
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     @Test fun previewLoadsAuthoredStylesWithoutClaimingVisualVerification() = runBlocking {
         val bundle = JSONObject(InstrumentationRegistry.getInstrumentation().context.assets.open("neon-vale-rendering.json").bufferedReader().use { it.readText() })
@@ -282,7 +293,7 @@ class WorkspaceDeviceTest {
             withTimeout(8_000) {
                 var clicked=false
                 while(!clicked) {
-                    val root=automation.rootInActiveWindow
+                    val roots=accessibilityRoots()
                     val tree=StringBuilder()
                     fun visit(node:android.view.accessibility.AccessibilityNodeInfo?,depth:Int=0) {
                         if(node==null || depth>24)return
@@ -298,7 +309,7 @@ class WorkspaceDeviceTest {
                         }
                         for(i in 0 until node.childCount)visit(node.getChild(i),depth+1)
                     }
-                    visit(root);lastTree=tree.toString().take(16000)
+                    roots.forEach{visit(it)};lastTree=tree.toString().take(16000)
                     if(!clicked)delay(100)
                 }
             }
@@ -361,7 +372,7 @@ class WorkspaceDeviceTest {
             withTimeout(8_000){
                 var clicked=false
                 fun visit(node:android.view.accessibility.AccessibilityNodeInfo?,depth:Int=0){if(node==null||depth>24||clicked)return;if(node.text?.toString()=="Allow"){var target:android.view.accessibility.AccessibilityNodeInfo?=node;repeat(4){if(!clicked){if(target?.isClickable==true)clicked=target!!.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)else target=target?.parent}}};for(i in 0 until node.childCount)visit(node.getChild(i),depth+1)}
-                while(!clicked){visit(InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow);if(!clicked)delay(100)}
+                while(!clicked){accessibilityRoots().forEach{visit(it)};if(!clicked)delay(100)}
             }
             withTimeout(5_000){while(evaluate("document.body.dataset.result")!="\"BLE_FAILED\"")delay(100)}
             delay(1_000) // Cross periodic native status recomposition before requesting another scan.
