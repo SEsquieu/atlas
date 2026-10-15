@@ -29,7 +29,8 @@ class WorkspaceLiveCatalogTest {
                 return JSONObject(tool.execute(call).resultJson)
             }
             assertEquals(WorkspaceApplicationContract.FORMAT, JSONObject(read("atlas/manifest.json").getString("source")).getString("format"))
-            assertTrue(read("atlas/files.json").getString("source").contains("ui/app.js"))
+            val index = org.json.JSONArray(read("atlas/files.json").getString("source"))
+            assertTrue((0 until index.length()).map(index::getString).contains("ui/app.js"))
             assertTrue(runCatching { read("atlas/manifest.json", other.liveRevisionId) }.isFailure)
         } finally { db.close() }
     }
