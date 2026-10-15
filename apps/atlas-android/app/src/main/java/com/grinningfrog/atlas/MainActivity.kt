@@ -529,7 +529,7 @@ private fun AtlasHomePage(
                 NoticeCard("Action outcome unknown", "Atlas restarted while a tool was running. It will not repeat the action automatically.")
             }
             if (actionError != null || snapshot.latestError != null) item {
-                NoticeCard("Atlas needs attention", actionError ?: snapshot.latestError.orEmpty())
+                NoticeCard(if (actionError != null || snapshot.phase == RuntimePhase.ERROR) "Atlas needs attention" else "Runtime notice · check current task status", actionError ?: snapshot.latestError.orEmpty())
             }
 
             item { Text("${dialogue.size} recent messages", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -1176,7 +1176,7 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
         }
 
         if (actionError != null || snapshot.latestError != null) item {
-            NoticeCard("Runtime needs attention", actionError ?: snapshot.latestError.orEmpty())
+            NoticeCard(if (actionError != null || snapshot.phase == RuntimePhase.ERROR) "Runtime needs attention" else "Runtime notice · check current task status", actionError ?: snapshot.latestError.orEmpty())
         }
 
         item {

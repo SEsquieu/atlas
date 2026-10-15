@@ -161,7 +161,7 @@ class WorkspaceWebPresentation(
         withContext(Dispatchers.Main.immediate) {
             check(!disposed)
             val script = """
-                (()=>{const style=e=>{if(!e)return null;const s=getComputedStyle(e),r=e.getBoundingClientRect();return {tag:e.tagName,id:e.id,backgroundColor:s.backgroundColor,backgroundImage:s.backgroundImage,color:s.color,display:s.display,width:r.width,height:r.height,x:r.x,y:r.y}};
+                (()=>{const style=e=>{if(!e)return null;const s=getComputedStyle(e),r=e.getBoundingClientRect();return {tag:e.tagName,id:e.id.slice(0,128),backgroundColor:s.backgroundColor.slice(0,100),backgroundImage:s.backgroundImage.slice(0,1000),color:s.color.slice(0,100),display:s.display.slice(0,32),width:r.width,height:r.height,x:r.x,y:r.y}};
                 return JSON.stringify({url:location.pathname,readyState:document.readyState,viewport:{width:innerWidth,height:innerHeight,devicePixelRatio},html:style(document.documentElement),body:style(document.body),
                 stylesheets:Array.from(document.querySelectorAll('link[rel=stylesheet]')).slice(0,16).map(e=>({path:new URL(e.href).pathname,loaded:!!e.sheet})),elements:Array.from(document.querySelectorAll('[id],main')).slice(0,32).map(style)});})()
             """.trimIndent()
