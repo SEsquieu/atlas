@@ -44,6 +44,21 @@ object WorkspaceBleContract {
         if (method == "ble.write") require(params.get("hex") is String && params.getString("hex").matches(Regex("(?:[0-9a-fA-F]{2}){0,20}"))) { "Write requires at most 20 bytes of hexadecimal data" }
         if (method == "ble.subscribe") require(params.get("enabled") is Boolean)
     }
+    fun methodSchemas(): JSONObject = JSONObject().apply {
+        for (method in listOf("status", "scan", "services", "events", "disconnect", "revoke", "operation", "connect", "read", "write", "subscribe")) {
+            val keys = when (method) {
+                "operation" -> listOf("operation_id")
+                "connect" -> listOf("device_id")
+                "read" -> listOf("characteristic_id")
+                "write" -> listOf("characteristic_id", "hex")
+                "subscribe" -> listOf("characteristic_id", "enabled")
+                else -> emptyList()
+            }
+            val properties = JSONObject()
+            for (key in keys) properties.put(key, if (key == "enabled") JSONObject().put("type", "boolean") else JSONObject().put("type", "string").put("maxLength", if (key == "hex") 40 else 128))
+            put("ble.$method", JSONObject().put("type", "object").put("properties", properties).put("required", JSONArray(keys)).put("additionalProperties", false))
+        }
+    }
     fun descriptor(): JSONObject = JSONObject()
         .put("name", CAPABILITY).put("operations", JSONArray(operations.sorted())).put("resources", JSONArray(listOf(RESOURCE)))
         .put("manifest_example", JSONObject().put("name", CAPABILITY).put("operations", JSONArray(operations.sorted())).put("resources", JSONArray(listOf(RESOURCE))))
@@ -56,7 +71,7 @@ object WorkspaceBleContract {
             .put("disconnect()/revoke()", "Closes hardware and invalidates all handles; returns status")
             .put("status()", "{installed,os_permission_granted,platform_enabled,connected,device_label,scan_approved,device_approved,requests_enabled,busy,generation,recent_operations,last_failure}"))
         .put("startup", "Call host.describe() then install UI and signal host.ready(). ble_available=false in preview: skip BLE there. Start scan/connect from explicit UI controls after readiness, never at module startup. Catch errors using error.code and error.receipt; show uncertainty for failed/timed-out writes.")
-        .put("methods", JSONArray(listOf("ble.status", "ble.scan", "ble.connect", "ble.services", "ble.read", "ble.write", "ble.subscribe", "ble.events", "ble.disconnect", "ble.revoke", "ble.operation")))
+        .put("methods", methodSchemas())
     fun id(): String = UUID.randomUUID().toString()
 }
 

@@ -146,7 +146,7 @@ class WorkspaceWebPresentation(
                     requireNotNull(devices) { "UNSUPPORTED_CAPABILITY" }.dispatch(method, params)
                 } else withContext(Dispatchers.IO) {
                     require(!disposed && current()) { "REVISION_CONFLICT" }
-                    WorkspaceHostRegistry.dispatch(principal, method, params, data).also { if (method == "host.describe" || method == "host.ready") it.put("ble_available", devices != null).put("ble", WorkspaceBleContract.descriptor()) }
+                    WorkspaceHostRegistry.dispatch(principal, method, params, data, bluetooth = devices != null)
                 }
                 if (method == "host.ready" && !disposed && current()) { ready = true; onReady() }
                 val response = WorkspaceHostProtocol.response(requestId, "succeeded", operation, result)

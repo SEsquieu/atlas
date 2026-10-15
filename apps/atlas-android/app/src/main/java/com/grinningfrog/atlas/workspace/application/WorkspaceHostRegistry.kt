@@ -13,9 +13,17 @@ object WorkspaceHostRegistry {
         "data.prepare" to JSONObject("""{"type":"object","properties":{"expected_data_version":{"type":"integer"},"request_key":{"type":"string","maxLength":128},"mutations":{"type":"array","maxItems":32,"items":{"type":"object","description":"create: kind,collection,data; update: kind,collection,record_id,data; delete: kind,collection,record_id. data is a strict JSON object; unknown mutation fields are rejected."}}},"required":["expected_data_version","request_key","mutations"],"additionalProperties":false}"""),
         "data.commit" to operationSchema, "data.inspect" to operationSchema, "data.cancel" to operationSchema,
     )
-    fun describe(principal: WorkspacePrincipal, storage: Boolean = false): JSONObject = WorkspaceApplicationContract.descriptor()
+    fun describe(principal: WorkspacePrincipal, storage: Boolean = false, bluetooth: Boolean = false): JSONObject = WorkspaceApplicationContract.descriptor()
         .put("instance_mode", principal.mode.name.lowercase()).put("workspace_id", principal.workspaceId).put("revision_id", principal.revisionId)
         .put("epoch", principal.epoch).put("methods", JSONObject().apply { (methods + if (storage) storageMethods else emptyMap()).forEach { (name, schema) -> put(name, JSONObject(schema.toString())) } })
+        .apply {
+            val available = bluetooth && principal.mode == WorkspaceInstanceMode.FOREGROUND
+            put("ble_available", available).put("ble", WorkspaceBleContract.descriptor())
+            if (available) {
+                val bleMethods = WorkspaceBleContract.methodSchemas()
+                for (name in bleMethods.keys()) getJSONObject("methods").put(name, bleMethods.getJSONObject(name))
+            }
+        }
         .put("authority", "core_bound_transport").put("storage_authorized", storage)
         .put("storage_contract", "Workspace-scoped foreground records only. query returns data_version and a next_offset; null ends pagination. prepare requires expected_data_version, mutations and a reusable request_key. Retry the same key with identical input after response loss; commit/inspect/cancel use the returned operation_id. Revisions fence old callers. Device access, when declared, uses the separate native BLE broker; there are no direct browser device, network, credential, or background APIs.")
     fun validate(method: String, params: JSONObject, storage: Boolean = false): Boolean {
@@ -28,10 +36,10 @@ object WorkspaceHostRegistry {
         } else WorkspaceJsonSchema.validate(schema, params)
         return true
     }
-    fun dispatch(principal: WorkspacePrincipal, method: String, params: JSONObject, data: WorkspaceApplicationData?): JSONObject {
+    fun dispatch(principal: WorkspacePrincipal, method: String, params: JSONObject, data: WorkspaceApplicationData?, bluetooth: Boolean = false): JSONObject {
         val storage = data != null && principal.mode == WorkspaceInstanceMode.FOREGROUND
         require(validate(method, params, storage)) { "UNSUPPORTED_CAPABILITY" }
-        if (method == "host.describe" || method == "host.ready") return describe(principal, storage)
+        if (method == "host.describe" || method == "host.ready") return describe(principal, storage, bluetooth)
         val store = requireNotNull(data)
         return when (method) {
             "data.query" -> store.query(principal, params)

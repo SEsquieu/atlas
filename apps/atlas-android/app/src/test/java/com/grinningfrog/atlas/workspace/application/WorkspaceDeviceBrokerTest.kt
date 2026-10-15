@@ -103,6 +103,15 @@ class WorkspaceDeviceBrokerTest {
         assertTrue(runCatching { submit(broker, "ble.write", JSONObject().put("characteristic_id", "char").put("hex", "01")) }.isFailure)
         assertEquals(0, radio.writes)
     }
+    @Test fun canonicalDescribeListsInstalledBleMethodsWithoutGrantingPreviewAccess() {
+        val info = WorkspaceHostRegistry.describe(principal, bluetooth = true)
+        assertTrue(info.getBoolean("ble_available"))
+        assertTrue(info.getJSONObject("methods").has("ble.write"))
+        assertFalse(info.getJSONObject("methods").getJSONObject("ble.write").getBoolean("additionalProperties"))
+        val preview = WorkspaceHostRegistry.describe(principal.copy(mode = WorkspaceInstanceMode.PREVIEW), bluetooth = true)
+        assertFalse(preview.getBoolean("ble_available"))
+        assertFalse(preview.getJSONObject("methods").has("ble.write"))
+    }
     @Test fun malformedDeviceRequestsAndUnsupportedDeclarationsFailClosed() {
         for (params in listOf(JSONObject().put("characteristic_id", "x").put("hex", "f"), JSONObject().put("characteristic_id", "x").put("hex", "00".repeat(21)), JSONObject().put("characteristic_id", "x").put("hex", "00").put("workspace_id", "other"))) {
             assertTrue(runCatching { WorkspaceBleContract.validate("ble.write", params) }.isFailure)
