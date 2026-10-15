@@ -1,0 +1,81 @@
+package com.grinningfrog.atlas.workspace.application
+
+import android.app.Application
+import com.grinningfrog.atlas.data.AtlasDatabase
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.test.runTest
+import org.json.JSONObject
+import org.junit.*
+import org.junit.Assert.*
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = Application::class)
+class WorkspaceCandidateLifecycleTest {
+    private lateinit var db: AtlasDatabase
+    @Before fun setup() { RuntimeEnvironment.getApplication().deleteDatabase("atlas.db"); db = AtlasDatabase(RuntimeEnvironment.getApplication()) }
+    @After fun cleanup() { db.close() }
+    private fun candidate(): JSONObject {
+        val session = db.createSession("Packages", "Test"); val turn = db.createTurn(session.id, "user")
+        val workspace = db.createComposableWorkspace("App", "", realmId = session.workspaceId)
+        val bundle = PackageFixture.bundle()
+        return WorkspacePackageRepository(db).stage(workspace.id, workspace.realmId, workspace.liveRevisionId, null,
+            bundle.getJSONObject("manifest"), bundle.getJSONObject("files"), session.id, turn.id).put("realm_id", workspace.realmId)
+    }
+    private suspend fun checks(c: JSONObject, runner: suspend (JSONObject, String, Any?) -> JSONObject = { b, e, i -> WorkspaceNativeEngine.run(b, e, i) }) =
+        WorkspaceCandidateChecks(db, runner).test(c.getString("workspace_id"), c.getString("realm_id"), c.getString("candidate_id"))
+    private suspend fun activate(c: JSONObject, check: JSONObject, startup: suspend (JSONObject, WorkspacePrincipal) -> Boolean) =
+        WorkspaceApplicationActivation(db).activate(c.getString("workspace_id"), c.getString("realm_id"), c.getString("candidate_id"), check.getString("check_id"), startup)
+    @Test fun realFixtureReceiptActivatesExactBytesAndSurvivesReopen() = runTest {
+        val c = candidate(); val checked = checks(c)
+        assertTrue(checked.toString(), checked.getBoolean("passed")); assertFalse(checked.getBoolean("activation_authorized"))
+        val result = activate(c, checked) { b, p ->
+            assertEquals(WorkspaceInstanceMode.PREVIEW, p.mode)
+            assertEquals(c.getString("content_hash"), WorkspaceApplicationContract.hash(WorkspaceApplicationContract.canonical(b)))
+            assertEquals(-1L, WorkspaceApplicationData(db).epoch(p.workspaceId))
+            true
+        }
+        db.close(); db = AtlasDatabase(RuntimeEnvironment.getApplication())
+        val workspace = db.loadComposableWorkspace(c.getString("workspace_id"))!!
+        assertEquals(result.getString("revision_id"), workspace.liveRevisionId)
+        assertEquals(1L, WorkspaceApplicationData(db).epoch(workspace.id))
+        assertEquals(c.getString("content_hash"), db.loadLiveWorkspaceRevision(workspace.id)!!.contentHash)
+    }
+    @Test fun failureAndCancellationNeverAuthorizeActivation() = runTest {
+        val c = candidate()
+        val failed = checks(c) { _, _, _ -> JSONObject().put("ok", true).put("value", 999) }
+        assertFalse(failed.getBoolean("passed"))
+        assertTrue(runCatching { activate(c, failed) { _, _ -> true } }.isFailure)
+        assertTrue(runCatching { checks(c) { _, _, _ -> throw CancellationException("cancel") } }.isFailure)
+        db.readableDatabase.rawQuery("SELECT COUNT(*) FROM workspace_application_checks", null).use { it.moveToFirst(); assertEquals(1, it.getInt(0)) }
+    }
+    @Test fun failedStartupLeavesRevisionAndRecordsUntouched() = runTest {
+        val c = candidate(); val checked = checks(c); val id = c.getString("workspace_id")
+        val base = db.loadComposableWorkspace(id)!!.liveRevisionId
+        assertTrue(runCatching { activate(c, checked) { _, _ -> false } }.isFailure)
+        assertEquals(base, db.loadComposableWorkspace(id)!!.liveRevisionId)
+        assertEquals(-1L, WorkspaceApplicationData(db).epoch(id))
+    }
+    @Test fun dataChangesDuringExecutionCannotProduceFreshEvidence() = runTest {
+        val c = candidate()
+        assertTrue(runCatching { checks(c) { b, e, i ->
+            db.addWorkspaceRecord(c.getString("workspace_id"), "notes", "{}")
+            WorkspaceNativeEngine.run(b, e, i)
+        } }.isFailure)
+        db.readableDatabase.rawQuery("SELECT COUNT(*) FROM workspace_application_checks", null).use { it.moveToFirst(); assertEquals(0, it.getInt(0)) }
+    }
+    @Test fun dataChangesDuringStartupPreventPointerSwitch() = runTest {
+        val c = candidate(); val checked = checks(c); val id = c.getString("workspace_id")
+        val base = db.loadComposableWorkspace(id)!!.liveRevisionId
+        assertTrue(runCatching { activate(c, checked) { _, _ -> db.addWorkspaceRecord(id, "notes", "{}"); true } }.isFailure)
+        assertEquals(base, db.loadComposableWorkspace(id)!!.liveRevisionId)
+        assertEquals(1, db.listWorkspaceRecords(id, "notes").size)
+    }
+    @Test fun checkFromAnotherCandidateCannotAuthorizeActivation() = runTest {
+        val a = candidate(); val b = candidate(); val checked = checks(a)
+        assertTrue(runCatching { activate(b, checked) { _, _ -> true } }.isFailure)
+    }
+}

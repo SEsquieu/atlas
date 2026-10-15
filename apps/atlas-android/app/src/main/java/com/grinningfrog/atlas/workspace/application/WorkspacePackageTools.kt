@@ -16,16 +16,18 @@ import org.json.JSONObject
 
 /** Transitional staging tools. These neither create a legacy workspace nor execute a package. */
 object WorkspacePackageTools {
-    fun create(database: AtlasDatabase): List<AtlasToolAdapter> = listOf(Contract(), Inspect(database), Stage(database), Validate(database))
+    fun create(database: AtlasDatabase, context: android.content.Context? = null): List<AtlasToolAdapter> =
+        listOf(Contract(context != null && android.os.Build.VERSION.SDK_INT >= 29), Inspect(database), Stage(database), Validate(database)) +
+            if (context != null && android.os.Build.VERSION.SDK_INT >= 29) listOf(Test(database, WorkspaceWorkerSupervisor(context))) else emptyList()
     private const val INSPECT_SCHEMA = """{"type":"object","properties":{"workspace_id":{"type":"string"},"candidate_id":{"type":"string"}},"required":["workspace_id"],"additionalProperties":false}"""
     private const val STAGE_SCHEMA = """{"type":"object","properties":{"workspace_id":{"type":"string"},"base_revision_id":{"type":"string"},"navigation_sequence":{"type":"integer"},"parent_candidate_id":{"type":"string"},"manifest":{"type":"object"},"files":{"type":"object"}},"required":["workspace_id","base_revision_id","navigation_sequence","files"],"additionalProperties":false}"""
 
-    private class Contract : AtlasToolAdapter {
+    private class Contract(private val pureTesting: Boolean) : AtlasToolAdapter {
         override val supportsLocalDiagnostics = true
         override val definition = ToolDefinition("workspace_package_contract", "Inspect the installed application-package contract, exact manifest fields, schema subset, staging limits and valid example. Read before staging. Execution and activation availability are explicit; format breadth is not an authorization grant.", """{"type":"object","properties":{},"additionalProperties":false}""", ToolRisk.READ_ONLY, maxCallsPerTurn = 2)
         override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
             WorkspaceApplicationContract.exactKeys(JSONObject(call.argumentsJson), emptySet())
-            return ToolExecutionResult(WorkspaceApplicationContract.descriptor().toString())
+            return ToolExecutionResult(WorkspaceApplicationContract.descriptor().put("pure_fixture_testing_available", pureTesting).put("pure_fixture_tool", if (pureTesting) "workspace_package_test" else JSONObject.NULL).toString())
         }
     }
 
@@ -87,4 +89,16 @@ object WorkspacePackageTools {
                 .put("structurally_valid", errors.isEmpty()).put("errors", JSONArray(errors)).put("tests_run", 0).put("executed", false).put("activation_available", false).toString())
         }
     }
+    private class Test(database: AtlasDatabase, private val worker: WorkspaceWorkerSupervisor) : Adapter(database) {
+        override val definition = ToolDefinition("workspace_package_test", "Execute 1 to 16 declared pure fixtures from a stored package in fresh isolated workers and persist revision/data-bound reports. No live records, device access or network bindings. Results prove only these fixtures; UI readiness, permissions and activation remain separate gates. Every export needs a passing fixture. Cancellation yields no passing receipt.",
+            INSPECT_SCHEMA, ToolRisk.SESSION_WRITE, maxCallsPerTurn = 2)
+        override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
+            val args = JSONObject(call.argumentsJson)
+            WorkspaceApplicationContract.exactKeys(args, setOf("workspace_id", "candidate_id"), setOf("workspace_id", "candidate_id"))
+            val current = session(call)
+            require(available(current, args.getString("workspace_id"))) { "TARGET_CONFLICT" }
+            return ToolExecutionResult(WorkspaceCandidateChecks(database, worker::run).test(args.getString("workspace_id"), current.workspaceId, args.getString("candidate_id")).toString())
+        }
+    }
+
 }
