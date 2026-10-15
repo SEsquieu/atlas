@@ -179,6 +179,7 @@ class WorkspaceWebPresentation(
         }
     }
 
+    fun loadAttached() { if (!disposed && view.isAttachedToWindow && view.width > 0 && view.height > 0) load() }
     fun load() { check(!disposed); view.loadUrl(policy.entryUrl) }
     fun dispose() {
         if (disposed) return

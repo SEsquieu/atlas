@@ -7,6 +7,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.doOnAttach
+import androidx.core.view.doOnLayout
 import com.grinningfrog.atlas.data.AtlasDatabase
 import com.grinningfrog.atlas.workspace.ComposableWorkspace
 import com.grinningfrog.atlas.workspace.WorkspaceRevision
@@ -63,7 +65,12 @@ internal fun WorkspaceApplicationPanel(workspace: ComposableWorkspace, revision:
                 }
             }
             LaunchedEffect(presentation) { delay(10_000); if (!ready) failed("Application did not signal readiness. Records are preserved.") }
-            AndroidView(factory = { presentation.view.also { presentation.load() } }, modifier = modifier)
+            AndroidView(factory = {
+                android.widget.FrameLayout(context).apply {
+                    addView(presentation.view, android.widget.FrameLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT))
+                    presentation.view.doOnAttach { view -> view.doOnLayout { presentation.loadAttached() } }
+                }
+            }, modifier = modifier)
         }
     }
 }

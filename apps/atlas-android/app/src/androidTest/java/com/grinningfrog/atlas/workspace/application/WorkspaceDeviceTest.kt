@@ -51,18 +51,32 @@ class WorkspaceDeviceTest {
             delay(500)
             val layout=com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.inspect(w.id,revision.id)
             val coordinates=IntArray(2)
+            var webView: android.webkit.WebView? = null
             scenario.onActivity { activity ->
                 fun find(view: android.view.View): android.webkit.WebView? {
                     if(view is android.webkit.WebView) return view
                     if(view is android.view.ViewGroup) for(i in 0 until view.childCount) find(view.getChildAt(i))?.let { return it }
                     return null
                 }
-                requireNotNull(find(activity.findViewById(android.R.id.content))).getLocationOnScreen(coordinates)
+                webView=requireNotNull(find(activity.findViewById(android.R.id.content)))
+                webView!!.getLocationOnScreen(coordinates)
             }
             val screenshot=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
             try {
                 val color=screenshot.getPixel(coordinates[0]+5,coordinates[1]+10)
-                assertTrue("Compose background="+Integer.toHexString(color)+" layout="+layout,android.graphics.Color.red(color)<80 && android.graphics.Color.green(color) in 9..79 && android.graphics.Color.blue(color)<80)
+                val painted=android.graphics.Color.red(color)<80 && android.graphics.Color.green(color) in 9..79 && android.graphics.Color.blue(color)<80
+                var alternatives=""
+                if (!painted) {
+                    withContext(Dispatchers.Main) { webView!!.setLayerType(android.view.View.LAYER_TYPE_SOFTWARE,null); webView!!.invalidate() }
+                    delay(300)
+                    val software=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                    try { alternatives+=" software="+Integer.toHexString(software.getPixel(coordinates[0]+5,coordinates[1]+10)) } finally { software.recycle() }
+                    withContext(Dispatchers.Main) { webView!!.evaluateJavascript("document.documentElement.style.background=getComputedStyle(document.body).background;",null) }
+                    delay(300)
+                    val rootPaint=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                    try { alternatives+=" explicitRoot="+Integer.toHexString(rootPaint.getPixel(coordinates[0]+5,coordinates[1]+10)) } finally { rootPaint.recycle() }
+                }
+                assertTrue("Compose background="+Integer.toHexString(color)+alternatives+" layout="+layout,painted)
             } finally { screenshot.recycle() }
         } finally { scenario.close();db.deleteComposableWorkspace(w.id) }
     }
