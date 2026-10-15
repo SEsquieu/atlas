@@ -25,11 +25,17 @@ class WorkspaceCandidateLifecycleTest {
         return WorkspacePackageRepository(db).stage(workspace.id, workspace.realmId, workspace.liveRevisionId, null,
             bundle.getJSONObject("manifest"), bundle.getJSONObject("files"), session.id, turn.id).put("realm_id", workspace.realmId)
     }
-    private suspend fun checks(c: JSONObject, runner: suspend (JSONObject, String, Any?) -> JSONObject = { b, e, i -> WorkspaceNativeEngine.run(b, e, i) }) =
+    private fun workerResult(bundle: JSONObject, export: String, input: Any?): JSONObject {
+        assertEquals("total", export)
+        assertEquals(PackageFixture.bundle().getJSONObject("files").getString("tools/total.js"), bundle.getJSONObject("files").getString("tools/total.js"))
+        assertEquals("[120,230,-50]", WorkspaceApplicationContract.canonical(input))
+        return JSONObject().put("ok", true).put("value", 300)
+    }
+    private suspend fun checks(c: JSONObject, runner: suspend (JSONObject, String, Any?) -> JSONObject = { b, e, i -> workerResult(b, e, i) }) =
         WorkspaceCandidateChecks(db, runner).test(c.getString("workspace_id"), c.getString("realm_id"), c.getString("candidate_id"))
     private suspend fun activate(c: JSONObject, check: JSONObject, startup: suspend (JSONObject, WorkspacePrincipal) -> Boolean) =
         WorkspaceApplicationActivation(db).activate(c.getString("workspace_id"), c.getString("realm_id"), c.getString("candidate_id"), check.getString("check_id"), startup)
-    @Test fun realFixtureReceiptActivatesExactBytesAndSurvivesReopen() = runTest {
+    @Test fun fixtureReceiptActivatesExactBytesAndSurvivesReopen() = runTest {
         val c = candidate(); val checked = checks(c)
         assertTrue(checked.toString(), checked.getBoolean("passed")); assertFalse(checked.getBoolean("activation_authorized"))
         val result = activate(c, checked) { b, p ->
@@ -79,7 +85,7 @@ class WorkspaceCandidateLifecycleTest {
         val c = candidate()
         assertTrue(runCatching { checks(c) { b, e, i ->
             db.addWorkspaceRecord(c.getString("workspace_id"), "notes", "{}")
-            WorkspaceNativeEngine.run(b, e, i)
+            workerResult(b, e, i)
         } }.isFailure)
         db.readableDatabase.rawQuery("SELECT COUNT(*) FROM workspace_application_checks", null).use { it.moveToFirst(); assertEquals(0, it.getInt(0)) }
     }
