@@ -63,7 +63,7 @@ object WorkspacePackageTools {
     }
     private class Stage(database: AtlasDatabase) : Adapter(database), AtlasLocalMutationAdapter {
         override val supportsLocalMutation = true
-        override val definition = ToolDefinition("workspace_package_stage", "Stage immutable HTML/CSS/JS package files against the inspected task target, live base revision and optional parent candidate. files maps package paths to complete UTF-8 contents; null deletes a file. First stage requires manifest. Staging is structural validation only: it runs no code, changes no grants and does not activate. Inspect workspace_package_contract for the current closed contract and a valid example first.", STAGE_SCHEMA, ToolRisk.SESSION_WRITE, maxCallsPerTurn = 8, maxArgumentBytes = 1_100_000)
+        override val definition = ToolDefinition("workspace_package_stage", "Stage immutable HTML/CSS/JS package files against the inspected task target, live base revision and optional parent candidate. files maps package paths to complete UTF-8 contents; null deletes a file. An empty draft first requires manifest. With no parent candidate, an installed package is copied from the inspected live base, so ordinary edits can supply only changed files. Staging is structural validation only: it runs no code, changes no grants and does not activate. Inspect workspace_package_contract for the current closed contract and a valid example first.", STAGE_SCHEMA, ToolRisk.SESSION_WRITE, maxCallsPerTurn = 8, maxArgumentBytes = 1_100_000)
         override fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision {
             val base = super<Adapter>.evaluate(session, proposal)
             val args = runCatching { JSONObject(proposal.argumentsJson) }.getOrNull()

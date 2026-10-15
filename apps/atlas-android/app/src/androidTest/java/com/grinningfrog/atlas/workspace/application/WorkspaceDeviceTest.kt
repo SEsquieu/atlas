@@ -29,6 +29,47 @@ class WorkspaceDeviceTest {
         assertFalse(worker.run(bundle, "health", JSONObject.NULL).getBoolean("ok"))
         assertTrue(worker.run(WorkspaceApplicationContract.example(), "health", JSONObject.NULL).getBoolean("value"))
     }
+    @Test fun agentToolsBuildActivateEditAndPreserveLiveFormData() = runBlocking {
+        val db = (context.applicationContext as AtlasApplication).database
+        val session = db.createSession("Application flow", "Live host test")
+        db.updateSessionStatus(session.id, com.grinningfrog.atlas.model.SessionStatus.ACTIVE)
+        val turn = db.createTurn(session.id, "user")
+        val harness = com.grinningfrog.atlas.runtime.ToolHarness(db, { _, _ -> error("No camera") }, { com.grinningfrog.atlas.model.DeviceHealth() },
+            additionalTools = com.grinningfrog.atlas.workspace.WorkspaceTools.create(db, applicationContext = context))
+        suspend fun tool(name: String, args: JSONObject): JSONObject {
+            val current = db.loadSession(session.id)!!
+            val proposal = com.grinningfrog.atlas.model.ToolCallProposal(UUID.randomUUID().toString(), name, args.toString())
+            assertTrue(name, harness.evaluate(current, proposal).allowed)
+            val call = com.grinningfrog.atlas.model.AtlasToolCall(proposal.id, session.id, turn.id, name, args.toString(), com.grinningfrog.atlas.model.ToolCallStatus.PROPOSED,
+                harness.definition(name)!!.risk, false, proposal.id, createdAtMs = 0, updatedAtMs = 0)
+            return JSONObject(harness.execute(call).resultJson)
+        }
+        val created = tool("workspace_package_create", JSONObject().put("name", "Live notes"))
+        val id = created.getString("workspace_id"); val sequence = created.getLong("navigation_sequence")
+        try {
+            val bundle = WorkspaceApplicationContract.example()
+            bundle.getJSONObject("files").put("ui/style.css", bundle.getJSONObject("files").getString("ui/style.css") + "/*" + "x".repeat(20_000) + "*/")
+            val staged = tool("workspace_package_stage", JSONObject().put("workspace_id", id).put("base_revision_id", created.getString("base_revision_id")).put("navigation_sequence", sequence)
+                .put("manifest", bundle.getJSONObject("manifest")).put("files", bundle.getJSONObject("files")))
+            val checked = tool("workspace_package_test", JSONObject().put("workspace_id", id).put("candidate_id", staged.getString("candidate_id")))
+            assertTrue(checked.toString(), checked.getBoolean("passed"))
+            val activated = tool("workspace_package_activate", JSONObject().put("workspace_id", id).put("candidate_id", staged.getString("candidate_id")).put("check_id", checked.getString("check_id")).put("navigation_sequence", sequence))
+            val w = db.loadComposableWorkspace(id)!!; val store = WorkspaceApplicationData(db)
+            val old = WorkspacePrincipal(w.realmId, id, activated.getString("revision_id"), UUID.randomUUID().toString(), store.epoch(id), WorkspaceInstanceMode.FOREGROUND)
+            surface(JSONObject(db.loadLiveWorkspaceRevision(id)!!.definitionJson), old, store) { view ->
+                delay(300)
+                evaluate(view, "document.querySelector('#text').value='From the form';document.querySelector('button').click();")
+                withTimeout(5000) { while (db.listWorkspaceRecords(id, "notes").isEmpty()) delay(50) }
+                assertEquals("From the form", JSONObject(db.listWorkspaceRecords(id, "notes").single().dataJson).getString("text"))
+            }
+            val updated = tool("workspace_package_stage", JSONObject().put("workspace_id", id).put("base_revision_id", activated.getString("revision_id")).put("navigation_sequence", sequence)
+                .put("files", JSONObject().put("ui/style.css", "body{background:#101010;color:#a8ff00;font:18px sans-serif}")))
+            val rechecked = tool("workspace_package_test", JSONObject().put("workspace_id", id).put("candidate_id", updated.getString("candidate_id")))
+            tool("workspace_package_activate", JSONObject().put("workspace_id", id).put("candidate_id", updated.getString("candidate_id")).put("check_id", rechecked.getString("check_id")).put("navigation_sequence", sequence))
+            assertEquals(1, db.listWorkspaceRecords(id, "notes").size)
+            assertTrue(runCatching { store.query(old, JSONObject().put("collection", "notes")) }.isFailure)
+        } finally { db.setComposableWorkspaceArchived(id, true); db.deleteComposableWorkspace(id) }
+    }
     private suspend fun evaluate(p: WorkspaceWebPresentation, script: String): String = withContext(Dispatchers.Main) {
         suspendCancellableCoroutine { continuation -> p.view.evaluateJavascript(script) { if (continuation.isActive) continuation.resume(it) } }
     }

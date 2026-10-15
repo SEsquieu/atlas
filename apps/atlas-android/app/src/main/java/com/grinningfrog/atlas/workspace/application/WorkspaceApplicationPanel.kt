@@ -53,7 +53,7 @@ internal fun WorkspaceApplicationPanel(workspace: ComposableWorkspace, revision:
                     android.graphics.Bitmap.createBitmap(view.width, view.height, android.graphics.Bitmap.Config.ARGB_8888).also { view.draw(android.graphics.Canvas(it)) }
                 }
                 val listener = android.view.ViewTreeObserver.OnDrawListener {
-                    com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.drawn(token, JSONObject().put("format", WorkspaceApplicationContract.FORMAT).put("revision_id", revision.id).put("drawn_at_ms", System.currentTimeMillis()))
+                    com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.drawn(token, JSONObject().put("format", WorkspaceApplicationContract.FORMAT).put("revision_id", revision.id).put("runtime", presentation.diagnostics()).put("drawn_at_ms", System.currentTimeMillis()))
                 }
                 presentation.view.viewTreeObserver.addOnDrawListener(listener)
                 onDispose {

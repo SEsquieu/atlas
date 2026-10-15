@@ -67,7 +67,7 @@ class WorkspaceApplicationData(private val database: AtlasDatabase) {
             val records = JSONArray()
             rawQuery("SELECT record_id,data_json,created_at,updated_at FROM workspace_records WHERE composable_workspace_id=? AND collection_name=? ORDER BY created_at ASC,record_id ASC LIMIT ? OFFSET ?",
                 arrayOf(principal.workspaceId, collection, limit.toString(), offset.toString())).use { cursor -> while (cursor.moveToNext()) {
-                    records.put(JSONObject().put("id", cursor.getString(0)).put("data", JSONObject(cursor.getString(1))).put("created_at_ms", cursor.getLong(2)).put("updated_at_ms", cursor.getLong(3)))
+                    records.put(JSONObject().put("id", cursor.getString(0).removePrefix("${principal.workspaceId}:")).put("data", JSONObject(cursor.getString(1))).put("created_at_ms", cursor.getLong(2)).put("updated_at_ms", cursor.getLong(3)))
                     if (records.toString().toByteArray(Charsets.UTF_8).size > 48 * 1024) { records.remove(records.length() - 1); break }
                 } }
             JSONObject().put("records", records).put("data_version", version).put("next_offset", if (records.length() > 0) offset + records.length() else JSONObject.NULL)
@@ -132,18 +132,20 @@ class WorkspaceApplicationData(private val database: AtlasDatabase) {
         val mutations = request.getJSONArray("mutations"); val ids = JSONArray(); val now = System.currentTimeMillis()
         for (i in 0 until mutations.length()) {
             val mutation = mutations.getJSONObject(i); val collection = mutation.getString("collection"); val id = mutation.getString("record_id")
+            val scopedId = "${principal.workspaceId}:$id"
+            val storedId = rawQuery("SELECT record_id FROM workspace_records WHERE composable_workspace_id=? AND collection_name=? AND record_id=?", arrayOf(principal.workspaceId, collection, scopedId)).use { if (it.moveToFirst()) it.getString(0) else id }
             when (mutation.getString("kind")) {
                 "create" -> {
                     val count = rawQuery("SELECT COUNT(*) FROM workspace_records WHERE composable_workspace_id=? AND collection_name=?", arrayOf(principal.workspaceId, collection)).use { it.moveToFirst(); it.getInt(0) }
                     require(count < 5000) { "QUOTA_EXCEEDED" }
                     insertOrThrow("workspace_records", null, ContentValues().apply {
-                        put("record_id", id); put("composable_workspace_id", principal.workspaceId); put("collection_name", collection)
+                        put("record_id", "${principal.workspaceId}:$id"); put("composable_workspace_id", principal.workspaceId); put("collection_name", collection)
                         put("data_json", mutation.getJSONObject("data").toString()); put("created_at", now); put("updated_at", now)
                     })
                 }
                 "update" -> require(update("workspace_records", ContentValues().apply { put("data_json", mutation.getJSONObject("data").toString()); put("updated_at", now) },
-                    "record_id=? AND composable_workspace_id=? AND collection_name=?", arrayOf(id, principal.workspaceId, collection)) == 1) { "DATA_CONFLICT" }
-                "delete" -> require(delete("workspace_records", "record_id=? AND composable_workspace_id=? AND collection_name=?", arrayOf(id, principal.workspaceId, collection)) == 1) { "DATA_CONFLICT" }
+                    "record_id=? AND composable_workspace_id=? AND collection_name=?", arrayOf(storedId, principal.workspaceId, collection)) == 1) { "DATA_CONFLICT" }
+                "delete" -> require(delete("workspace_records", "record_id=? AND composable_workspace_id=? AND collection_name=?", arrayOf(storedId, principal.workspaceId, collection)) == 1) { "DATA_CONFLICT" }
             }
             ids.put(id)
         }
@@ -174,7 +176,8 @@ class WorkspaceApplicationData(private val database: AtlasDatabase) {
         val workspace = database.loadComposableWorkspace(workspaceId) ?: error("TARGET_CONFLICT")
         require(workspace.liveRevisionId == revisionId && workspace.status == WorkspaceStatus.ACTIVE) { "REVISION_CONFLICT" }
         val bundle = JSONObject(database.loadLiveWorkspaceRevision(workspaceId)!!.definitionJson)
-        require(isApplication(bundle) && WorkspaceApplicationContract.validate(bundle).isEmpty() && bundle.getJSONObject("manifest").getJSONArray("capabilities").length() == 0) { "WORKSPACE_GRANT_REQUIRED" }
+        require(isApplication(bundle) && WorkspaceApplicationContract.validate(bundle).isEmpty()) { "VALIDATION_FAILED" }
+        require(bundle.getJSONObject("manifest").getJSONArray("capabilities").length() == 0) { "UNSUPPORTED_CAPABILITY" }
         execSQL("UPDATE workspace_application_lifecycle SET epoch=epoch+1,enabled=? WHERE workspace_id=?", arrayOf(if (enabled) 1 else 0, workspaceId))
     }
     private fun integer(value: JSONObject, key: String, minimum: Long = 0, maximum: Long = 9_007_199_254_740_991L): Long {

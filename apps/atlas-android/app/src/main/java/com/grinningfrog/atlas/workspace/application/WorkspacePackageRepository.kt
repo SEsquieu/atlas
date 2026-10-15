@@ -56,7 +56,10 @@ class WorkspacePackageRepository(private val database: AtlasDatabase) {
             require(session.workspaceId == realmId) { "TARGET_CONFLICT" }
             require(database.loadTurn(turnId)?.sessionId == sessionId) { "Turn does not belong to the source session" }
             require(changes.length() <= WorkspaceApplicationContract.MAX_FILES) { "Too many file changes" }
-            val bundle = if (parentCandidateId == null) JSONObject().put("files", JSONObject()) else {
+            val bundle = if (parentCandidateId == null) {
+                val live = JSONObject(database.loadLiveWorkspaceRevision(workspaceId)!!.definitionJson)
+                if (WorkspaceApplicationData.isApplication(live)) JSONObject(live.toString()) else JSONObject().put("files", JSONObject())
+            } else {
                 val parent = load(workspaceId, parentCandidateId)
                 require(parent.getString("base_revision_id") == baseRevisionId) { "REVISION_CONFLICT" }
                 JSONObject(parent.getJSONObject("bundle").toString())

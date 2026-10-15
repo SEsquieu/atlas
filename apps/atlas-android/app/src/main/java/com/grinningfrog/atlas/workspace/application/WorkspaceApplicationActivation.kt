@@ -50,7 +50,7 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
                 arrayOf(checkId, workspaceId, candidateId)).use { row ->
                 require(row.moveToFirst() && row.getString(0) == hash && row.getString(1) == base && row.getLong(2) == version) { "CHECK_REQUIRED" }
             }
-            require(bundle.getJSONObject("manifest").getJSONArray("capabilities").length() == 0) { "WORKSPACE_GRANT_REQUIRED" }
+            require(bundle.getJSONObject("manifest").getJSONArray("capabilities").length() == 0) { "UNSUPPORTED_CAPABILITY" }
             val old = JSONObject(database.loadLiveWorkspaceRevision(workspaceId)!!.definitionJson)
             if (WorkspaceApplicationData.isApplication(old)) {
                 require(old.getJSONObject("manifest").getInt("data_schema_version") == bundle.getJSONObject("manifest").getInt("data_schema_version")) { "MIGRATION_REQUIRED" }

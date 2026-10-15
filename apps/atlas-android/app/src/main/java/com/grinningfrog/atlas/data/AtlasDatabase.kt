@@ -1166,7 +1166,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 put("id", revision.id); put("content_hash", revision.contentHash); put("definition", JSONObject(revision.definitionJson))
             })
             put("records", JSONArray().apply { allWorkspaceRecords(workspaceId).forEach { record ->
-                put(JSONObject().apply { put("id", record.id); put("collection", record.collection); put("data", JSONObject(record.dataJson)); put("created_at_ms", record.createdAtMs); put("updated_at_ms", record.updatedAtMs) })
+                put(JSONObject().apply { put("id", if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(JSONObject(revision.definitionJson))) record.id.removePrefix("${workspace.id}:") else record.id); put("collection", record.collection); put("data", JSONObject(record.dataJson)); put("created_at_ms", record.createdAtMs); put("updated_at_ms", record.updatedAtMs) })
             } })
             put("completeness", JSONObject().put("records", "all").put("revisionHistory", false).put("grants", false))
             put("notice", "Capability grants and credentials are intentionally excluded.")

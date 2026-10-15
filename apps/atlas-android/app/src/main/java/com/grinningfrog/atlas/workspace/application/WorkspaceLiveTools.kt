@@ -45,6 +45,7 @@ internal object WorkspaceLiveTools {
         }
     }
     private class Run(db: AtlasDatabase, private val worker: WorkspaceWorkerSupervisor) : Adapter(db) {
+        override val supportsLocalDiagnostics = true
         override val definition = ToolDefinition("workspace_package_run", "Run a named pure export from a candidate or the current live package as a reusable tool. Accepts schema-validated JSON input and returns bounded JSON output. Each invocation uses a fresh isolated worker with no storage, network, device or background authority. Reference execution does not retarget edits. Candidate execution is experimental, not a verification receipt.",
             """{"type":"object","properties":{"workspace_id":{"type":"string"},"candidate_id":{"type":"string"},"export":{"type":"string"},"input":{}},"required":["workspace_id","export","input"],"additionalProperties":false}""", ToolRisk.READ_ONLY, maxCallsPerTurn = 4, maxArgumentBytes = 70_000)
         override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {

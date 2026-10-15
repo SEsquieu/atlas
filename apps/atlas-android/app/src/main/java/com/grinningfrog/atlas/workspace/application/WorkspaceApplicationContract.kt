@@ -183,9 +183,9 @@ object WorkspaceApplicationContract {
                 const status=document.querySelector('#status'), notes=document.querySelector('#notes'), form=document.querySelector('#entry');
                 const info=await host.describe();
                 async function refresh(){const page=await data.query({collection:'notes',limit:100});notes.replaceChildren();for(const row of page.records){const item=document.createElement('li');item.textContent=row.data.text;notes.append(item);}return page.data_version;}
-                form.hidden=!info.authorization_granted;
+                form.hidden=!info.storage_authorized;
                 await host.ready();
-                if(info.authorization_granted){
+                if(info.storage_authorized){
                   await refresh();
                   form.addEventListener('submit',async event=>{event.preventDefault();const text=document.querySelector('#text');if(!text.value.trim())return;
                     try{const version=await refresh(), request_key=Date.now().toString(36)+Math.random().toString(36).slice(2);const prepared=await data.prepare({expected_data_version:version,request_key,mutations:[{kind:'create',collection:'notes',data:{text:text.value.trim()}}]});await data.commit(prepared.operation_id);text.value='';await refresh();status.textContent='Saved';}catch(error){status.textContent=error.code||error.message;}

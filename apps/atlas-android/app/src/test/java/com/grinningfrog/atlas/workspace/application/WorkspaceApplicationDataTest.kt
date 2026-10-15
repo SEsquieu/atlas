@@ -75,7 +75,7 @@ class WorkspaceApplicationDataTest {
         assertEquals(1, page.getInt("next_offset"))
         val update = JSONObject().put("kind", "update").put("collection", "notes").put("record_id", id).put("data", JSONObject().put("text", "Updated"))
         store.commit(p, prepare(p, update))
-        assertEquals("Updated", db.listWorkspaceRecords(p.workspaceId, "notes").single { it.id == id }.let { JSONObject(it.dataJson).getString("text") })
+        assertEquals("Updated", db.listWorkspaceRecords(p.workspaceId, "notes").single { it.id.removePrefix("${p.workspaceId}:") == id }.let { JSONObject(it.dataJson).getString("text") })
         assertThrows(IllegalArgumentException::class.java) { store.query(p, JSONObject().put("collection", "notes").put("expected_data_version", 2)) }
         val deletion = JSONObject().put("kind", "delete").put("collection", "notes").put("record_id", id)
         store.commit(p, prepare(p, deletion))

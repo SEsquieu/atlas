@@ -38,7 +38,7 @@ class WorkspacePresentationPolicyTest {
     @Test fun authoritativeRegistryRejectsGuessedMethodsAndUnknownParams() {
         val descriptor = WorkspaceHostRegistry.describe(principal)
         assertEquals(setOf("host.describe", "host.ready"), descriptor.getJSONObject("methods").keys().asSequence().toSet())
-        assertFalse(descriptor.getBoolean("authorization_granted"))
+        assertFalse(descriptor.getBoolean("storage_authorized"))
         assertTrue(WorkspaceHostRegistry.validate("host.describe", JSONObject()))
         assertFalse(WorkspaceHostRegistry.validate("ble.connect", JSONObject()))
         assertThrows(IllegalArgumentException::class.java) { WorkspaceHostRegistry.validate("host.ready", JSONObject().put("workspace_id", "forged")) }

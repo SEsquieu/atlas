@@ -29,6 +29,9 @@ class WorkspaceWebPresentation(
     private var remainingMessages = 64
     private var messageWindow = android.os.SystemClock.elapsedRealtime()
     private val bridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val console = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
+    @Volatile private var ready = false
+    fun diagnostics(): JSONObject = JSONObject().put("ready", ready).put("disposed", disposed).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } }))
     val view: WebView
 
     init {
@@ -82,6 +85,13 @@ class WorkspaceWebPresentation(
         }
         view.setDownloadListener { _, _, _, _, _ -> onFailure("Direct downloads are unavailable") }
         view.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                synchronized(console) {
+                    if (console.size >= 24) console.removeAt(0)
+                    console.add(JSONObject().put("level", message.messageLevel().name).put("message", message.message().orEmpty().take(1000)).put("source", message.sourceId().orEmpty().take(240)).put("line", message.lineNumber()))
+                }
+                return true
+            }
             override fun onPermissionRequest(request: PermissionRequest) = request.deny()
             override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) = callback.invoke(origin, false, false)
             override fun onShowFileChooser(webView: WebView, callback: android.webkit.ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean { callback.onReceiveValue(null); return true }
@@ -125,7 +135,7 @@ class WorkspaceWebPresentation(
                     require(!disposed && current()) { "REVISION_CONFLICT" }
                     WorkspaceHostRegistry.dispatch(principal, method, request.getJSONObject("params"), data)
                 }
-                if (method == "host.ready" && !disposed && current()) onReady()
+                if (method == "host.ready" && !disposed && current()) { ready = true; onReady() }
                 val response = WorkspaceHostProtocol.response(requestId, "succeeded", operation, result)
                 require(response.toString().toByteArray(Charsets.UTF_8).size <= WorkspaceApplicationContract.MAX_MESSAGE_BYTES) { "QUOTA_EXCEEDED" }
                 response

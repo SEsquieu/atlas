@@ -61,12 +61,16 @@ object ArchiveCodec {
                     val validation = WorkspaceDefinitionValidator.validate(definition.toString())
                     require(validation.valid) { "Workspace definition: ${validation.errors.joinToString("; ")}" }
                 }
-                val records = root.getJSONArray("records"); require(records.length() <= 5000) { "Workspace exceeds the 5,000 record import limit" }
+                val records = root.getJSONArray("records"); require(records.length() <= if (application) 30_000 else 5000) { "Workspace record import limit exceeded" }
+                val collectionCounts = mutableMapOf<String, Int>()
                 val ids = mutableSetOf<String>()
                 for (i in 0 until records.length()) {
                     val record = records.getJSONObject(i); require(ids.add(record.getString("id"))) { "Duplicate workspace record ID" }
                     val data = record.getJSONObject("data"); val collection = record.getString("collection")
                     if (application) {
+                        require(record.getString("id").length in 1..200)
+                        collectionCounts[collection] = (collectionCounts[collection] ?: 0) + 1
+                        require(collectionCounts.getValue(collection) <= 5000) { "Collection import limit exceeded" }
                         require(collection.matches(Regex("[A-Za-z][A-Za-z0-9_-]{0,63}")) && collection != "AtlasRuntimeState")
                         com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.checkJson(data)
                         require(data.toString().toByteArray(Charsets.UTF_8).size <= 32 * 1024)

@@ -16,7 +16,7 @@ object WorkspaceHostRegistry {
     fun describe(principal: WorkspacePrincipal, storage: Boolean = false): JSONObject = WorkspaceApplicationContract.descriptor()
         .put("instance_mode", principal.mode.name.lowercase()).put("workspace_id", principal.workspaceId).put("revision_id", principal.revisionId)
         .put("epoch", principal.epoch).put("methods", JSONObject().apply { (methods + if (storage) storageMethods else emptyMap()).forEach { (name, schema) -> put(name, JSONObject(schema.toString())) } })
-        .put("authority", "core_bound_transport").put("authorization_granted", storage)
+        .put("authority", "core_bound_transport").put("storage_authorized", storage)
         .put("storage_contract", "Workspace-scoped foreground records only. query returns data_version and a next_offset; null ends pagination. prepare requires expected_data_version, mutations and a reusable request_key. Retry the same key with identical input after response loss; commit/inspect/cancel use the returned operation_id. Revisions fence old callers. No device, network, credential, or background methods are installed.")
     fun validate(method: String, params: JSONObject, storage: Boolean = false): Boolean {
         val schema = methods[method] ?: if (storage) storageMethods[method] else null
