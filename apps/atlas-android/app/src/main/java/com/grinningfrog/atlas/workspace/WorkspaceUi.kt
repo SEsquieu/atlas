@@ -40,6 +40,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -80,6 +82,7 @@ fun WorkspacePage(
 ) {
     var displayedId by remember(snapshot.session?.activeComposableWorkspaceId) { mutableStateOf(snapshot.session?.activeComposableWorkspaceId) }
     var refresh by remember { mutableIntStateOf(0) }
+    LaunchedEffect(displayedId) { while (displayedId != null) { delay(500); refresh++ } }
     var error by remember { mutableStateOf<String?>(null) }
     val workspaces = remember(refresh, snapshot.session?.activeComposableWorkspaceId, snapshot.messages.size) { database.listComposableWorkspaces(includeArchived = true) }
     val workspace = displayedId?.let(database::loadComposableWorkspace)
@@ -115,7 +118,7 @@ fun WorkspacePage(
             },
             onCreate = { name, description ->
                 runAction {
-                    val created = database.createComposableWorkspace(name, description, realmId = snapshot.session?.workspaceId ?: DEFAULT_PERSONAL_WORKSPACE_ID)
+                    val created = database.createComposableWorkspace(name, description, definitionJson = com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.example().toString(), realmId = snapshot.session?.workspaceId ?: DEFAULT_PERSONAL_WORKSPACE_ID)
                     displayedId = created.id
                     snapshot.session?.takeIf { it.status != SessionStatus.DONE }?.let { runtime.activateComposableWorkspace(created.id) }
                 }
@@ -151,7 +154,9 @@ fun WorkspacePage(
             }) { Icon(Icons.Default.IosShare, "Export workspace") }
         }
         HorizontalDivider()
-        WorkspaceRenderer(workspace, revision, database, listOf(refresh, revision.id, snapshot.messages.lastOrNull()?.id), { refresh++ }, Modifier.weight(1f))
+        if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(JSONObject(revision.definitionJson))) {
+            com.grinningfrog.atlas.workspace.application.WorkspaceApplicationPanel(workspace, revision, database, Modifier.weight(1f).fillMaxWidth())
+        } else WorkspaceRenderer(workspace, revision, database, listOf(refresh, revision.id, snapshot.messages.lastOrNull()?.id), { refresh++ }, Modifier.weight(1f))
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
     }
 }

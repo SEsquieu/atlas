@@ -20,7 +20,9 @@ private const val AUTHORING_GUIDE = "Inspect workspace_capabilities before decla
 object WorkspaceTools {
     fun create(database: AtlasDatabase, mediaRepository: MediaRepository? = null, applicationContext: android.content.Context? = null): List<AtlasToolAdapter> = listOf(
         Capabilities(database), ListWorkspaces(database), TargetWorkspace(database), UpdateMetadata(database), ValidateDefinition(database), CreateWorkspace(database), InspectWorkspace(database), ReplaceDefinition(database), PatchDefinition(database), AddRecord(database), UpdateRecord(database), DeleteRecord(database), RestoreRecord(database), RenderDiagnostics(database),
-    ) + com.grinningfrog.atlas.workspace.application.WorkspacePackageTools.create(database, applicationContext) + if (mediaRepository == null) emptyList() else listOf(CaptureWorkspace(database, mediaRepository))
+    ).filter { applicationContext == null || it.definition.name in setOf("workspace_list", "workspace_target", "workspace_update_metadata", "workspace_render_diagnostics") } +
+        com.grinningfrog.atlas.workspace.application.WorkspacePackageTools.create(database, applicationContext) +
+        (if (applicationContext != null) com.grinningfrog.atlas.workspace.application.WorkspaceLiveTools.create(database, applicationContext) else emptyList()) + if (mediaRepository == null) emptyList() else listOf(CaptureWorkspace(database, mediaRepository))
 }
 
 private abstract class WorkspaceAdapter(protected val database: AtlasDatabase) : AtlasToolAdapter {
@@ -379,7 +381,14 @@ private open class RenderDiagnostics(database: AtlasDatabase) : WorkspaceAdapter
         val (session, id) = target(call)
         val revision = database.loadLiveWorkspaceRevision(id) ?: error("Workspace is unavailable")
         val root = JSONObject(revision.definitionJson)
-        require(root.optString("format") == WorkspaceRuntimeV2.FORMAT) { "Render diagnostics require atlas.workspace.v2" }
+        if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(root)) {
+            return ToolExecutionResult(JSONObject().put("workspace_id", id).put("revision_id", revision.id).put("navigation_sequence", session.workspaceNavigationSequence)
+                .put("format", com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.FORMAT)
+                .put("rendered", WorkspaceRenderSurface.diagnostics(id, revision.id)).put("epoch", com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData(database).epoch(id))
+                .put("structural_errors", JSONArray(com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.validate(root)))
+                .put("notice", "Only a drawn viewport or screenshot establishes visible output; startup and pure fixtures are separate evidence.").toString())
+        }
+        require(root.optString("format") == WorkspaceRuntimeV2.FORMAT) { "Render diagnostics require a supported format" }
         val records = buildMap<String, List<JSONObject>> {
             root.optJSONObject("collections")?.keys()?.forEach { collection -> put(collection, database.listWorkspaceRecords(id, collection, 5_000).map { JSONObject(it.dataJson).put("_id", it.id) }) }
         }
@@ -397,7 +406,7 @@ private open class RenderDiagnostics(database: AtlasDatabase) : WorkspaceAdapter
 
 private class CaptureWorkspace(database: AtlasDatabase, private val media: MediaRepository) : RenderDiagnostics(database) {
     override val definition = ToolDefinition(
-        "workspace_capture_view", "Capture the visible Atlas v2 workspace viewport as UI pixels for visual diagnosis. The workspace panel must be open and drawn at the current revision. Does not capture the physical camera, other apps, system screen, or offscreen content. Image attaches to the next inference step and remains separate from physical observations. Available as scoped read-only local diagnostics during discovery.",
+        "workspace_capture_view", "Capture the visible Atlas workspace viewport as UI pixels for visual diagnosis. The workspace panel must be open and drawn at the current revision. Does not capture the physical camera, other apps, system screen, or offscreen content. Image attaches to the next inference step and remains separate from physical observations. Available as scoped read-only local diagnostics during discovery.",
         """{"type":"object","properties":{"workspace_id":{"type":"string"}},"additionalProperties":false}""", ToolRisk.READ_ONLY, maxCallsPerTurn = 2,
     )
     override fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision {

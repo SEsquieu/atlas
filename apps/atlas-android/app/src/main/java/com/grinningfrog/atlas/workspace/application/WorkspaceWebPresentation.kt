@@ -11,6 +11,7 @@ import androidx.webkit.WebViewRenderProcessClient
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.util.UUID
+import kotlinx.coroutines.*
 
 /** Substrate spike. No storage/device/network methods are installed and live activation is gated. */
 class WorkspaceWebPresentation(
@@ -20,11 +21,14 @@ class WorkspaceWebPresentation(
     private val current: () -> Boolean,
     private val onReady: () -> Unit,
     private val onFailure: (String) -> Unit,
+    private val data: WorkspaceApplicationData? = null,
 ) {
     private val files = JSONObject(bundle.getJSONObject("files").toString())
     private val policy = WorkspacePresentationPolicy(principal, bundle.getJSONObject("manifest").getString("entry"))
     @Volatile private var disposed = false
-    private var remainingMessages = 256
+    private var remainingMessages = 64
+    private var messageWindow = android.os.SystemClock.elapsedRealtime()
+    private val bridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val view: WebView
 
     init {
@@ -102,25 +106,38 @@ class WorkspaceWebPresentation(
         WebViewCompat.addWebMessageListener(view, "atlasTransport", setOf(policy.origin)) { _, message, source, mainFrame, reply ->
             if (!policy.acceptsMessage(source.toString(), mainFrame, !disposed && current())) return@addWebMessageListener
             val raw = runCatching { message.data }.getOrNull() ?: return@addWebMessageListener
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now - messageWindow >= 1000) { messageWindow = now; remainingMessages = 64 }
             if (--remainingMessages < 0) { onFailure("Workspace bridge quota exceeded"); return@addWebMessageListener }
+            bridgeScope.launch {
             val operation = UUID.randomUUID().toString()
             var requestId = "invalid"
             val response = runCatching {
                 val request = WorkspaceHostProtocol.request(raw); requestId = request.getString("request_id")
                 val method = request.getString("method")
-                if (!WorkspaceHostRegistry.validate(method, request.getJSONObject("params"))) WorkspaceHostProtocol.failure(requestId, operation, "UNSUPPORTED_CAPABILITY", "Method is not installed")
-                else {
-                    if (method == "host.ready") onReady()
-                    WorkspaceHostProtocol.response(requestId, "succeeded", operation, WorkspaceHostRegistry.describe(principal))
+                val result = withContext(Dispatchers.IO) {
+                    require(!disposed && current()) { "REVISION_CONFLICT" }
+                    WorkspaceHostRegistry.dispatch(principal, method, request.getJSONObject("params"), data)
                 }
-            }.getOrElse { WorkspaceHostProtocol.failure(requestId, operation, "VALIDATION_FAILED", (it.message ?: "Invalid bridge request").take(300)) }
+                if (method == "host.ready" && !disposed && current()) onReady()
+                val response = WorkspaceHostProtocol.response(requestId, "succeeded", operation, result)
+                require(response.toString().toByteArray(Charsets.UTF_8).size <= WorkspaceApplicationContract.MAX_MESSAGE_BYTES) { "QUOTA_EXCEEDED" }
+                response
+            }.getOrElse {
+                if (it is CancellationException) throw it
+                val known = setOf("REVISION_CONFLICT", "DATA_CONFLICT", "TARGET_CONFLICT", "OPERATION_CONFLICT", "OPERATION_UNAVAILABLE", "QUOTA_EXCEEDED", "RECEIPT_QUOTA_EXCEEDED", "UNSUPPORTED_CAPABILITY", "EXECUTION_MODE_DENIED", "FORMAT_TOOL_MISMATCH")
+                val code = it.message?.takeIf { message -> message in known } ?: "VALIDATION_FAILED"
+                WorkspaceHostProtocol.failure(requestId, operation, code, code, if (code == "DATA_CONFLICT") "inspect_and_retry" else "never")
+            }
             if (!disposed && current()) reply.postMessage(response.toString())
+            }
         }
     }
     fun load() { check(!disposed); view.loadUrl(policy.entryUrl) }
     fun dispose() {
         if (disposed) return
         disposed = true
+        bridgeScope.cancel()
         view.stopLoading()
         (view.parent as? android.view.ViewGroup)?.removeView(view)
         WebStorage.getInstance().deleteOrigin(policy.origin)

@@ -170,10 +170,28 @@ object WorkspaceApplicationContract {
 
     fun example(): JSONObject = JSONObject().put("manifest", JSONObject()
         .put("format", FORMAT).put("title", "My application").put("host_api", API_VERSION).put("entry", "ui/index.html")
-        .put("data_schema_version", 1).put("capabilities", JSONArray()).put("exports", JSONObject()).put("tests", JSONArray()).put("dependencies", JSONArray()))
-        .put("files", JSONObject().put("ui/index.html", "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><link rel=\"stylesheet\" href=\"./style.css\"></head><body><main id=\"app\"></main><script type=\"module\" src=\"./app.js\"></script></body></html>")
-            .put("ui/style.css", "body { background: #101010; color: #fafafa; font-family: sans-serif; } main { padding: 1rem; }")
-            .put("ui/app.js", "document.querySelector('#app').textContent = 'Ready';"))
+        .put("data_schema_version", 1).put("capabilities", JSONArray()).put("exports", JSONObject().put("health", JSONObject()
+            .put("module", "tools/health.js").put("function", "health").put("mode", "pure")
+            .put("input_schema", JSONObject().put("type", "null")).put("output_schema", JSONObject().put("type", "boolean"))))
+        .put("tests", JSONArray().put(JSONObject().put("name", "startup helper").put("export", "health").put("input", JSONObject.NULL).put("expected", true))).put("dependencies", JSONArray()))
+        .put("files", JSONObject().put("ui/index.html", "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><link rel=\"stylesheet\" href=\"./style.css\"></head><body><main><h1>Notes</h1><form id=\"entry\"><input id=\"text\" maxlength=\"1000\" placeholder=\"New note\"><button>Add</button></form><p id=\"status\"></p><ul id=\"notes\"></ul></main><script type=\"module\" src=\"./app.js\"></script></body></html>")
+            .put("ui/style.css", "body{background:#101010;color:#fafafa;font:16px sans-serif;margin:0}main{padding:1rem}input,button{font:inherit;padding:.7rem;border-radius:.5rem;border:1px solid #454545}input{max-width:60%;background:#222;color:white}button{background:#a8ff00}li{padding:.5rem 0}")
+            .put("tools/health.js", "export function health(){return true;}")
+            .put("ui/app.js", """
+                import {host,data} from '/atlas/host.js';
+                const status=document.querySelector('#status'), notes=document.querySelector('#notes'), form=document.querySelector('#entry');
+                const info=await host.describe();
+                async function refresh(){const page=await data.query({collection:'notes',limit:100});notes.replaceChildren();for(const row of page.records){const item=document.createElement('li');item.textContent=row.data.text;notes.append(item);}return page.data_version;}
+                form.hidden=!info.authorization_granted;
+                await host.ready();
+                if(info.authorization_granted){
+                  await refresh();
+                  form.addEventListener('submit',async event=>{event.preventDefault();const text=document.querySelector('#text');if(!text.value.trim())return;
+                    try{const version=await refresh(), request_key=crypto.randomUUID();const prepared=await data.prepare({expected_data_version:version,request_key,mutations:[{kind:'create',collection:'notes',data:{text:text.value.trim()}}]});await data.commit(prepared.operation_id);text.value='';await refresh();status.textContent='Saved';}catch(error){status.textContent=error.code||error.message;}
+                  });
+                }
+            """.trimIndent()))
+
 }
 
 /** Closed subset, deliberately rejecting unsupported keywords rather than silently ignoring them. */

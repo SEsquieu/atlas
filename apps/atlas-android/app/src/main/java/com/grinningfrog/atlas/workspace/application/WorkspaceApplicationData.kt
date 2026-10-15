@@ -32,6 +32,11 @@ class WorkspaceApplicationData(private val database: AtlasDatabase) {
                 FOREIGN KEY(workspace_id) REFERENCES composable_workspaces(composable_workspace_id) ON DELETE CASCADE,
                 FOREIGN KEY(candidate_id) REFERENCES workspace_package_candidates(candidate_id) ON DELETE CASCADE
             )""")
+            db.execSQL("""CREATE TABLE IF NOT EXISTS workspace_application_activations (
+                workspace_id TEXT NOT NULL, candidate_id TEXT NOT NULL, check_id TEXT NOT NULL,
+                result_json TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(workspace_id,candidate_id),
+                FOREIGN KEY(workspace_id) REFERENCES composable_workspaces(composable_workspace_id) ON DELETE CASCADE
+            )""")
             for ((event, row) in listOf("INSERT" to "NEW", "UPDATE" to "NEW", "DELETE" to "OLD")) db.execSQL("""CREATE TRIGGER IF NOT EXISTS workspace_data_${event.lowercase()} AFTER $event ON workspace_records BEGIN
                 INSERT OR IGNORE INTO workspace_data_versions(workspace_id,version) VALUES($row.composable_workspace_id,0);
                 UPDATE workspace_data_versions SET version=version+1 WHERE workspace_id=$row.composable_workspace_id;
@@ -61,16 +66,23 @@ class WorkspaceApplicationData(private val database: AtlasDatabase) {
             if (params.has("expected_data_version")) require(integer(params, "expected_data_version") == version) { "DATA_CONFLICT" }
             val records = JSONArray()
             rawQuery("SELECT record_id,data_json,created_at,updated_at FROM workspace_records WHERE composable_workspace_id=? AND collection_name=? ORDER BY created_at ASC,record_id ASC LIMIT ? OFFSET ?",
-                arrayOf(principal.workspaceId, collection, limit.toString(), offset.toString())).use { cursor -> while (cursor.moveToNext()) records.put(JSONObject().put("id", cursor.getString(0)).put("data", JSONObject(cursor.getString(1))).put("created_at_ms", cursor.getLong(2)).put("updated_at_ms", cursor.getLong(3))) }
-            JSONObject().put("records", records).put("data_version", version).put("next_offset", if (records.length() == limit) offset + limit else JSONObject.NULL)
+                arrayOf(principal.workspaceId, collection, limit.toString(), offset.toString())).use { cursor -> while (cursor.moveToNext()) {
+                    records.put(JSONObject().put("id", cursor.getString(0)).put("data", JSONObject(cursor.getString(1))).put("created_at_ms", cursor.getLong(2)).put("updated_at_ms", cursor.getLong(3)))
+                    if (records.toString().toByteArray(Charsets.UTF_8).size > 48 * 1024) { records.remove(records.length() - 1); break }
+                } }
+            JSONObject().put("records", records).put("data_version", version).put("next_offset", if (records.length() > 0) offset + records.length() else JSONObject.NULL)
         }
     }
     fun prepare(principal: WorkspacePrincipal, params: JSONObject): JSONObject {
         fence(principal)
-        WorkspaceApplicationContract.exactKeys(params, setOf("expected_data_version", "mutations"), setOf("expected_data_version", "mutations"))
+        WorkspaceApplicationContract.exactKeys(params, setOf("expected_data_version", "mutations", "request_key"), setOf("expected_data_version", "mutations"))
         WorkspaceApplicationContract.checkJson(params)
         integer(params, "expected_data_version")
-        val copy = JSONObject(params.toString()); val mutations = copy.getJSONArray("mutations")
+        require(params.toString().toByteArray(Charsets.UTF_8).size <= WorkspaceApplicationContract.MAX_MESSAGE_BYTES - 512) { "QUOTA_EXCEEDED" }
+        val requestKey = if (params.has("request_key")) params.getString("request_key").also { require(it.matches(Regex("[A-Za-z0-9_-]{1,128}"))) { "VALIDATION_FAILED" } } else UUID.randomUUID().toString()
+        val operationId = WorkspaceApplicationContract.hash("${principal.workspaceId}/${principal.revisionId}/${principal.epoch}/$requestKey")
+        val original = JSONObject(params.toString()).apply { remove("request_key") }
+        val copy = JSONObject(original.toString()); val mutations = copy.getJSONArray("mutations")
         require(mutations.length() in 1..32) { "QUOTA_EXCEEDED" }
         for (i in 0 until mutations.length()) {
             val mutation = mutations.getJSONObject(i); val kind = mutation.getString("kind")
@@ -84,12 +96,22 @@ class WorkspaceApplicationData(private val database: AtlasDatabase) {
         }
         return atomic {
             fence(principal)
+            rawQuery("SELECT request_json,result_json FROM workspace_application_operations WHERE operation_id=? AND workspace_id=? AND revision_id=? AND epoch=?",
+                arrayOf(operationId, principal.workspaceId, principal.revisionId, principal.epoch.toString())).use { prior ->
+                if (prior.moveToFirst()) {
+                    val normalized = JSONObject(prior.getString(0))
+                    val rows = normalized.getJSONArray("mutations")
+                    for (i in 0 until rows.length()) if (rows.getJSONObject(i).getString("kind") == "create") rows.getJSONObject(i).remove("record_id")
+                    require(WorkspaceApplicationContract.canonical(normalized) == WorkspaceApplicationContract.canonical(original)) { "OPERATION_CONFLICT" }
+                    return@atomic if (prior.isNull(1)) JSONObject().put("operation_id", operationId).put("status", "prepared") else JSONObject(prior.getString(1))
+                }
+            }
             require(version(principal.workspaceId) == copy.getLong("expected_data_version")) { "DATA_CONFLICT" }
             val retained = rawQuery("SELECT COUNT(*) FROM workspace_application_operations WHERE workspace_id=? AND result_json IS NULL", arrayOf(principal.workspaceId)).use { it.moveToFirst(); it.getInt(0) }
             require(retained < 64) { "QUOTA_EXCEEDED" }
-            val total = rawQuery("SELECT COUNT(*) FROM workspace_application_operations WHERE workspace_id=?", arrayOf(principal.workspaceId)).use { it.moveToFirst(); it.getInt(0) }
-            require(total < 4096) { "RECEIPT_QUOTA_EXCEEDED" }
-            val id = UUID.randomUUID().toString()
+            val total = rawQuery("SELECT COUNT(*),coalesce(SUM(length(CAST(request_json AS BLOB))+coalesce(length(CAST(result_json AS BLOB)),0)),0) FROM workspace_application_operations WHERE workspace_id=?", arrayOf(principal.workspaceId)).use { it.moveToFirst(); it.getInt(0) to it.getLong(1) }
+            require(total.first < 4096 && total.second + copy.toString().toByteArray(Charsets.UTF_8).size < 16L * 1024 * 1024) { "RECEIPT_QUOTA_EXCEEDED" }
+            val id = operationId
             insertOrThrow("workspace_application_operations", null, ContentValues().apply {
                 put("operation_id", id); put("workspace_id", principal.workspaceId); put("revision_id", principal.revisionId); put("epoch", principal.epoch)
                 put("request_json", copy.toString()); put("created_at", System.currentTimeMillis())
@@ -139,6 +161,21 @@ class WorkspaceApplicationData(private val database: AtlasDatabase) {
             require(cursor.moveToFirst()) { "OPERATION_UNAVAILABLE" }
             if (cursor.isNull(0)) JSONObject().put("operation_id", operationId).put("status", "prepared") else JSONObject(cursor.getString(0))
         }
+    }
+    fun cancel(principal: WorkspacePrincipal, operationId: String): JSONObject = atomic {
+        val prior = inspect(principal, operationId)
+        if (prior.getString("status") != "prepared") return@atomic prior
+        val result = JSONObject().put("operation_id", operationId).put("status", "cancelled")
+        update("workspace_application_operations", ContentValues().apply { put("result_json", result.toString()) }, "operation_id=? AND result_json IS NULL", arrayOf(operationId))
+        result
+    }
+    /** Host UI recovery control; generated packages cannot invoke this method. */
+    fun setEnabled(workspaceId: String, revisionId: String, enabled: Boolean) = atomic {
+        val workspace = database.loadComposableWorkspace(workspaceId) ?: error("TARGET_CONFLICT")
+        require(workspace.liveRevisionId == revisionId && workspace.status == WorkspaceStatus.ACTIVE) { "REVISION_CONFLICT" }
+        val bundle = JSONObject(database.loadLiveWorkspaceRevision(workspaceId)!!.definitionJson)
+        require(isApplication(bundle) && WorkspaceApplicationContract.validate(bundle).isEmpty() && bundle.getJSONObject("manifest").getJSONArray("capabilities").length() == 0) { "WORKSPACE_GRANT_REQUIRED" }
+        execSQL("UPDATE workspace_application_lifecycle SET epoch=epoch+1,enabled=? WHERE workspace_id=?", arrayOf(if (enabled) 1 else 0, workspaceId))
     }
     private fun integer(value: JSONObject, key: String, minimum: Long = 0, maximum: Long = 9_007_199_254_740_991L): Long {
         val raw = value.get(key)

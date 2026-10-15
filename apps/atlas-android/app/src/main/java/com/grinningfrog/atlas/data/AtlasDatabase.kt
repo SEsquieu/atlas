@@ -69,7 +69,7 @@ data class ChatGptUsageSummary(
     val lastHostedSearchStatus: String? = null,
 )
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 16) {
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 17) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         db.setForeignKeyConstraintsEnabled(true)
@@ -468,7 +468,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             addColumnIfMissing(db, "sessions", "workspace_navigation_sequence", "INTEGER NOT NULL DEFAULT 0")
         }
         if (oldVersion < 12) createArchiveTables(db)
-        if (oldVersion < 16) com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.createTables(db)
+        if (oldVersion < 17) com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.createTables(db)
     }
 
     private fun createArchiveTables(db: SQLiteDatabase) {
@@ -816,8 +816,14 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         sourceTurnId: String? = null,
         nowMs: Long = System.currentTimeMillis(),
     ): ComposableWorkspace {
-        val validation = WorkspaceDefinitionValidator.validate(definitionJson)
-        require(validation.valid) { validation.errors.joinToString("; ") }
+        val application = com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(JSONObject(definitionJson))
+        if (application) {
+            val errors = com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.validate(JSONObject(definitionJson))
+            require(errors.isEmpty()) { errors.joinToString("; ") }
+        } else {
+            val validation = WorkspaceDefinitionValidator.validate(definitionJson)
+            require(validation.valid) { validation.errors.joinToString("; ") }
+        }
         val workspaceId = UUID.randomUUID().toString()
         val revisionId = UUID.randomUUID().toString()
         val workspace = ComposableWorkspace(workspaceId, realmId, name.trim().take(120), description.trim().take(1_000), WorkspaceStatus.ACTIVE, revisionId, nowMs, nowMs)
@@ -828,6 +834,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 put("created_at", nowMs); put("updated_at", nowMs)
             })
             insertOrThrow("workspace_revisions", null, revisionValues(revisionId, workspaceId, null, definitionJson, "USER", sourceSessionId, sourceTurnId, "Workspace created", nowMs))
+            if (application) execSQL("INSERT INTO workspace_application_lifecycle(workspace_id,epoch,enabled) VALUES(?,1,0)", arrayOf(workspaceId))
         }
         return workspace
     }
@@ -932,6 +939,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         check(writableDatabase.update("composable_workspaces", ContentValues().apply {
             put("status", if (archived) WorkspaceStatus.ARCHIVED.name else WorkspaceStatus.ACTIVE.name); put("updated_at", nowMs)
         }, "composable_workspace_id = ?", arrayOf(workspaceId)) == 1) { "Unknown workspace" }
+        writableDatabase.execSQL("UPDATE workspace_application_lifecycle SET epoch=epoch+1,enabled=0 WHERE workspace_id=?", arrayOf(workspaceId))
         if (archived) writableDatabase.execSQL("UPDATE sessions SET active_composable_workspace_id = NULL, workspace_navigation_sequence = workspace_navigation_sequence + 1 WHERE active_composable_workspace_id = ?", arrayOf(workspaceId))
     }
 
@@ -1174,7 +1182,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
             update("sessions", ContentValues().apply { putNull("active_composable_workspace_id"); put("workspace_navigation_sequence", 0) },
                 "active_composable_workspace_id = ?", arrayOf(workspaceId))
             delete("archive_imports", "kind='workspace' AND destination_id=?", arrayOf(workspaceId))
-            for (table in listOf("workspace_application_operations", "workspace_application_checks", "workspace_application_lifecycle")) delete(table, "workspace_id=?", arrayOf(workspaceId))
+            for (table in listOf("workspace_application_activations", "workspace_application_operations", "workspace_application_checks", "workspace_application_lifecycle")) delete(table, "workspace_id=?", arrayOf(workspaceId))
             delete("workspace_records", "composable_workspace_id = ?", arrayOf(workspaceId))
             delete("workspace_data_versions", "workspace_id=?", arrayOf(workspaceId))
             delete("workspace_package_candidates", "workspace_id = ?", arrayOf(workspaceId))
@@ -1200,11 +1208,17 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 it.moveToFirst(); it.getInt(0)
             })
             if (definition.optString("format") == WorkspaceRuntimeV2.FORMAT) put("runtimeState", loadWorkspaceRuntimeState(id, definition))
-            put("editingHint", "Call workspace_inspect with mode=full before revising this workspace.")
+            put("editingHint", if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(definition)) "Inspect workspace_package_inspect and workspace_package_read_file before staging a complete revision. Get task target/navigation token with workspace_target." else "Historical native workspace. Preserve its records. New apps use workspace_package_create; converting a nonempty legacy workspace requires an explicit migration.")
         }.toString()
     }
 
     private fun compactWorkspaceDefinition(definition: JSONObject): JSONObject = JSONObject().apply {
+        if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(definition)) {
+            put("format", com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.FORMAT)
+            put("manifest", definition.getJSONObject("manifest"))
+            put("files", JSONArray(definition.getJSONObject("files").keys().asSequence().sorted().toList()))
+            return@apply
+        }
         put("format", definition.optString("format")); put("title", definition.optString("title")); put("entryView", definition.optString("entry_view"))
         put("stateKeys", JSONArray(definition.optJSONObject("state")?.keys()?.asSequence()?.toList().orEmpty()))
         put("collections", JSONArray(definition.optJSONObject("collections")?.keys()?.asSequence()?.toList().orEmpty()))

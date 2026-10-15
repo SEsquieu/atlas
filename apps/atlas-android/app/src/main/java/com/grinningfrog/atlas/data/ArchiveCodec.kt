@@ -53,13 +53,24 @@ object ArchiveCodec {
                 source = workspace.getString("id"); name = workspace.getString("name")
                 com.grinningfrog.atlas.workspace.WorkspaceStatus.valueOf(workspace.getString("status"))
                 val definition = root.getJSONObject("revision").getJSONObject("definition")
-                val validation = WorkspaceDefinitionValidator.validate(definition.toString())
-                require(validation.valid) { "Workspace definition: ${validation.errors.joinToString("; ")}" }
+                val application = com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(definition)
+                if (application) {
+                    val errors = com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.validate(definition)
+                    require(errors.isEmpty()) { errors.joinToString("; ") }
+                } else {
+                    val validation = WorkspaceDefinitionValidator.validate(definition.toString())
+                    require(validation.valid) { "Workspace definition: ${validation.errors.joinToString("; ")}" }
+                }
                 val records = root.getJSONArray("records"); require(records.length() <= 5000) { "Workspace exceeds the 5,000 record import limit" }
                 val ids = mutableSetOf<String>()
                 for (i in 0 until records.length()) {
                     val record = records.getJSONObject(i); require(ids.add(record.getString("id"))) { "Duplicate workspace record ID" }
                     val data = record.getJSONObject("data"); val collection = record.getString("collection")
+                    if (application) {
+                        require(collection.matches(Regex("[A-Za-z][A-Za-z0-9_-]{0,63}")) && collection != "AtlasRuntimeState")
+                        com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.checkJson(data)
+                        require(data.toString().toByteArray(Charsets.UTF_8).size <= 32 * 1024)
+                    }
                     if (collection == "AtlasRuntimeState") {
                         require(definition.optString("format") == WorkspaceRuntimeV2.FORMAT) { "Runtime state requires a v2 definition" }
                         val state = data.getJSONObject("state")
