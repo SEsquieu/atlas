@@ -1735,7 +1735,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     fun loadExecutionToolCalls(taskId: String, limit: Int = 100, pendingOnly: Boolean = false): List<AtlasToolCall> = readableDatabase.rawQuery(
         "SELECT tc.tool_call_id,tc.session_id,tc.turn_id,tc.name,tc.arguments_json,tc.status,tc.risk,tc.requires_confirmation,tc.idempotency_key,tc.reason,tc.result_json,tc.error,tc.created_at,tc.updated_at FROM tool_calls tc JOIN execution_slices es ON tc.turn_id=es.turn_id WHERE es.task_id=? " +
             (if(pendingOnly) "AND tc.status IN ('PROPOSED','APPROVED','WAITING_FOR_CONFIRMATION','RUNNING','UNKNOWN') " else "") +
-            "ORDER BY tc.created_at DESC LIMIT ?", arrayOf(taskId,limit.coerceIn(1,10000).toString())
+            "ORDER BY tc.created_at DESC, tc.rowid DESC LIMIT ?", arrayOf(taskId,limit.coerceIn(1,10000).toString())
     ).use { cursor -> buildList { while(cursor.moveToNext()) add(cursor.toToolCall()) }.reversed() }
 
     fun loadTurnToolCalls(turnId: String): List<AtlasToolCall> = readableDatabase.rawQuery(

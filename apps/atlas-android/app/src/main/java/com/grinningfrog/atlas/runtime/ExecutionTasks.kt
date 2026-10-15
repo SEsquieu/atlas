@@ -159,8 +159,9 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         task.document.put("consecutive_retries",0)
         val all=calls(task.id);val pending=pending(task.id).any { it.status==ToolCallStatus.UNKNOWN || it.status==ToolCallStatus.RUNNING }
         val last=all.groupBy { it.name }.values.mapNotNull { it.lastOrNull() }
+        val superseded = all.filter(::failedOperation).mapNotNull { call -> supersedingActivation(call, all)?.let { call to it } }.toMap()
         val diagnosticFailures=last.filter { nonBlockingAuditFailure(it, task, all) }
-        val failures=last.filter { it !in diagnosticFailures }.filter { call -> call.status in setOf(ToolCallStatus.FAILED,ToolCallStatus.REJECTED) || runCatching { JSONObject(call.resultJson.orEmpty()).let { it.has("valid")&&!it.optBoolean("valid") || it.has("ok")&&!it.optBoolean("ok") } }.getOrDefault(false) }
+        val failures=last.filter { it !in diagnosticFailures && it !in superseded }.filter(::failedOperation)
         val signature=failures.joinToString("|") { it.name+":"+(it.error ?: it.resultJson.orEmpty()).take(1000) }
         val failedThisSlice=failures.any { it.turnId==currentTurn(task.id) }
         val madeProgress=all.any { it.turnId==currentTurn(task.id) && it.status==ToolCallStatus.COMPLETED && it !in failures }
@@ -170,12 +171,40 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val definitionId=all.lastOrNull { it.name == "workspace_package_activate" || runCatching {JSONObject(it.argumentsJson).has("definition")}.getOrDefault(false) }?.id ?: task.document.getJSONObject("checkpoint").optString("latest_definition_operation_id").takeIf { it.isNotBlank() && it!="null" }
         task.document.put("checkpoint",JSONObject().put("last_turn_id",currentTurn(task.id)).put("operation_ids",JSONArray(recent.map {it.id}))
             .put("diagnostic_operation_ids", JSONArray(diagnosticFailures.map { it.id }))
+            .put("unresolved_operation_ids", JSONArray(failures.map { it.id }))
+            .put("resolved_operations", JSONArray(superseded.map { (failed, success) -> JSONObject().put("operation_id", failed.id)
+                .put("tool", failed.name).put("occurred_at_ms", failed.updatedAtMs).put("resolved_at_ms", success.updatedAtMs)
+                .put("resolved_by", success.id).put("resolution", "superseded_by_committed_activation") }))
             .put("completed_operations",JSONArray(recent.filter {it.status==ToolCallStatus.COMPLETED}.map {it.id}))
             .put("latest_definition_operation_id",definitionId))
         val reason=when { pending -> "unknown_operation_outcome";outcome==SliceOutcome.RESPONDED&&failures.isEmpty()->"";!available(task.id)->"task_allowance";repeated>=3->"repeated_failure";outcome==SliceOutcome.RESPONDED&&failures.isNotEmpty()->"unresolved_tool_failure";else->when(outcome){SliceOutcome.WAITING_USER->"clarification";SliceOutcome.WAITING_PERMISSION->"authorization";SliceOutcome.WAITING_PROVIDER->"provider";SliceOutcome.BLOCKED->"runtime_blocker";else->""} }
+        task.document.put("wait_reason_at_ms", if (reason.isNotBlank()) now() else JSONObject.NULL)
         task.document.put("wait_reason",reason).put("completion_kind",if(outcome==SliceOutcome.RESPONDED&&reason.isBlank()) "response_finished; consult operation receipts for effects" else JSONObject.NULL)
         val state=if(reason.isNotBlank()) ExecutionState.WAITING else if(outcome==SliceOutcome.RESPONDED) ExecutionState.COMPLETED else ExecutionState.READY
         val result=task.copy(state=state,owner=null,leaseUntil=0,nextRunAt=0);save(result);event(result,"execution.checkpoint",JSONObject().put("outcome",outcome.name).put("checkpoint",task.document.getJSONObject("checkpoint")).put("wait_reason",reason));result
+    }
+    private fun failedOperation(call: AtlasToolCall): Boolean = call.status in setOf(ToolCallStatus.FAILED, ToolCallStatus.REJECTED) ||
+        (call.status == ToolCallStatus.COMPLETED && runCatching { JSONObject(call.resultJson.orEmpty()).let { result ->
+            listOf("valid", "ok", "passed", "structurally_valid").any { result.has(it) && !result.optBoolean(it) }
+        } }.getOrDefault(false))
+
+    /** Only discarded, side-effect-free candidate attempts can be superseded. Unknown outcomes never are. */
+    private fun supersedingActivation(call: AtlasToolCall, all: List<AtlasToolCall>): AtlasToolCall? {
+        if (call.name !in setOf("workspace_package_stage", "workspace_package_test", "workspace_package_validate") ||
+            call.status !in setOf(ToolCallStatus.FAILED, ToolCallStatus.REJECTED, ToolCallStatus.COMPLETED)) return null
+        val args = runCatching { JSONObject(call.argumentsJson) }.getOrNull() ?: return null
+        val workspace = args.optString("workspace_id").takeIf(String::isNotBlank) ?: return null
+        val base = args.optString("base_revision_id").takeIf(String::isNotBlank) ?: args.optString("candidate_id").takeIf(String::isNotBlank)?.let { candidate ->
+            database.readableDatabase.rawQuery("SELECT base_revision_id FROM workspace_package_candidates WHERE workspace_id=? AND candidate_id=?", arrayOf(workspace, candidate)).use { if (it.moveToFirst()) it.getString(0) else null }
+        } ?: return null
+        return all.drop(all.indexOf(call) + 1).lastOrNull { success ->
+            if (success.name != "workspace_package_activate" || success.status != ToolCallStatus.COMPLETED) false
+            else runCatching {
+                val receipt = receipt(success)?.let(::JSONObject) ?: return@runCatching false
+                receipt.optBoolean("activated") && receipt.optString("workspace_id") == workspace && receipt.optString("previous_revision_id") == base &&
+                    database.loadComposableWorkspace(workspace)?.liveRevisionId == receipt.optString("revision_id")
+            }.getOrDefault(false)
+        }
     }
     private fun nonBlockingAuditFailure(call: AtlasToolCall, task: ExecutionTask, all: List<AtlasToolCall>): Boolean {
         if (call.name != CapabilityDiscovery.TOOL || call.status != ToolCallStatus.FAILED) return false

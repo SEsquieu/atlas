@@ -61,16 +61,20 @@ object RuntimeDiagnostics {
         catch (failure: Throwable) { atomic.failWrite(stream); throw failure }
     }
 
-    fun snapshot(context: Context): JSONObject = JSONObject().apply {
+    @Synchronized fun snapshot(context: Context): JSONObject = JSONObject().apply {
         put("scope", "Process-wide recent evidence; timestamps may predate this session. Stalls do not by themselves establish a crash cause.")
         put("events", runCatching { JSONArray(File(context.filesDir, "runtime-diagnostics.json").readText()) }.getOrDefault(JSONArray()))
         val exits = JSONArray()
+        val workers = JSONArray()
         if (Build.VERSION.SDK_INT >= 30) runCatching {
-            context.getSystemService(ActivityManager::class.java).getHistoricalProcessExitReasons(context.packageName, 0, 5).forEach { exit ->
-                exits.put(JSONObject().put("at_ms", exit.timestamp).put("process", exit.processName).put("reason", exit.reason)
+            context.getSystemService(ActivityManager::class.java).getHistoricalProcessExitReasons(context.packageName, 0, 64).forEach { exit ->
+                val target = if (exit.processName == context.packageName) exits else workers
+                if (target.length() < 5) target.put(JSONObject().put("at_ms", exit.timestamp).put("process", exit.processName).put("reason", exit.reason)
                     .put("status", exit.status).put("description", exit.description?.take(500)).put("pss_kb", exit.pss).put("rss_kb", exit.rss))
             }
         }.onFailure { put("exit_history_error", it.javaClass.simpleName) }
         put("android_process_exits", exits)
+        put("worker_process_exits", workers)
+        put("exit_history_scope", "Main process exits are separate from worker lifecycle events. Android may retain only a limited history.")
     }
 }

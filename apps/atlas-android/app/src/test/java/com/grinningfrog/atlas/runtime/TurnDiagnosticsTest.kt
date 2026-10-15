@@ -12,6 +12,14 @@ class TurnDiagnosticsTest {
         assertEquals("5/5 passed", report.tests)
         assertEquals(3000L, report.elapsedMs(9000))
     }
+    @Test fun webPackageActivationAndFixturesAppearInOperatorEvidence() {
+        val activation = AtlasToolCall("activate", "session", "turn", "workspace_package_activate", "{}", ToolCallStatus.COMPLETED, ToolRisk.SESSION_WRITE, false, "key", resultJson = """{"activated":true,"revision_id":"web-revision"}""", createdAtMs=2000,updatedAtMs=3000)
+        val fixtures=activation.copy(id="tests",name="workspace_package_test",resultJson="""{"passed":true,"tests_run":4}""")
+        val report=TurnDiagnostics.project(turn(TurnStatus.COMPLETED),listOf(fixtures,activation),emptyList())
+        assertEquals(listOf("web-revision"),report.revisionIds)
+        assertTrue(report.tests.contains("4 pure fixtures: passed"))
+        assertTrue(report.tests.contains("UI/save-resume not verified"))
+    }
     @Test fun failureBeforeApplyNeverClaimsACommit() {
         val report = TurnDiagnostics.project(turn(TurnStatus.FAILED), emptyList(), emptyList())
         assertTrue(report.headline.contains("no workspace revision committed"))

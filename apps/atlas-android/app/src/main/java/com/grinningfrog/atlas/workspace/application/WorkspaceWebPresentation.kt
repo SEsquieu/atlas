@@ -30,8 +30,9 @@ class WorkspaceWebPresentation(
     private var messageWindow = android.os.SystemClock.elapsedRealtime()
     private val bridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val console = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
+    private val resources = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
     @Volatile private var ready = false
-    fun diagnostics(): JSONObject = JSONObject().put("ready", ready).put("disposed", disposed).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } }))
+    fun diagnostics(): JSONObject = JSONObject().put("ready", ready).put("disposed", disposed).put("resources", org.json.JSONArray(synchronized(resources) { resources.map { JSONObject(it.toString()) } })).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } }))
     val view: WebView
 
     init {
@@ -151,6 +152,29 @@ class WorkspaceWebPresentation(
             }
         }
     }
+    /** Fixed host probe: read layout facts only, never execute agent-supplied diagnostic code. */
+    suspend fun inspectLayout(): JSONObject = withTimeout(2_500) {
+        withContext(Dispatchers.Main.immediate) {
+            check(!disposed)
+            val script = """
+                (()=>{const style=e=>{if(!e)return null;const s=getComputedStyle(e),r=e.getBoundingClientRect();return {tag:e.tagName,id:e.id,backgroundColor:s.backgroundColor,backgroundImage:s.backgroundImage,color:s.color,display:s.display,width:r.width,height:r.height,x:r.x,y:r.y}};
+                return JSON.stringify({url:location.pathname,readyState:document.readyState,viewport:{width:innerWidth,height:innerHeight,devicePixelRatio},html:style(document.documentElement),body:style(document.body),
+                stylesheets:Array.from(document.querySelectorAll('link[rel=stylesheet]')).slice(0,16).map(e=>({path:new URL(e.href).pathname,loaded:!!e.sheet})),elements:Array.from(document.querySelectorAll('[id],main')).slice(0,32).map(style)});})()
+            """.trimIndent()
+            suspendCancellableCoroutine { continuation ->
+                view.evaluateJavascript(script) { raw ->
+                    if (continuation.isActive) {
+                        val result = runCatching {
+                            require(raw.length <= 64 * 1024)
+                            JSONObject(org.json.JSONArray("[$raw]").getString(0)).put("sampled_at_ms", System.currentTimeMillis())
+                        }.getOrElse { JSONObject().put("error", "Layout probe returned invalid evidence") }
+                        continuation.resumeWith(Result.success(result))
+                    }
+                }
+            }
+        }
+    }
+
     fun load() { check(!disposed); view.loadUrl(policy.entryUrl) }
     fun dispose() {
         if (disposed) return
@@ -165,6 +189,10 @@ class WorkspaceWebPresentation(
     private fun serve(url: String, method: String): WebResourceResponse {
         if (disposed || !current()) return denied()
         val path = policy.resource(url, method) ?: return denied()
+        synchronized(resources) {
+            if (resources.size >= 32) resources.removeAt(0)
+            resources.add(JSONObject().put("path", path).put("status", if (path == "atlas/host.js" || files.has(path)) 200 else 403).put("at_ms", System.currentTimeMillis()))
+        }
         val content = if (path == "atlas/host.js") WorkspaceHostRegistry.sdk() else if (files.has(path)) files.getString(path) else return denied()
         val mime = when (path.substringAfterLast('.')) { "html" -> "text/html"; "js" -> "text/javascript"; "css" -> "text/css"; "svg" -> "image/svg+xml"; "json" -> "application/json"; else -> "text/plain" }
         return WebResourceResponse(mime, "UTF-8", 200, "OK", mapOf("Content-Security-Policy" to policy.csp, "Cache-Control" to "no-store", "X-Content-Type-Options" to "nosniff", "Referrer-Policy" to "no-referrer", "X-DNS-Prefetch-Control" to "off", "Access-Control-Allow-Origin" to "*"), ByteArrayInputStream(content.toByteArray(Charsets.UTF_8)))

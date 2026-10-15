@@ -14,11 +14,17 @@ object CheckpointPlanner {
         val selected = mutableListOf<AtlasMessage>()
         val transcript = StringBuilder()
         for (turn in turns) {
-            val text = turn.joinToString("\n") { message -> buildString {
+            var text = turn.joinToString("\n") { message -> buildString {
                 append("${message.role.name.lowercase()}: ${message.content}")
                 message.toolCallsJson?.let { append(" [tool proposals: $it]") }
                 message.providerContextJson?.takeIf(String::isNotBlank)?.let { append(" [recorded provider evidence: $it]") }
             } }
+            if (text.length > maxCharacters) text = turn.joinToString("\n") { message ->
+                fun reference(value: String) = "[durable message ${message.id}; sha256=${com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.hash(value)}; payload omitted; preview=${value.take(600)}]"
+                val body = if (message.kind == com.grinningfrog.atlas.model.MessageKind.TOOL_RESULT && message.content.length > 1000) reference(message.content) else message.content
+                "${message.role.name.lowercase()}: $body" + message.toolCallsJson?.let { " [tool proposals: ${if (it.length > 1000) reference(it) else it}]" }.orEmpty() +
+                    message.providerContextJson?.takeIf(String::isNotBlank)?.let { " [provider evidence: ${if (it.length > 1000) reference(it) else it}]" }.orEmpty()
+            }
             if (transcript.length + text.length + (if (transcript.isEmpty()) 0 else 1) > maxCharacters) break
             if (transcript.isNotEmpty()) transcript.append('\n')
             transcript.append(text); selected += turn

@@ -91,7 +91,8 @@ object WorkspacePackageTools {
             val stored = WorkspacePackageRepository(database).inspect(args.getString("workspace_id"), session(call).workspaceId, args.getString("candidate_id"))
             val errors = WorkspaceApplicationContract.validate(stored.getJSONObject("bundle"))
             return ToolExecutionResult(JSONObject().put("candidate_id", args.getString("candidate_id")).put("content_hash", stored.getString("content_hash"))
-                .put("structurally_valid", errors.isEmpty()).put("errors", JSONArray(errors)).put("tests_run", 0).put("executed", false).put("activation_available", false).toString())
+                .put("structurally_valid", errors.isEmpty()).put("errors", JSONArray(errors)).put("tests_run", 0).put("executed", false).put("activation_performed", false).put("activation_readiness", "not_assessed")
+                .put("next_step", "Run workspace_package_test, then call workspace_package_activate with its passing check_id. Structural validation does not disable activation.").toString())
         }
     }
     private class Test(database: AtlasDatabase, private val worker: WorkspaceWorkerSupervisor) : Adapter(database), AtlasReceiptBackedAdapter {

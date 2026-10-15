@@ -456,7 +456,9 @@ private fun AtlasHomePage(
                         Text("Task · ${if (task.state == com.grinningfrog.atlas.runtime.ExecutionState.COMPLETED) "response finished" else task.state.name.lowercase()}", style = MaterialTheme.typography.labelLarge)
                         Text(task.objective, maxLines = 3)
                         Text("${task.document.optInt("slice_count")} slices · ${task.usage.optLong("model_steps")} model steps · ${task.usage.optLong("tool_calls")} tools", style = MaterialTheme.typography.bodySmall)
-                        if (task.waitReason.isNotBlank()) Text("Reason: ${task.waitReason.replace('_', ' ')}", color = AtlasAmber)
+                        if (task.waitReason.isNotBlank()) Text("Current blocker: ${task.waitReason.replace('_', ' ')} · updated ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(task.document.optLong("updated_at")))}", color = AtlasAmber)
+                        val recovered = task.document.optJSONObject("checkpoint")?.optJSONArray("resolved_operations")?.length() ?: 0
+                        if (recovered > 0) Text("$recovered earlier candidate errors superseded by committed activation (history retained).", style = MaterialTheme.typography.bodySmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             if (task.state in setOf(com.grinningfrog.atlas.runtime.ExecutionState.PAUSED, com.grinningfrog.atlas.runtime.ExecutionState.WAITING) && task.waitReason !in setOf("clarification", "authorization", "unknown_operation_outcome", "task_allowance")) TextButtonCompact("Resume") { runAction { runtime.resumeExecution(task.id) } }
                             if (task.state !in setOf(com.grinningfrog.atlas.runtime.ExecutionState.COMPLETED, com.grinningfrog.atlas.runtime.ExecutionState.CANCELLED, com.grinningfrog.atlas.runtime.ExecutionState.FAILED)) TextButtonCompact("Cancel task") { runtime.cancelExecution(task.id) }
@@ -1783,6 +1785,8 @@ private fun TurnDiagnosticsCard(report: com.grinningfrog.atlas.runtime.TurnDiagn
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(report.headline, fontWeight = FontWeight.Bold)
+            Text("${if (report.terminal) "Historical slice" else "Current slice"} ${report.turn.id.take(8)} · started ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.MEDIUM).format(java.util.Date(report.turn.createdAtMs))}", style = MaterialTheme.typography.labelSmall)
+            if (report.terminal) Text("Ended ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(report.turn.updatedAtMs))}. This card reports this slice only; current blockers appear on the task card.", style = MaterialTheme.typography.bodySmall)
             Text("Elapsed: ${"%.1f".format(java.util.Locale.US, report.elapsedMs(nowMs) / 1000.0)} s · inference: ${"%.1f".format(java.util.Locale.US, report.inferenceMs / 1000.0)} s${if (report.inferencePending) " + generating" else ""}", style = MaterialTheme.typography.bodySmall)
             Text("Steps: ${report.turn.stepCount}/${com.grinningfrog.atlas.runtime.AgentLoopPolicy.MAX_STEPS} · tool calls: ${report.toolCalls}/${com.grinningfrog.atlas.runtime.AgentLoopPolicy.MAX_TOOL_CALLS}", style = MaterialTheme.typography.bodySmall)
             report.runningTool?.let { Text("Running: $it", style = MaterialTheme.typography.bodySmall) }

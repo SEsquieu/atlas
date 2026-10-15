@@ -25,7 +25,7 @@ data class TurnDiagnostics(
     val terminal: Boolean get() = turn.status in setOf(TurnStatus.COMPLETED, TurnStatus.COMPLETED_LATE,
         TurnStatus.YIELDED, TurnStatus.FAILED, TurnStatus.CANCELLED, TurnStatus.HARD_CANCELLED, TurnStatus.INTERRUPTED)
     val headline: String get() = when {
-        turn.status == TurnStatus.YIELDED -> "SLICE SAVED · task continues"
+        turn.status == TurnStatus.YIELDED -> "SLICE SAVED · see current task status"
         turn.status == TurnStatus.SOFT_TIMED_OUT -> "STILL GENERATING · interaction deadline reached"
         turn.status == TurnStatus.COMPLETED_LATE && lateToolCalls > 0 -> "LATE RESULT · tool calls were not executed"
         turn.status == TurnStatus.COMPLETED -> "COMPLETED"
@@ -61,14 +61,16 @@ data class TurnDiagnostics(
             val results = calls.filter { it.status == ToolCallStatus.COMPLETED }.mapNotNull { call ->
                 runCatching { JSONObject(call.resultJson.orEmpty()) }.getOrNull()?.let { call to it }
             }
-            val lastValidation = results.lastOrNull { it.first.name == "workspace_validate_definition" }?.second
-            val committed = results.filter { (call, result) -> call.name in setOf("workspace_create", "workspace_replace_definition", "workspace_patch_definition") && result.optBoolean("ok") && result.has("revision_id") }
+            val lastValidation = results.lastOrNull { it.first.name in setOf("workspace_validate_definition", "workspace_package_validate", "workspace_package_stage") }?.second
+            val packageTests = results.lastOrNull { it.first.name == "workspace_package_test" }?.second
+            val committed = results.filter { (call, result) -> ((call.name in setOf("workspace_create", "workspace_replace_definition", "workspace_patch_definition") && result.optBoolean("ok")) ||
+                (call.name == "workspace_package_activate" && result.optBoolean("activated"))) && result.has("revision_id") }
             val evidence = committed.lastOrNull()?.second ?: lastValidation
             return TurnDiagnostics(turn, inferenceMs, calls.size,
                 calls.lastOrNull { it.status == ToolCallStatus.RUNNING }?.name,
-                when { evidence?.has("valid") == true -> if (evidence.optBoolean("valid")) "passed" else "failed"; committed.isNotEmpty() -> "passed at commit"; else -> "not reached" },
+                when { evidence?.has("structurally_valid") == true -> if (evidence.optBoolean("structurally_valid")) "passed" else "failed"; evidence?.has("valid") == true -> if (evidence.optBoolean("valid")) "passed" else "failed"; committed.isNotEmpty() -> "passed at commit"; else -> "not reached" },
                 if (evidence?.has("migration") == true) "checked" else "not reported",
-                when { evidence?.has("simulation_passed") == true -> if (evidence.optBoolean("simulation_passed")) "${evidence.optInt("tests_run")}/${evidence.optInt("tests_run")} passed" else "failed: ${evidence.optJSONArray("test_failures")}"; else -> "not reported" },
+                when { packageTests != null -> "${packageTests.optInt("tests_run")} pure fixtures: ${if (packageTests.optBoolean("passed")) "passed" else "failed"}; UI/save-resume not verified"; evidence?.has("simulation_passed") == true -> if (evidence.optBoolean("simulation_passed")) "${evidence.optInt("tests_run")}/${evidence.optInt("tests_run")} passed" else "failed: ${evidence.optJSONArray("test_failures")}"; else -> "not reported" },
                 committed.map { it.second.getString("revision_id") },
                 own.filter { it.first.type == "provider.completed_late" }.sumOf { it.second.optInt("toolCallCount") },
                 (turn.status in setOf(TurnStatus.WAITING_FOR_MODEL, TurnStatus.SOFT_TIMED_OUT) || (requested - finished).isNotEmpty()) && !turn.status.let { it in setOf(TurnStatus.COMPLETED, TurnStatus.YIELDED, TurnStatus.FAILED, TurnStatus.CANCELLED, TurnStatus.HARD_CANCELLED, TurnStatus.INTERRUPTED, TurnStatus.COMPLETED_LATE) }, proposedToolCalls)

@@ -53,6 +53,34 @@ class ExecutionTasksTest {
         assertEquals(25000L,result.usage.getLong("output_tokens"))
         assertTrue(db.loadMessages(session.id).isEmpty())
     }
+    @Test fun committedActivationSupersedesOnlyCandidateFailuresForItsWorkspaceAndBase() {
+        val t=task(atomicTools=listOf("workspace_package_activate"));val lease=store.claim(t.id,"owner")!!
+        val w=db.createComposableWorkspace("App", "")
+        val failed=call(t,"workspace_package_stage",JSONObject().put("workspace_id",w.id).put("base_revision_id",w.liveRevisionId).toString())
+        db.insertToolCall(failed);db.updateToolCall(failed.id,ToolCallStatus.FAILED,error="Invalid discarded candidate")
+        val activation=call(t,"workspace_package_activate",JSONObject().put("workspace_id",w.id).toString());db.insertToolCall(activation)
+        store.localOperation(activation,lease) { ToolExecutionResult(JSONObject().put("activated",true).put("workspace_id",w.id).put("previous_revision_id",w.liveRevisionId).put("revision_id",w.liveRevisionId).toString()) }
+        val result=store.finish(lease,SliceOutcome.RESPONDED,1)!!
+        assertEquals(ExecutionState.COMPLETED,result.state)
+        assertEquals(1,result.document.getJSONObject("checkpoint").getJSONArray("resolved_operations").length())
+        assertEquals(ToolCallStatus.FAILED,db.loadToolCall(failed.id)!!.status)
+    }
+    @Test fun otherWorkspaceActivationCannotEraseCandidateFailure() {
+        val t=task(atomicTools=listOf("workspace_package_activate"));val lease=store.claim(t.id,"owner")!!
+        val w=db.createComposableWorkspace("Other", "")
+        val failed=call(t,"workspace_package_stage","{\"workspace_id\":\"first\",\"base_revision_id\":\"base\"}")
+        db.insertToolCall(failed);db.updateToolCall(failed.id,ToolCallStatus.FAILED,error="Still broken")
+        val activation=call(t,"workspace_package_activate");db.insertToolCall(activation)
+        store.localOperation(activation,lease) { ToolExecutionResult(JSONObject().put("activated",true).put("workspace_id",w.id).put("previous_revision_id","base").put("revision_id",w.liveRevisionId).toString()) }
+        val result=store.finish(lease,SliceOutcome.RESPONDED,1)!!
+        assertEquals(ExecutionState.WAITING,result.state)
+        assertEquals("unresolved_tool_failure",result.waitReason)
+    }
+    @Test fun completedToolWithFailingFixtureIsAnUnresolvedFailure() {
+        val t=task();val lease=store.claim(t.id,"owner")!!;val c=call(t,"workspace_package_test")
+        db.insertToolCall(c);db.updateToolCall(c.id,ToolCallStatus.COMPLETED,resultJson="{\"passed\":false}")
+        assertEquals(ExecutionState.WAITING,store.finish(lease,SliceOutcome.RESPONDED,1)!!.state)
+    }
     @Test fun onlyOneOwnerAndStaleLeaseCannotMutateAfterPause() {
         val t=task();val lease=store.claim(t.id,"first")!!
         assertNull(store.claim(t.id,"second"))

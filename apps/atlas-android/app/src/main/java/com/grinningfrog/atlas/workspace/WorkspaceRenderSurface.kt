@@ -8,12 +8,12 @@ import org.json.JSONObject
 
 /** Only the currently composed Atlas workspace panel can register a capture source. No system screen access. */
 object WorkspaceRenderSurface {
-    private data class Host(val token: Any, val workspaceId: String, val revisionId: String, val capture: suspend () -> Bitmap, var drawn: JSONObject? = null)
+    private data class Host(val token: Any, val workspaceId: String, val revisionId: String, val capture: suspend () -> Bitmap, val inspect: suspend () -> JSONObject, var drawn: JSONObject? = null)
     private var host: Host? = null
 
     @Synchronized
-    fun register(token: Any, workspaceId: String, revisionId: String, capture: suspend () -> Bitmap) {
-        host = Host(token, workspaceId, revisionId, capture)
+    fun register(token: Any, workspaceId: String, revisionId: String, inspect: suspend () -> JSONObject = { JSONObject() }, capture: suspend () -> Bitmap) {
+        host = Host(token, workspaceId, revisionId, capture, inspect)
     }
     @Synchronized
     fun unregister(token: Any) { if (host?.token === token) host = null }
@@ -31,6 +31,13 @@ object WorkspaceRenderSurface {
     fun diagnostics(workspaceId: String, revisionId: String): JSONObject? = host
         ?.takeIf { it.workspaceId == workspaceId && it.revisionId == revisionId }
         ?.drawn?.let { JSONObject(it.toString()) }
+
+    suspend fun inspect(workspaceId: String, revisionId: String): JSONObject? = withTimeout(3_000) {
+        val current = synchronized(this@WorkspaceRenderSurface) { host?.takeIf { it.workspaceId == workspaceId && it.revisionId == revisionId } } ?: return@withTimeout null
+        val evidence = current.inspect()
+        synchronized(this@WorkspaceRenderSurface) { require(host === current) { "Workspace changed during layout inspection" } }
+        evidence
+    }
 
     private fun frameKey(data: JSONObject): String = JSONObject(data.toString()).apply { remove("drawn_at_ms") }.toString()
 
