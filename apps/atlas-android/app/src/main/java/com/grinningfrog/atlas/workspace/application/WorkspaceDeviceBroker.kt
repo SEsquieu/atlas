@@ -64,7 +64,7 @@ class WorkspaceDeviceBroker internal constructor(
         }
         // Keep the existing BLE SDK status fields compatible while exposing a common catalogue.
         val result=if(adapters.size==1) JSONObject(states.getJSONObject(adapters.first().name).toString()) else JSONObject()
-        return result.put("capabilities",states).put("requests_enabled",requestsEnabled).put("busy",busy).put("generation",generation)
+        return result.put("capability_label",adapters.joinToString(" / "){it.displayName}).put("capabilities",states).put("requests_enabled",requestsEnabled).put("busy",busy).put("generation",generation)
             .put("instance_id",principal.instanceId).put("foreground",active && current())
             .put("recent_operations",org.json.JSONArray(receipts.values.toList().takeLast(8).map { summary(it) }))
     }
@@ -111,7 +111,7 @@ class WorkspaceDeviceBroker internal constructor(
                 event("operation_failed",adapter,summary(receipt).put("platform",runCatching { adapter.status().optJSONObject("last_failure") }.getOrNull() ?: JSONObject.NULL))
                 if(generation==token) {
                     if(code=="OS_PERMISSION_REQUIRED") { grants.revoke(adapter.name); requestsEnabled=false; event("grants_revoked",adapter,JSONObject().put("reason","os_permission_lost")) }
-                    if(code in setOf(adapter.timeoutCode,adapter.failureCode,"OS_PERMISSION_REQUIRED","REVISION_CONFLICT","GRANT_REVOKED")) {
+                    if(code in setOf(adapter.timeoutCode,adapter.failureCode,"DEVICE_UNAVAILABLE","PLATFORM_DISABLED","OS_PERMISSION_REQUIRED","REVISION_CONFLICT","GRANT_REVOKED")) {
                         adapter.release(); grants.releaseHandles(adapter.name)
                         event("handles_released",adapter,JSONObject().put("reason",code).put("foreground_consent_retained",code !in setOf("OS_PERMISSION_REQUIRED","REVISION_CONFLICT","GRANT_REVOKED")))
                         if(code in setOf("REVISION_CONFLICT","GRANT_REVOKED"))grants.revoke(adapter.name)

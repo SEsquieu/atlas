@@ -5,6 +5,7 @@ import org.json.JSONObject
 /** The broker owns authority, receipts and lifecycle; adapters own only their platform protocol. */
 internal interface WorkspaceCapabilityAdapter {
     val simulated: Boolean get() = false
+    val displayName: String get() = name
     val name: String
     val namespace: String
     val requested: Set<String>
@@ -44,6 +45,7 @@ internal class WorkspaceBleCapability(
     override val permissions: Array<String> = emptyArray(),
     override val simulated: Boolean = false,
 ) : WorkspaceCapabilityAdapter {
+    override val displayName="Bluetooth LE"
     override val failureCode = "BLE_FAILED"
     override val timeoutCode = "BLE_TIMEOUT"
     override val busyCode = "BLE_BUSY"

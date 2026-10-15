@@ -29,13 +29,14 @@ class WorkspaceDeviceAudit(private val database: AtlasDatabase) {
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
     }
-    fun snapshot(workspaceId: String): JSONObject {
+    fun snapshot(workspaceId: String, limit: Int = 512): JSONObject {
+        val bounded=limit.coerceIn(1,512)
         val events=JSONArray()
-        database.readableDatabase.rawQuery("SELECT sequence,event_json FROM workspace_device_audit WHERE workspace_id=? ORDER BY sequence DESC LIMIT 512",arrayOf(workspaceId)).use { cursor ->
+        database.readableDatabase.rawQuery("SELECT sequence,event_json FROM workspace_device_audit WHERE workspace_id=? ORDER BY sequence DESC LIMIT $bounded",arrayOf(workspaceId)).use { cursor ->
             val rows=mutableListOf<JSONObject>();while(cursor.moveToNext())rows+=JSONObject(cursor.getString(1)).put("audit_sequence",cursor.getLong(0));rows.asReversed().forEach { events.put(it) }
         }
         return JSONObject().put("scope","Newest 512 workspace device audit records, across sessions and revisions; payload bytes and credentials excluded. Diagnostic history conveys no executable authority.")
-            .put("retention_limit",512).put("events",events)
+            .put("retention_limit",512).put("returned_limit",bounded).put("events",events)
     }
     /** Own scope outlives the panel long enough to drain teardown events; never blocks Android's UI thread. */
     internal class Writer(database: AtlasDatabase, private val workspaceId: String) {

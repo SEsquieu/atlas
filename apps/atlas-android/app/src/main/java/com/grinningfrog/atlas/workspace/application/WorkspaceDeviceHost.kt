@@ -51,17 +51,18 @@ internal fun WorkspaceDeviceHost(principal: WorkspacePrincipal, bundle: JSONObje
     // Periodic status sampling shows peripheral disconnects and Android permission changes without a page request.
     LaunchedEffect(broker) { while (true) { kotlinx.coroutines.delay(750); broker.refreshAuthority(); version++ } }
     val status = remember(version) { broker.status() }
+    val label=status.optString("capability_label","Device")
     Column(modifier) {
         Surface(tonalElevation = 2.dp) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(when {
-                    !status.optBoolean("requests_enabled") -> "Bluetooth access blocked"
-                    status.optBoolean("connected") -> "BLE · ${status.optString("device_label")}"
-                    status.optBoolean("busy") -> "Bluetooth · request in progress"
-                    !status.optBoolean("installed") -> "Bluetooth LE is unavailable"
-                    !status.optBoolean("os_permission_granted") -> "Bluetooth · permission needed"
-                    !status.optBoolean("platform_enabled") -> "Bluetooth is off"
-                    else -> "Bluetooth · disconnected"
+                    !status.optBoolean("requests_enabled") -> "$label access blocked"
+                    status.optBoolean("connected") -> "$label · ${status.optString("device_label")}"
+                    status.optBoolean("busy") -> "$label · request in progress"
+                    !status.optBoolean("installed") -> "$label is unavailable"
+                    !status.optBoolean("os_permission_granted") -> "$label · permission needed"
+                    !status.optBoolean("platform_enabled") -> "$label is off"
+                    else -> "$label · ready"
                 }, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 2)
                 if (status.optBoolean("requests_enabled")) TextButton(onClick = { broker.revoke(blockRequests = true) }) { Text("Revoke") }
                 else TextButton(onClick = { broker.enableRequests() }) { Text("Enable requests") }

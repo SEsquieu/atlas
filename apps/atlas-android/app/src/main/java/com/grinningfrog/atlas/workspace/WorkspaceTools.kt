@@ -389,6 +389,7 @@ private open class RenderDiagnostics(database: AtlasDatabase) : WorkspaceAdapter
                 .put("format", com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.FORMAT)
                 .put("render_available", WorkspaceRenderSurface.diagnostics(id, revision.id) != null).put("rendered", WorkspaceRenderSurface.diagnostics(id, revision.id)).put("epoch", com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData(database).epoch(id))
                 .put("layout", WorkspaceRenderSurface.inspect(id, revision.id))
+                .put("device_audit", com.grinningfrog.atlas.workspace.application.WorkspaceDeviceAudit(database).snapshot(id,32))
                 .put("structural_errors", JSONArray(com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.validate(root)))
                 .put("notice", "Only a drawn viewport or screenshot establishes visible output; startup and pure fixtures are separate evidence.").toString())
         }
