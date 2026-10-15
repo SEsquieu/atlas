@@ -18,6 +18,13 @@ class WorkspaceNativeEngineTest {
         val noAmbientAccess = run("export function total(v) { if (typeof fetch !== 'undefined' || typeof Java !== 'undefined' || typeof window !== 'undefined' || typeof std !== 'undefined' || typeof os !== 'undefined') throw Error('ambient authority'); return 42; }")
         assertEquals(42, noAmbientAccess.getInt("value"))
     }
+    @Test fun fullPackageAllowanceAlsoAppliesAtTheNativeBoundary() {
+        val bundle = PackageFixture.bundle()
+        bundle.getJSONObject("files").put("assets/one.txt", "x".repeat(200_000)).put("assets/two.txt", "y".repeat(200_000))
+        val result = WorkspaceNativeEngine.run(bundle, "total", JSONArray().put(120).put(230).put(-50))
+        assertTrue(result.toString(), result.getBoolean("ok"))
+        assertEquals(300, result.getInt("value"))
+    }
     @Test fun importsResolveOnlyPackagedSourceIncludingDynamicImports() {
         val bundle = PackageFixture.bundle()
         bundle.getJSONObject("files").put("tools/helpers.js", "export const value=37;")

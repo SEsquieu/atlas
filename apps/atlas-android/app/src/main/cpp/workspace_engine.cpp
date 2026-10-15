@@ -121,7 +121,7 @@ Java_com_grinningfrog_atlas_workspace_application_WorkspaceNativeEngine_evaluate
     JNIEnv* env, jobject, jbyteArray files_json, jbyteArray module_path, jbyteArray export_name, jbyteArray input_json) {
     // Byte arrays preserve actual UTF-8, avoiding JNI modified-UTF-8 corruption of emoji.
     const std::string files = bytes(env, files_json), module = bytes(env, module_path), name = bytes(env, export_name), input = bytes(env, input_json);
-    if (files.size() > 262144 || input.size() > 65536 || module.size() > 200 || name.size() > 64)
+    if (files.size() > 1024 * 1024 || input.size() > 65536 || module.size() > 200 || name.size() > 64)
         return output(env, "{\"ok\":false,\"code\":\"QUOTA_EXCEEDED\",\"summary\":\"Worker payload limit\"}");
     JSRuntime* rt = JS_NewRuntime();
     if (!rt) return output(env, "{\"ok\":false,\"code\":\"QUOTA_EXCEEDED\",\"summary\":\"Runtime allocation failed\"}");

@@ -24,7 +24,9 @@ class WorkspaceDeviceTest {
         val worker = WorkspaceWorkerSupervisor(context)
         val bundle = WorkspaceApplicationContract.example()
         bundle.getJSONObject("files").put("assets/one.txt", "x".repeat(200_000)).put("assets/two.txt", "y".repeat(200_000))
-        assertTrue(worker.run(bundle, "health", JSONObject.NULL).getBoolean("value"))
+        val large = worker.run(bundle, "health", JSONObject.NULL)
+        assertTrue(large.toString(), large.optBoolean("ok"))
+        assertTrue(large.getBoolean("value"))
         bundle.getJSONObject("files").put("tools/health.js", "export function health(){while(true){}}")
         assertFalse(worker.run(bundle, "health", JSONObject.NULL).getBoolean("ok"))
         assertTrue(worker.run(WorkspaceApplicationContract.example(), "health", JSONObject.NULL).getBoolean("value"))
@@ -145,7 +147,13 @@ class WorkspaceDeviceTest {
                 withContext(Dispatchers.Main) {
                     val bitmap = android.graphics.Bitmap.createBitmap(view.view.width, view.view.height, android.graphics.Bitmap.Config.ARGB_8888)
                     view.view.draw(android.graphics.Canvas(bitmap))
-                    java.io.File(context.cacheDir, "workspace-live-device.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                    val values = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "workspace-live-device.png")
+                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/png")
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Download")
+                    }
+                    val uri = requireNotNull(context.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values))
+                    requireNotNull(context.contentResolver.openOutputStream(uri)).use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
                     bitmap.recycle()
                 }
             }
