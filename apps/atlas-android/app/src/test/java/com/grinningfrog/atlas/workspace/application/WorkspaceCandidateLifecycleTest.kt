@@ -40,6 +40,9 @@ class WorkspaceCandidateLifecycleTest {
         }
         db.close(); db = AtlasDatabase(RuntimeEnvironment.getApplication())
         val workspace = db.loadComposableWorkspace(c.getString("workspace_id"))!!
+        val inspected = WorkspacePackageRepository(db).inspect(workspace.id, workspace.realmId, c.getString("candidate_id"))
+        assertTrue(inspected.getBoolean("executed")); assertTrue(inspected.getBoolean("activated"))
+        assertEquals(checked.getString("check_id"), inspected.getJSONArray("checks").getJSONObject(0).getString("check_id"))
         assertEquals(result.getString("revision_id"), workspace.liveRevisionId)
         assertEquals(1L, WorkspaceApplicationData(db).epoch(workspace.id))
         assertEquals(c.getString("content_hash"), db.loadLiveWorkspaceRevision(workspace.id)!!.contentHash)

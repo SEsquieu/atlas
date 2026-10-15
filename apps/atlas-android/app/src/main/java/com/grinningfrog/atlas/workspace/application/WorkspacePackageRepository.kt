@@ -93,5 +93,13 @@ class WorkspacePackageRepository(private val database: AtlasDatabase) {
         JSONObject().put("workspace_id", workspaceId).put("candidate_id", candidateId).put("base_revision_id", cursor.getString(0))
             .put("parent_candidate_id", if (cursor.isNull(1)) JSONObject.NULL else cursor.getString(1)).put("content_hash", cursor.getString(2))
             .put("bundle", bundle).put("created_at_ms", cursor.getLong(4)).put("executed", false).put("activated", false)
+            .put("checks", JSONArray().apply {
+                database.readableDatabase.rawQuery("SELECT result_json FROM workspace_application_checks WHERE workspace_id=? AND candidate_id=? ORDER BY created_at DESC,check_id DESC LIMIT 5", arrayOf(workspaceId, candidateId)).use { checks ->
+                    while (checks.moveToNext()) put(JSONObject(checks.getString(0)))
+                }
+            }).also { result ->
+                result.put("executed", result.getJSONArray("checks").length() > 0)
+                result.put("activated", database.loadLiveWorkspaceRevision(workspaceId)?.contentHash == cursor.getString(2))
+            }
     }
 }

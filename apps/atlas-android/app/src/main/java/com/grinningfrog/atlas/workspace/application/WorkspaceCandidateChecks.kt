@@ -4,6 +4,8 @@ import android.content.ContentValues
 import com.grinningfrog.atlas.data.AtlasDatabase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -58,7 +60,10 @@ internal class WorkspaceCandidateChecks(
             .put("kind", "pure_fixtures").put("passed", passed).put("tests_run", reports.length()).put("reports", reports)
             .put("untested_exports", JSONArray((exports - covered).sorted())).put("base_revision_id", base).put("data_version", version)
             .put("activation_authorized", false).put("evidence_scope", "Declared pure fixtures; not UI, permissions, migrations, or independent application correctness")
+        val executionContext = currentCoroutineContext()
+        executionContext.ensureActive()
         data.atomic {
+            executionContext.ensureActive()
             val current = repository.inspect(workspaceId, realmId, candidateId)
             require(database.loadComposableWorkspace(workspaceId)!!.liveRevisionId == base) { "REVISION_CONFLICT" }
             require(data.version(workspaceId) == version) { "DATA_CONFLICT" }

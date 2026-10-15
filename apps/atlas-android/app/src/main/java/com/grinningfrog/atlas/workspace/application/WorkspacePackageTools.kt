@@ -20,6 +20,7 @@ object WorkspacePackageTools {
         listOf(Contract(context != null && android.os.Build.VERSION.SDK_INT >= 29), Inspect(database), Stage(database), Validate(database)) +
             if (context != null && android.os.Build.VERSION.SDK_INT >= 29) listOf(Test(database, WorkspaceWorkerSupervisor(context))) else emptyList()
     private const val INSPECT_SCHEMA = """{"type":"object","properties":{"workspace_id":{"type":"string"},"candidate_id":{"type":"string"}},"required":["workspace_id"],"additionalProperties":false}"""
+    private val CANDIDATE_SCHEMA = JSONObject(INSPECT_SCHEMA).put("required", JSONArray(listOf("workspace_id", "candidate_id"))).toString()
     private const val STAGE_SCHEMA = """{"type":"object","properties":{"workspace_id":{"type":"string"},"base_revision_id":{"type":"string"},"navigation_sequence":{"type":"integer"},"parent_candidate_id":{"type":"string"},"manifest":{"type":"object"},"files":{"type":"object"}},"required":["workspace_id","base_revision_id","navigation_sequence","files"],"additionalProperties":false}"""
 
     private class Contract(private val pureTesting: Boolean) : AtlasToolAdapter {
@@ -79,7 +80,7 @@ object WorkspacePackageTools {
     }
     private class Validate(database: AtlasDatabase) : Adapter(database) {
         override val supportsLocalDiagnostics = true
-        override val definition = ToolDefinition("workspace_package_validate", "Validate a stored candidate's exact manifest, schema subset, file bounds and pinned dependency hashes. This does not execute JavaScript, run tests, verify numerical correctness or grant activation authority.", INSPECT_SCHEMA, ToolRisk.READ_ONLY, maxCallsPerTurn = 4)
+        override val definition = ToolDefinition("workspace_package_validate", "Validate a stored candidate's exact manifest, schema subset, file bounds and pinned dependency hashes. This does not execute JavaScript, run tests, verify numerical correctness or grant activation authority.", CANDIDATE_SCHEMA, ToolRisk.READ_ONLY, maxCallsPerTurn = 4)
         override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
             val args = JSONObject(call.argumentsJson)
             WorkspaceApplicationContract.exactKeys(args, setOf("workspace_id", "candidate_id"), setOf("workspace_id", "candidate_id"))
@@ -91,7 +92,7 @@ object WorkspacePackageTools {
     }
     private class Test(database: AtlasDatabase, private val worker: WorkspaceWorkerSupervisor) : Adapter(database) {
         override val definition = ToolDefinition("workspace_package_test", "Execute 1 to 16 declared pure fixtures from a stored package in fresh isolated workers and persist revision/data-bound reports. No live records, device access or network bindings. Results prove only these fixtures; UI readiness, permissions and activation remain separate gates. Every export needs a passing fixture. Cancellation yields no passing receipt.",
-            INSPECT_SCHEMA, ToolRisk.SESSION_WRITE, maxCallsPerTurn = 2)
+            CANDIDATE_SCHEMA, ToolRisk.SESSION_WRITE, maxCallsPerTurn = 2)
         override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
             val args = JSONObject(call.argumentsJson)
             WorkspaceApplicationContract.exactKeys(args, setOf("workspace_id", "candidate_id"), setOf("workspace_id", "candidate_id"))
