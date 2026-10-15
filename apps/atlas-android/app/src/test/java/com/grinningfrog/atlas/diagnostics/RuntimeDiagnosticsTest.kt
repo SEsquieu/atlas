@@ -13,7 +13,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35], application = Application::class)
 class RuntimeDiagnosticsTest {
     @Test fun boundedEvidenceSurvivesReadbackWithoutDatabase() {
-        val context = RuntimeEnvironment.getApplication<Application>()
+        val context = RuntimeEnvironment.getApplication()
         java.io.File(context.filesDir, "runtime-diagnostics.json").delete()
         repeat(12) { RuntimeDiagnostics.record(context, JSONObject().put("kind", "test").put("index", it).put("stack", "x".repeat(12000))) }
         val snapshot = RuntimeDiagnostics.snapshot(context)
