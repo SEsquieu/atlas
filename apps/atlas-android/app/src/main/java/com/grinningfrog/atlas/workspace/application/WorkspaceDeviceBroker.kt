@@ -32,7 +32,11 @@ class WorkspaceDeviceBroker internal constructor(
         require(adapter.permitted()) { "OS_PERMISSION_REQUIRED" }
         require(deviceApproved) { "WORKSPACE_GRANT_REQUIRED" }
     }
-    fun status(): JSONObject = adapter.status().put("scan_approved", scanApproved).put("device_approved", deviceApproved)
+    fun status(): JSONObject = adapter.status().put("recent_operations", org.json.JSONArray(receipts.values.toList().takeLast(8).map { receipt ->
+        JSONObject().put("operation_id", receipt.getString("operation_id")).put("method", receipt.getString("method")).put("status", receipt.getString("status"))
+            .put("started_at_ms", receipt.getLong("started_at_ms")).put("finished_at_ms", receipt.opt("finished_at_ms") ?: JSONObject.NULL)
+            .put("error_code", receipt.optJSONObject("error")?.optString("code") ?: JSONObject.NULL)
+    })).put("scan_approved", scanApproved).put("device_approved", deviceApproved)
         .put("requests_enabled", requestsEnabled).put("busy", busy).put("generation", generation).put("foreground", active && current())
     fun dispatch(method: String, params: JSONObject): JSONObject {
         refreshAuthority()
@@ -100,10 +104,11 @@ class WorkspaceDeviceBroker internal constructor(
                     is SecurityException -> "OS_PERMISSION_REQUIRED"
                     else -> failure.message?.takeIf { it in WorkspaceBleContract.errors } ?: "BLE_FAILED"
                 }
+                if (code == "OS_PERMISSION_REQUIRED") requestsEnabled = false
                 receipt.remove("result")
                 receipt.put("status", "failed").put("error", JSONObject().put("code", code).put("summary", code).put("retry", if (operation == "write") "inspect_device_before_retry" else "explicit_user_action"))
                 // A timeout may have reached the peripheral. Close rather than matching a late callback to a new request.
-                if (code in setOf("BLE_TIMEOUT", "OS_PERMISSION_REQUIRED", "BLE_FAILED")) { adapter.close(); deviceApproved = false; scanApproved = false }
+                if (generation == token && code in setOf("BLE_TIMEOUT", "OS_PERMISSION_REQUIRED", "BLE_FAILED", "REVISION_CONFLICT", "GRANT_REVOKED")) { adapter.close(); deviceApproved = false; scanApproved = false }
             } finally {
                 receipt.put("finished_at_ms", System.currentTimeMillis())
                 if (generation == token) busy = false

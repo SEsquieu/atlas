@@ -57,8 +57,11 @@ internal fun WorkspaceDeviceHost(principal: WorkspacePrincipal, bundle: JSONObje
                     !status.optBoolean("requests_enabled") -> "Bluetooth access blocked"
                     status.optBoolean("connected") -> "BLE · ${status.optString("device_label")}"
                     status.optBoolean("busy") -> "Bluetooth · request in progress"
+                    !status.optBoolean("installed") -> "Bluetooth LE is unavailable"
+                    !status.optBoolean("os_permission_granted") -> "Bluetooth · permission needed"
+                    !status.optBoolean("platform_enabled") -> "Bluetooth is off"
                     else -> "Bluetooth · disconnected"
-                }, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                }, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 2)
                 if (status.optBoolean("requests_enabled")) TextButton(onClick = { broker.revoke(blockRequests = true) }) { Text("Revoke") }
                 else TextButton(onClick = { broker.enableRequests() }) { Text("Enable requests") }
             }

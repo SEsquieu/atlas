@@ -28,6 +28,8 @@ internal class AndroidWorkspaceBle(private val context: Context) : WorkspaceBleA
     private val characteristics = linkedMapOf<String, BluetoothGattCharacteristic>()
     private val notifications = ArrayDeque<JSONObject>()
     private var dropped = 0L
+    private var lastFailure: JSONObject? = null
+    private fun recordFailure(phase: String, code: Int) { lastFailure = JSONObject().put("phase", phase).put("platform_code", code).put("at_ms", System.currentTimeMillis()) }
     private var gatt: BluetoothGatt? = null
     private var connectedLabel: String? = null
     private var scanner: BluetoothLeScanner? = null
@@ -39,7 +41,7 @@ internal class AndroidWorkspaceBle(private val context: Context) : WorkspaceBleA
     override fun permitted() = permissions().all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
     override fun status(): JSONObject = JSONObject().put("installed", context.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE))
         .put("os_permission_granted", permitted()).put("platform_enabled", runCatching { permitted() && adapter?.isEnabled == true }.getOrDefault(false))
-        .put("connected", connectedLabel != null).put("device_label", connectedLabel ?: JSONObject.NULL).put("scanning", scanCallback != null)
+        .put("last_failure", lastFailure ?: JSONObject.NULL).put("connected", connectedLabel != null).put("device_label", connectedLabel ?: JSONObject.NULL).put("scanning", scanCallback != null)
     private fun available() {
         require(context.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE) && adapter != null) { "UNSUPPORTED_CAPABILITY" }
         require(permitted()) { "OS_PERMISSION_REQUIRED" }
@@ -63,7 +65,7 @@ internal class AndroidWorkspaceBle(private val context: Context) : WorkspaceBleA
                     .put("service_uuids", JSONArray(record?.serviceUuids?.take(8)?.map { it.uuid.toString() }.orEmpty()))
                 devices[id] = Device(result.device, info)
             } }
-            override fun onScanFailed(errorCode: Int) { handler.post { if (scanCallback === this) scanFailure = errorCode } }
+            override fun onScanFailed(errorCode: Int) { handler.post { if (scanCallback === this) { scanFailure = errorCode; recordFailure("scan", errorCode) } } }
         }
         scanner = owner; scanCallback = callback
         try {
@@ -105,8 +107,8 @@ internal class AndroidWorkspaceBle(private val context: Context) : WorkspaceBleA
     private val callbacks = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(owner: BluetoothGatt, status: Int, newState: Int) { handler.post {
             if (gatt !== owner) return@post
-            if (status != BluetoothGatt.GATT_SUCCESS || newState == BluetoothProfile.STATE_DISCONNECTED) { endConnection(); return@post }
-            if (newState == BluetoothProfile.STATE_CONNECTED && !owner.discoverServices()) endConnection()
+            if (status != BluetoothGatt.GATT_SUCCESS || newState == BluetoothProfile.STATE_DISCONNECTED) { if (status != BluetoothGatt.GATT_SUCCESS) recordFailure("connection", status); endConnection(); return@post }
+            if (newState == BluetoothProfile.STATE_CONNECTED && !runCatching { owner.discoverServices() }.getOrDefault(false)) endConnection()
         } }
         override fun onServicesDiscovered(owner: BluetoothGatt, status: Int) = complete(owner, "connect", null, status)
         @Deprecated("Legacy callback")

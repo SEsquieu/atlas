@@ -14,6 +14,7 @@ class WorkspaceDeviceBrokerTest {
         var permission = true
         var scans = 0; var connections = 0; var writes = 0; var closes = 0
         var delayRead = false
+        var uncertainWrite = false
         override fun permitted() = permission
         override fun status() = JSONObject().put("connected", connections > closes)
         override suspend fun scan(): JSONArray { scans++; return JSONArray().put(JSONObject().put("device_id", "seen")) }
@@ -21,7 +22,7 @@ class WorkspaceDeviceBrokerTest {
         override suspend fun connect(id: String): JSONObject { connections++; return JSONObject().put("connected", true) }
         override fun services() = JSONArray()
         override suspend fun read(id: String): JSONObject { if (delayRead) delay(20_000); return JSONObject().put("hex", "0102") }
-        override suspend fun write(id: String, hex: String): JSONObject { writes++; return JSONObject().put("acknowledged", true) }
+        override suspend fun write(id: String, hex: String): JSONObject { writes++; if (uncertainWrite) delay(60_000); return JSONObject().put("acknowledged", true) }
         override suspend fun subscribe(id: String, enabled: Boolean) = JSONObject().put("enabled", enabled)
         override fun events() = JSONObject().put("events", JSONArray())
         override fun close() { closes++ }
@@ -67,6 +68,18 @@ class WorkspaceDeviceBrokerTest {
         assertTrue(runCatching { broker.dispatch("ble.services", JSONObject()) }.isFailure)
         val other = WorkspaceDeviceBroker(principal.copy(workspaceId = "other"), WorkspaceBleContract.operations, { true }, Radio(), { true }, { true }, this)
         assertTrue(runCatching { result(other, id) }.isFailure)
+    }
+    @Test fun timedOutWriteClosesConnectionAndNeverRetries() = runTest {
+        val radio = Radio(); val broker = WorkspaceDeviceBroker(principal, WorkspaceBleContract.operations, { true }, radio, { true }, { true }, this)
+        connected(broker); radio.uncertainWrite = true
+        val id = submit(broker, "ble.write", JSONObject().put("characteristic_id", "char").put("hex", "01")); runCurrent()
+        assertTrue(runCatching { submit(broker, "ble.scan") }.exceptionOrNull()?.message == "BLE_BUSY")
+        advanceUntilIdle()
+        val receipt = result(broker, id)
+        assertEquals("BLE_TIMEOUT", receipt.getJSONObject("error").getString("code"))
+        assertEquals("inspect_device_before_retry", receipt.getJSONObject("error").getString("retry"))
+        assertEquals(1, radio.writes); assertTrue(radio.closes > 0)
+        assertFalse(broker.status().getBoolean("device_approved"))
     }
     @Test fun revisionChangeAndPermissionLossCloseRadioAndSuppressReadDelivery() = runTest {
         for (permissionLoss in listOf(false, true)) {
