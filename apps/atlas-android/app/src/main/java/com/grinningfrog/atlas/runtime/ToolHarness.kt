@@ -51,6 +51,8 @@ interface AtlasLocalMutationAdapter : AtlasToolAdapter {
     fun executeLocal(call: AtlasToolCall): ToolExecutionResult
     override suspend fun execute(call: AtlasToolCall) = executeLocal(call)
 }
+/** Async local adapter whose durable effect and Core operation receipt share one transaction. */
+interface AtlasReceiptBackedAdapter : AtlasToolAdapter
 /**
  * Core-owned tool boundary. Providers can only propose calls; this harness validates policy,
  * performs the device operation, and returns an auditable result.
@@ -96,7 +98,7 @@ class ToolHarness(
     )
     val definitions: List<ToolDefinition> = builtInDefinitions + clarificationDefinition + CapabilityDiscovery.definition + additionalTools.map { it.definition }
 
-    fun atomicLocalTools() = additionalTools.filterIsInstance<AtlasLocalMutationAdapter>().map { it.definition.name } + "atlas_remember"
+    fun atomicLocalTools() = additionalTools.filter { it is AtlasLocalMutationAdapter || it is AtlasReceiptBackedAdapter }.map { it.definition.name } + "atlas_remember"
 
     fun definition(name: String) = definitions.firstOrNull { it.name == name }
 

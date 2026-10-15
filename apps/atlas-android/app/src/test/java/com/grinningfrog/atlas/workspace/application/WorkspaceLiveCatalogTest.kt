@@ -15,7 +15,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35], application = Application::class)
 class WorkspaceLiveCatalogTest {
     @Test fun productionCatalogHasOneAuthoringPathAndEnoughRoomForPackageFiles() {
-        val context = RuntimeEnvironment.getApplication<Application>()
+        val context = RuntimeEnvironment.getApplication()
         context.deleteDatabase("atlas.db")
         val db = AtlasDatabase(context)
         try {

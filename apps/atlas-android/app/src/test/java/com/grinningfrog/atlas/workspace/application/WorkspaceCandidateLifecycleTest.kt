@@ -69,6 +69,17 @@ class WorkspaceCandidateLifecycleTest {
         assertEquals(2L, updated.getLong("epoch")); assertEquals(1, db.listWorkspaceRecords(id, "notes").size)
         assertThrows(IllegalArgumentException::class.java) { WorkspaceApplicationData(db).query(oldPrincipal, JSONObject().put("collection", "notes")) }
     }
+    @Test fun failedCoreReceiptRollsBackActivationPointerEpochAndReceipt() = runTest {
+        val c = candidate(); val checked = checks(c); val id = c.getString("workspace_id")
+        val base = db.loadComposableWorkspace(id)!!.liveRevisionId
+        assertTrue(runCatching {
+            WorkspaceApplicationActivation(db).activate(id, c.getString("realm_id"), c.getString("candidate_id"), checked.getString("check_id"),
+                startup = { _, _ -> true }, committed = { error("Core receipt failed") })
+        }.isFailure)
+        assertEquals(base, db.loadComposableWorkspace(id)!!.liveRevisionId)
+        assertEquals(-1L, WorkspaceApplicationData(db).epoch(id))
+        db.readableDatabase.rawQuery("SELECT COUNT(*) FROM workspace_application_activations", null).use { it.moveToFirst(); assertEquals(0, it.getInt(0)) }
+    }
     @Test fun failureAndCancellationNeverAuthorizeActivation() = runTest {
         val c = candidate()
         val failed = checks(c) { _, _, _ -> JSONObject().put("ok", true).put("value", 999) }

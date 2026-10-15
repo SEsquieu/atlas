@@ -167,7 +167,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val repeated=if(signature.isNotBlank() && (failedThisSlice || !madeProgress) && signature==task.document.optString("failure_signature")) task.document.optInt("repeated_failures")+1 else if(failedThisSlice) 1 else 0
         task.document.put("failure_signature",signature).put("repeated_failures",repeated)
         val recent=all.takeLast(20)
-        val definitionId=all.lastOrNull { runCatching {JSONObject(it.argumentsJson).has("definition")}.getOrDefault(false) }?.id ?: task.document.getJSONObject("checkpoint").optString("latest_definition_operation_id").takeIf { it.isNotBlank() && it!="null" }
+        val definitionId=all.lastOrNull { it.name == "workspace_package_activate" || runCatching {JSONObject(it.argumentsJson).has("definition")}.getOrDefault(false) }?.id ?: task.document.getJSONObject("checkpoint").optString("latest_definition_operation_id").takeIf { it.isNotBlank() && it!="null" }
         task.document.put("checkpoint",JSONObject().put("last_turn_id",currentTurn(task.id)).put("operation_ids",JSONArray(recent.map {it.id}))
             .put("diagnostic_operation_ids", JSONArray(diagnosticFailures.map { it.id }))
             .put("completed_operations",JSONArray(recent.filter {it.status==ToolCallStatus.COMPLETED}.map {it.id}))
@@ -183,7 +183,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val result = runCatching { JSONObject(call.resultJson.orEmpty()) }.getOrNull() ?: return false
         if (args.optString("stage") != "resume_local" || args.has("blocker_id") || result.optString("error_code") != "missing_blocker") return false
         if (CapabilityDiscovery(database).active(currentTurn(task.id))) return false
-        val mutations = setOf("workspace_create", "workspace_replace_definition", "workspace_patch_definition", "workspace_update_metadata",
+        val mutations = setOf("workspace_package_create", "workspace_package_activate", "workspace_create", "workspace_replace_definition", "workspace_patch_definition", "workspace_update_metadata",
             "workspace_add_record", "workspace_update_record", "workspace_delete_record", "workspace_restore_record")
         // A completion claim alone is insufficient: require an atomic committed effect receipt.
         return all.any { it.name in mutations && it.status == ToolCallStatus.COMPLETED && receipt(it) != null }
@@ -214,7 +214,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
     }
     fun context(taskId: String): String {
         val t=get(taskId) ?: return ""
-        val latest=calls(taskId).lastOrNull {runCatching {JSONObject(it.argumentsJson).has("definition")}.getOrDefault(false)} ?: t.document.getJSONObject("checkpoint").optString("latest_definition_operation_id").takeIf { it.isNotBlank() && it!="null" }?.let(database::loadToolCall)
+        val latest=calls(taskId).lastOrNull {it.name == "workspace_package_activate" || runCatching {JSONObject(it.argumentsJson).has("definition")}.getOrDefault(false)} ?: t.document.getJSONObject("checkpoint").optString("latest_definition_operation_id").takeIf { it.isNotBlank() && it!="null" }?.let(database::loadToolCall)
         val receipts=JSONArray();var receiptCharacters=0
         for(call in calls(taskId).takeLast(20).asReversed()) {
             val item=JSONObject().put("operation_id",call.id).put("tool",call.name).put("status",call.status.name)

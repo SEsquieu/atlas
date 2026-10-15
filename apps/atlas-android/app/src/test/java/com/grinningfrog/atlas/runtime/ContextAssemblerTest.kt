@@ -204,6 +204,21 @@ class ContextAssemblerTest {
         assertEquals("call-1", context.messages[2].toolCallId)
     }
 
+    @Test fun largePackageSourceIsProjectedWithoutBreakingMixedToolBatchProtocol() {
+        val arguments = org.json.JSONObject().put("workspace_id", "workspace").put("files", org.json.JSONObject().put("ui/app.js", "x".repeat(100_000))).toString()
+        val calls = org.json.JSONArray().put(org.json.JSONObject().put("id", "stage").put("name", "workspace_package_stage").put("arguments", arguments))
+            .put(org.json.JSONObject().put("id", "inspect").put("name", "workspace_package_inspect").put("arguments", "{}"))
+        val original = message(2, "turn", MessageRole.ASSISTANT, "Building").copy(toolCallsJson = calls.toString())
+        val context = ContextAssembler().assemble(session(), listOf(message(1, "turn", MessageRole.USER, "Build"), original,
+            message(3, "turn", MessageRole.TOOL, "{\"candidate_id\":\"immutable\"}", MessageKind.TOOL_RESULT).copy(toolCallId = "stage"),
+            message(4, "turn", MessageRole.TOOL, "{}", MessageKind.TOOL_RESULT).copy(toolCallId = "inspect")), emptyList(), null, null, 10)
+        assertTrue(context.messages.all { it.toolCalls.isEmpty() && it.toolCallId == null })
+        assertTrue(context.messages.any { it.content.contains("immutable") })
+        assertTrue(context.messages.any { it.content.contains("source projection") })
+        assertTrue(original.toolCallsJson!!.length > 100_000)
+        assertTrue(context.approximateCharacters < 20_000)
+    }
+
     private fun session() = AtlasSession("session", "test", "stay coherent", SessionStatus.ACTIVE, 0, 0)
     private fun message(sequence: Long, turn: String, role: MessageRole, content: String, kind: MessageKind = MessageKind.DIALOGUE) = AtlasMessage(
         sequence = sequence, id = "message-$sequence", sessionId = "session", turnId = turn, role = role, content = content, createdAtMs = sequence, kind = kind,

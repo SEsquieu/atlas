@@ -18,12 +18,12 @@ object PackageFixture {
 }
 
 class WorkspaceApplicationContractTest {
-    @Test fun validPackageHasExplicitNonExecutableDescriptor() {
+    @Test fun validPackageHasExplicitPrimaryHostDescriptor() {
         assertEquals(emptyList<String>(), WorkspaceApplicationContract.validate(PackageFixture.bundle()))
         assertEquals(emptyList<String>(), WorkspaceApplicationContract.validate(WorkspaceApplicationContract.example()))
         val descriptor = WorkspaceApplicationContract.descriptor()
-        assertFalse(descriptor.getBoolean("execution_available"))
-        assertFalse(descriptor.getBoolean("activation_available"))
+        assertTrue(descriptor.getBoolean("execution_available"))
+        assertTrue(descriptor.getBoolean("activation_available"))
     }
     @Test fun rejectTraversalReservedPathsCollisionAndUnboundedFiles() {
         for (name in listOf("../escape.js", "/tmp/escape.js", "ui/../escape.js", "ui\\escape.js", "atlas/sdk.js", "ui/.hidden.js", "ui/app.js?x=1", "ui/native.so")) {

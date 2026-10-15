@@ -154,8 +154,8 @@ object WorkspaceApplicationContract {
     }.getOrElse { listOf(it.message ?: "Invalid package") }
 
     fun descriptor(): JSONObject = JSONObject().put("format", FORMAT).put("api_version", API_VERSION)
-        .put("authoring_status", "staging_only").put("execution_available", false).put("activation_available", false)
-        .put("reason", "Presentation containment, worker isolation and activation recovery gates have not passed")
+        .put("authoring_status", "alpha_application_host").put("execution_available", true).put("activation_available", true)
+        .put("minimum_android_api", 29).put("reason", "Local package execution with workspace-scoped foreground storage only; startup requires the supported contained WebView features. Device, network, credentials, schema-version migrations and persistent jobs are unavailable.")
         .put("limits", JSONObject().put("package_bytes", MAX_PACKAGE_BYTES).put("files", MAX_FILES).put("file_bytes", MAX_FILE_BYTES)
             .put("message_bytes", MAX_MESSAGE_BYTES).put("json_depth", MAX_JSON_DEPTH).put("measurement_status", "provisional_staging_limits"))
         .put("schema", WorkspaceJsonSchema.describe())

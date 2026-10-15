@@ -15,7 +15,7 @@ internal class WorkspaceCandidateChecks(
     private val database: AtlasDatabase,
     private val execute: suspend (JSONObject, String, Any?) -> JSONObject,
 ) {
-    suspend fun test(workspaceId: String, realmId: String, candidateId: String): JSONObject = withTimeout(20_000L) {
+    suspend fun test(workspaceId: String, realmId: String, candidateId: String, committed: (JSONObject) -> Unit = {}): JSONObject = withTimeout(20_000L) {
         val repository = WorkspacePackageRepository(database)
         val data = WorkspaceApplicationData(database)
         val stored = repository.inspect(workspaceId, realmId, candidateId)
@@ -75,6 +75,7 @@ internal class WorkspaceCandidateChecks(
                 put("kind", "pure_fixtures"); put("passed", if (passed) 1 else 0); put("base_revision_id", base); put("data_version", version)
                 put("result_json", result.toString()); put("created_at", System.currentTimeMillis())
             })
+            committed(result)
         }
         result
     }

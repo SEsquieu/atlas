@@ -4,12 +4,14 @@ import android.content.ContentValues
 import com.grinningfrog.atlas.data.AtlasDatabase
 import org.json.JSONObject
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import java.util.UUID
 
 /** Internal coordinator. No agent-supplied boolean can substitute for host presentation proof. */
 internal class WorkspaceApplicationActivation(private val database: AtlasDatabase) {
-    suspend fun activate(context: android.content.Context, workspaceId: String, realmId: String, candidateId: String, checkId: String, authorize: () -> Unit = {}): JSONObject =
-        activate(workspaceId, realmId, candidateId, checkId, startup = { bundle, principal -> WorkspacePresentationProbe.ready(context, bundle, principal) }, authorize = authorize)
+    suspend fun activate(context: android.content.Context, workspaceId: String, realmId: String, candidateId: String, checkId: String, authorize: () -> Unit = {}, committed: (JSONObject) -> Unit = {}): JSONObject =
+        activate(workspaceId, realmId, candidateId, checkId, startup = { bundle, principal -> WorkspacePresentationProbe.ready(context, bundle, principal) }, authorize = authorize, committed = committed)
 
     /**
      * Host must own the preview and dispose it on success, failure, or cancellation. Preview has no
@@ -17,7 +19,9 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
      * Not registered as an agent tool until on-device presentation containment is established.
      */
     suspend fun activate(workspaceId: String, realmId: String, candidateId: String, checkId: String,
-        startup: suspend (JSONObject, WorkspacePrincipal) -> Boolean, authorize: () -> Unit = {}): JSONObject {
+        startup: suspend (JSONObject, WorkspacePrincipal) -> Boolean, authorize: () -> Unit = {}, committed: (JSONObject) -> Unit = {}): JSONObject {
+        val executionContext = currentCoroutineContext()
+        executionContext.ensureActive()
         val repository = WorkspacePackageRepository(database)
         val data = WorkspaceApplicationData(database)
         authorize()
@@ -26,7 +30,9 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
             if (row.moveToFirst()) {
                 require(row.getString(0) == checkId) { "OPERATION_CONFLICT" }
                 val receipt = JSONObject(row.getString(1))
-                return receipt.put("still_active", database.loadComposableWorkspace(workspaceId)!!.liveRevisionId == receipt.getString("revision_id"))
+                receipt.put("still_active", database.loadComposableWorkspace(workspaceId)!!.liveRevisionId == receipt.getString("revision_id"))
+                committed(receipt)
+                return receipt
             }
         }
         val candidate = repository.inspect(workspaceId, realmId, candidateId)
@@ -35,6 +41,7 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
         val version = data.version(workspaceId)
         val hash = candidate.getString("content_hash")
         fun verify() {
+            executionContext.ensureActive()
             authorize()
             repository.inspect(workspaceId, realmId, candidateId)
             require(database.loadComposableWorkspace(workspaceId)!!.liveRevisionId == base) { "REVISION_CONFLICT" }
@@ -79,6 +86,7 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
             insertOrThrow("workspace_application_activations", null, ContentValues().apply {
                 put("workspace_id", workspaceId); put("candidate_id", candidateId); put("check_id", checkId); put("result_json", receipt.toString()); put("created_at", now)
             })
+            committed(receipt)
             receipt
         }
     }

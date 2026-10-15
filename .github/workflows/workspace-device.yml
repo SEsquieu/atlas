@@ -9,7 +9,7 @@ permissions:
   contents: read
 concurrency:
   group: workspace-device-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 jobs:
   device:
     runs-on: ubuntu-latest

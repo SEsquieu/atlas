@@ -28,14 +28,19 @@ internal object WorkspaceLiveTools {
             return ToolExecutionResult(JSONObject().put("workspace_id", w.id).put("base_revision_id", w.liveRevisionId).put("navigation_sequence", sequence).put("activated", false).put("next", "workspace_package_stage -> workspace_package_test -> workspace_package_activate").toString())
         }
     }
-    private class Activate(db: AtlasDatabase, private val context: Context) : Adapter(db) {
+    private class Activate(db: AtlasDatabase, private val context: Context) : Adapter(db), AtlasReceiptBackedAdapter {
         override val supportsLocalMutation = true
         override val definition = ToolDefinition("workspace_package_activate", "Activate the exact tested candidate after a host-owned startup check. Requires the passing check_id, task target and navigation_sequence. Preserves records for unchanged data_schema_version; nonempty legacy conversion and permission requests are rejected. Failed startup or stale data leaves the current revision untouched. Retrying the same candidate/check returns the durable activation receipt.",
             """{"type":"object","properties":{"workspace_id":{"type":"string"},"candidate_id":{"type":"string"},"check_id":{"type":"string"},"navigation_sequence":{"type":"integer"}},"required":["workspace_id","candidate_id","check_id","navigation_sequence"],"additionalProperties":false}""", ToolRisk.SESSION_WRITE, maxCallsPerTurn = 3)
         override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
             val a = JSONObject(call.argumentsJson); WorkspaceApplicationContract.exactKeys(a, setOf("workspace_id", "candidate_id", "check_id", "navigation_sequence"), setOf("workspace_id", "candidate_id", "check_id", "navigation_sequence"))
-            target(call, a)
-            val result = WorkspaceApplicationActivation(db).activate(context, a.getString("workspace_id"), session(call).workspaceId, a.getString("candidate_id"), a.getString("check_id")) { target(call, a) }
+            val execution = ExecutionTaskStore(db)
+            execution.receipt(call)?.let { return ToolExecutionResult(it) }
+            val lease = execution.forTurn(call.turnId)?.let { ExecutionLease(it.id, requireNotNull(it.owner), it.generation) }
+            fun authorize() { target(call, a); lease?.let(execution::check) }
+            authorize()
+            val result = WorkspaceApplicationActivation(db).activate(context, a.getString("workspace_id"), session(call).workspaceId, a.getString("candidate_id"), a.getString("check_id"),
+                authorize = ::authorize, committed = { receipt -> execution.localOperation(call, lease) { ToolExecutionResult(receipt.toString()) } })
             return ToolExecutionResult(result.toString())
         }
     }

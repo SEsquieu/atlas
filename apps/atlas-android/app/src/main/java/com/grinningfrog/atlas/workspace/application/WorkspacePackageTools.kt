@@ -9,6 +9,8 @@ import com.grinningfrog.atlas.model.ToolRisk
 import com.grinningfrog.atlas.runtime.AtlasLocalMutationAdapter
 import com.grinningfrog.atlas.runtime.AtlasToolAdapter
 import com.grinningfrog.atlas.runtime.ExecutionTaskStore
+import com.grinningfrog.atlas.runtime.ExecutionLease
+import com.grinningfrog.atlas.runtime.AtlasReceiptBackedAdapter
 import com.grinningfrog.atlas.runtime.ToolExecutionResult
 import com.grinningfrog.atlas.runtime.ToolPolicyDecision
 import org.json.JSONArray
@@ -28,7 +30,7 @@ object WorkspacePackageTools {
         override val definition = ToolDefinition("workspace_package_contract", "Inspect the installed application-package contract, exact manifest fields, schema subset, staging limits and valid example. Read before staging. Execution and activation availability are explicit; format breadth is not an authorization grant.", """{"type":"object","properties":{},"additionalProperties":false}""", ToolRisk.READ_ONLY, maxCallsPerTurn = 2)
         override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
             WorkspaceApplicationContract.exactKeys(JSONObject(call.argumentsJson), emptySet())
-            return ToolExecutionResult(WorkspaceApplicationContract.descriptor().put("pure_fixture_testing_available", pureTesting).put("pure_fixture_tool", if (pureTesting) "workspace_package_test" else JSONObject.NULL).toString())
+            return ToolExecutionResult(WorkspaceApplicationContract.descriptor().put("execution_available", pureTesting).put("activation_available", pureTesting).put("pure_fixture_testing_available", pureTesting).put("pure_fixture_tool", if (pureTesting) "workspace_package_test" else JSONObject.NULL).toString())
         }
     }
 
@@ -90,7 +92,7 @@ object WorkspacePackageTools {
                 .put("structurally_valid", errors.isEmpty()).put("errors", JSONArray(errors)).put("tests_run", 0).put("executed", false).put("activation_available", false).toString())
         }
     }
-    private class Test(database: AtlasDatabase, private val worker: WorkspaceWorkerSupervisor) : Adapter(database) {
+    private class Test(database: AtlasDatabase, private val worker: WorkspaceWorkerSupervisor) : Adapter(database), AtlasReceiptBackedAdapter {
         override val supportsLocalMutation = true
         override val definition = ToolDefinition("workspace_package_test", "Execute 1 to 16 declared pure fixtures from a stored package in fresh isolated workers and persist revision/data-bound reports. No live records, device access or network bindings. Results prove only these fixtures; UI readiness, permissions and activation remain separate gates. Every export needs a passing fixture. Cancellation yields no passing receipt.",
             CANDIDATE_SCHEMA, ToolRisk.SESSION_WRITE, maxCallsPerTurn = 2)
@@ -99,7 +101,13 @@ object WorkspacePackageTools {
             WorkspaceApplicationContract.exactKeys(args, setOf("workspace_id", "candidate_id"), setOf("workspace_id", "candidate_id"))
             val current = session(call)
             require(available(current, args.getString("workspace_id"))) { "TARGET_CONFLICT" }
-            return ToolExecutionResult(WorkspaceCandidateChecks(database, worker::run).test(args.getString("workspace_id"), current.workspaceId, args.getString("candidate_id")).toString())
+            val execution = ExecutionTaskStore(database)
+            execution.receipt(call)?.let { return ToolExecutionResult(it) }
+            val lease = execution.forTurn(call.turnId)?.let { ExecutionLease(it.id, requireNotNull(it.owner), it.generation) }
+            lease?.let(execution::check)
+            return ToolExecutionResult(WorkspaceCandidateChecks(database, worker::run).test(args.getString("workspace_id"), current.workspaceId, args.getString("candidate_id")) { receipt ->
+                execution.localOperation(call, lease) { ToolExecutionResult(receipt.toString()) }
+            }.toString())
         }
     }
 
