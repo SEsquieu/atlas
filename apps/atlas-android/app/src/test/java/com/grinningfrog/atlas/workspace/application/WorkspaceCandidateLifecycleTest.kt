@@ -47,6 +47,19 @@ class WorkspaceCandidateLifecycleTest {
         assertEquals(1L, WorkspaceApplicationData(db).epoch(workspace.id))
         assertEquals(c.getString("content_hash"), db.loadLiveWorkspaceRevision(workspace.id)!!.contentHash)
     }
+    @Test fun compatibleReplacementPreservesRecordsAndFencesOldPrincipal() = runTest {
+        val first = candidate(); val original = activate(first, checks(first)) { _, _ -> true }
+        val id = first.getString("workspace_id"); val realm = first.getString("realm_id")
+        val oldPrincipal = WorkspacePrincipal(realm, id, original.getString("revision_id"), "old-view", original.getLong("epoch"), WorkspaceInstanceMode.FOREGROUND)
+        db.addWorkspaceRecord(id, "notes", "{}")
+        val session = db.createSession("Update", "Test", workspaceId = realm); val turn = db.createTurn(session.id, "user")
+        val bundle = PackageFixture.bundle(); bundle.getJSONObject("files").put("ui/app.js", "document.body.textContent='Updated';")
+        val second = WorkspacePackageRepository(db).stage(id, realm, original.getString("revision_id"), null,
+            bundle.getJSONObject("manifest"), bundle.getJSONObject("files"), session.id, turn.id).put("realm_id", realm)
+        val updated = activate(second, checks(second)) { _, _ -> true }
+        assertEquals(2L, updated.getLong("epoch")); assertEquals(1, db.listWorkspaceRecords(id, "notes").size)
+        assertThrows(IllegalArgumentException::class.java) { WorkspaceApplicationData(db).query(oldPrincipal, JSONObject().put("collection", "notes")) }
+    }
     @Test fun failureAndCancellationNeverAuthorizeActivation() = runTest {
         val c = candidate()
         val failed = checks(c) { _, _, _ -> JSONObject().put("ok", true).put("value", 999) }
