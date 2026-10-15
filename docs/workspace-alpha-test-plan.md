@@ -134,3 +134,20 @@ For each failure or surprising behavior, export the Atlas session log and note:
 - approximate time of the event.
 
 Do not include ChatGPT OAuth tokens, API keys, or unrelated private Workspace record contents in a public issue.
+
+## Foreground BLE bridge (alpha.21)
+
+Update an existing BLE package using the installed `workspace_package_contract`; declare `bluetooth.le`, exact operations, and `user_selected_device`. Preserve the schema version and saved records. Keep hardware actions behind explicit controls after `host.ready()`; preview/fixtures must skip device access. Use real bridge results rather than simulated device data.
+
+On a phone with a known bench peripheral:
+
+1. Open the workspace and scan. **Deny** the native scan request. Expect a visible `WORKSPACE_GRANT_REQUIRED` result, no scan, and no repeated prompt. Re-enable requests using the native access bar.
+2. Scan again and allow native consent. If Android asks for Nearby devices, deny it. Expect `OS_PERMISSION_REQUIRED` and no scan. Re-enable requests and grant Android permission (use Android Settings if the OS no longer offers a prompt).
+3. Scan with Bluetooth switched off; expect an explicit disabled state. Turn Bluetooth on and retry. Select a known device from real scan results. Confirm its name and requested operations in the separate native connection dialog.
+4. Browse services/characteristics. Read a known readable value. On a controlled bench device, write a known benign command using at most 20 hex-encoded bytes and inspect its acknowledged result. Subscribe to a known notification source; confirm decoded values, timestamps, and dropped-event reporting. Physical effects must be observed independently.
+5. Press native **Revoke** during a pending operation. Expect connection/scan teardown, cleared handles and grants, and a failed operation without automatic write retry. Repeated page requests must stay blocked until native re-enable.
+6. Reconnect, then leave the workspace or background Atlas. On return, expect no live connection and fresh native consent. Kill/relaunch Atlas and repeat. Saved workspace records should remain intact.
+7. With an active connection, ask Atlas to make a small visual edit and activate it. Expect the previous connection to close, old handles to fail, and the new revision to request fresh permission. Compare the actual screen with workspace capture and render diagnostics.
+8. Switch to a second BLE workspace. Android's app-level permission may remain granted, but this workspace must obtain its own native approvals. Archive/delete the active workspace and verify that its connection ends.
+
+Collect the session export after failures. Render diagnostics include BLE grant state, recent operation phases/times and Android GATT/scan error codes without dumping characteristic payloads. A timeout can leave a peripheral write outcome unknown; inspect the device before manually retrying. The automated SDK test uses an injected radio; passing emulator tests does not establish a successful physical BLE exchange.
