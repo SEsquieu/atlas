@@ -122,7 +122,9 @@ class WorkspaceDeviceBroker internal constructor(
     fun refreshAuthority() {
         if ((scanApproved || deviceApproved || busy) && (!current() || !adapter.permitted() && (scanApproved || deviceApproved))) revoke()
     }
-    private suspend fun approve(message: String): Boolean = consent(message).also { if (!it) requestsEnabled = false }
+    private suspend fun approve(message: String): Boolean = consent(message).also {
+        if (!it) { requestsEnabled = false; adapter.close(); deviceApproved = false; scanApproved = false }
+    }
     fun enableRequests() { requestsEnabled = true; changed() }
     fun revoke(blockRequests: Boolean = false) {
         if (blockRequests) requestsEnabled = false

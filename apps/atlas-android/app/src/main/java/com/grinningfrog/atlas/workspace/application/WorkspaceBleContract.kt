@@ -24,6 +24,8 @@ object WorkspaceBleContract {
                 require(op in operations && requested.add(op)) { "UNSUPPORTED_CAPABILITY" }
             }
         }
+        if (requested.any { it != "scan" }) require(requested.containsAll(setOf("scan", "connect"))) { "BLE connection operations require scan and connect declarations" }
+        if (requested.any { it in setOf("read", "write", "subscribe") }) require("services" in requested) { "BLE characteristic operations require services declaration" }
         return requested
     }
     fun validate(method: String, params: JSONObject) {
@@ -45,7 +47,7 @@ object WorkspaceBleContract {
     fun descriptor(): JSONObject = JSONObject()
         .put("name", CAPABILITY).put("operations", JSONArray(operations.sorted())).put("resources", JSONArray(listOf(RESOURCE)))
         .put("manifest_example", JSONObject().put("name", CAPABILITY).put("operations", JSONArray(operations.sorted())).put("resources", JSONArray(listOf(RESOURCE))))
-        .put("contract", "Import ble from /atlas/host.js. Declare only needed operations. Foreground only; native scan approval, Android permission, and native selected-device approval are separate gates. Activation/preview never grants access. One connection, 5-second scans, at most 64 devices and 128 characteristic handles. services() returns service UUIDs and opaque characteristic_id handles; use those handles in read/write/subscribe. Writes use hex (0..20 bytes), acknowledged GATT writes only, no automatic retry. Notifications use events() (drains at most 32, dropped count explicit). Handles and grants expire on leaving the workspace, backgrounding, revision change, disconnect/revoke. Permission prompts may take 45 seconds. Expose errors and reconnect controls. Never use navigator.bluetooth or simulate hardware success.")
+        .put("contract", "Import ble from /atlas/host.js. Declare only needed operations; connect requires scan, and characteristic access also requires connect and services. Foreground only; native scan approval, Android permission, and native selected-device approval are separate gates. Activation/preview never grants access. One connection, 5-second scans, at most 64 devices and 128 characteristic handles. services() returns service UUIDs and opaque characteristic_id handles; use those handles in read/write/subscribe. Writes use hex (0..20 bytes), acknowledged GATT writes only, no automatic retry. Notifications use events() (drains at most 32, dropped count explicit). Handles and grants expire on leaving the workspace, backgrounding, revision change, disconnect/revoke. Permission prompts may take 45 seconds. Expose errors and reconnect controls. Never use navigator.bluetooth or simulate hardware success.")
         .put("sdk", JSONObject().put("scan()", "{devices:[{device_id,name,rssi,service_uuids}]}")
             .put("connect(device_id)", "{connected,name}; native approval required")
             .put("services()", "{services:[{uuid,characteristics:[{characteristic_id,uuid,properties,readable,writable,notifiable}]}]}")
@@ -53,7 +55,7 @@ object WorkspaceBleContract {
             .put("subscribe(characteristic_id,enabled=true)", "{enabled,gatt_status}").put("events()", "{events:[{characteristic_id,hex,truncated,received_at_ms}],dropped}")
             .put("disconnect()/revoke()", "Closes hardware and invalidates all handles; returns status")
             .put("status()", "{installed,os_permission_granted,platform_enabled,connected,device_label,scan_approved,device_approved,requests_enabled,busy,generation,recent_operations,last_failure}"))
-        .put("startup", "Call host.describe() then install UI and signal host.ready(). ble_authorized=false in preview: skip BLE there. Start scan/connect from explicit UI controls after readiness, never at module startup. Catch errors using error.code and error.receipt; show uncertainty for failed/timed-out writes.")
+        .put("startup", "Call host.describe() then install UI and signal host.ready(). ble_available=false in preview: skip BLE there. Start scan/connect from explicit UI controls after readiness, never at module startup. Catch errors using error.code and error.receipt; show uncertainty for failed/timed-out writes.")
         .put("methods", JSONArray(listOf("ble.status", "ble.scan", "ble.connect", "ble.services", "ble.read", "ble.write", "ble.subscribe", "ble.events", "ble.disconnect", "ble.revoke", "ble.operation")))
     fun id(): String = UUID.randomUUID().toString()
 }

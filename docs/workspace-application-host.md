@@ -126,7 +126,7 @@ Declare only needed operations in `manifest.capabilities`:
 [{"name":"bluetooth.le","operations":["scan","connect","services","read","write","subscribe"],"resources":["user_selected_device"]}]
 ```
 
-The resource means the one peripheral approved in Atlas's native selected-device dialog, not arbitrary nearby hardware. Activation permits supported declarations but creates no grant. Native scan consent precedes Android runtime permission. Connecting to a scanned device needs a separate native approval naming the device and requested operations. A denial blocks further prompts until the user presses **Enable requests** in the native access bar. The bar shows connection status and **Revoke**. Permissions granted to Atlas by Android never grant another workspace access.
+Connect requires scan and connect declarations; characteristic access also requires services. The resource means the one peripheral approved in Atlas's native selected-device dialog, not arbitrary nearby hardware. Activation permits supported declarations but creates no grant. Native scan consent precedes Android runtime permission. `host.describe().ble_available` indicates a declared foreground binding, not an OS permission or workspace grant; consult `ble.status()` for those separate gates. Connecting to a scanned device needs a separate native approval naming the device and requested operations. A denial blocks further prompts until the user presses **Enable requests** in the native access bar. The bar shows connection status and **Revoke**. Permissions granted to Atlas by Android never grant another workspace access.
 
 ```js
 import {host,ble} from '/atlas/host.js';

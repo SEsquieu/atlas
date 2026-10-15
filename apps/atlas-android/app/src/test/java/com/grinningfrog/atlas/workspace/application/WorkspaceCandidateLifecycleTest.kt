@@ -45,6 +45,11 @@ class WorkspaceCandidateLifecycleTest {
             true
         }
         assertTrue(result.getBoolean("activated"))
+        val id = c.getString("workspace_id"); val store = WorkspaceApplicationData(db)
+        store.setEnabled(id, result.getString("revision_id"), false)
+        store.setEnabled(id, result.getString("revision_id"), true)
+        val principal = WorkspacePrincipal(c.getString("realm_id"), id, result.getString("revision_id"), "new-view", store.epoch(id), WorkspaceInstanceMode.FOREGROUND)
+        assertTrue(store.query(principal, JSONObject().put("collection", "notes")).has("data_version"))
     }
     @Test fun fixtureReceiptActivatesExactBytesAndSurvivesReopen() = runTest {
         val c = candidate(); val checked = checks(c)
