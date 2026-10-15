@@ -354,7 +354,8 @@ class WorkspaceDeviceTest {
         execution.bindWorkspace(turn.id,workspace.id)
         fun record(name:String,args:JSONObject,result:JSONObject) {
             val id=UUID.randomUUID().toString()
-            db.insertToolCall(com.grinningfrog.atlas.model.AtlasToolCall(id,session.id,execution.currentTurn(task.id),name,args.toString(),com.grinningfrog.atlas.model.ToolCallStatus.COMPLETED,com.grinningfrog.atlas.model.ToolRisk.SESSION_WRITE,false,id,resultJson=result.toString(),createdAtMs=System.currentTimeMillis(),updatedAtMs=System.currentTimeMillis()))
+            db.insertToolCall(com.grinningfrog.atlas.model.AtlasToolCall(id,session.id,execution.currentTurn(task.id),name,args.toString(),com.grinningfrog.atlas.model.ToolCallStatus.COMPLETED,com.grinningfrog.atlas.model.ToolRisk.SESSION_WRITE,false,id,createdAtMs=System.currentTimeMillis(),updatedAtMs=System.currentTimeMillis()))
+            db.updateToolCall(id,com.grinningfrog.atlas.model.ToolCallStatus.COMPLETED,resultJson=result.toString())
         }
         val bundle=WorkspaceApplicationContract.example()
         bundle.getJSONObject("manifest").getJSONArray("capabilities").put(WorkspaceBleContract.descriptor().getJSONObject("manifest_example"))
@@ -379,7 +380,7 @@ class WorkspaceDeviceTest {
             val recovered=com.grinningfrog.atlas.runtime.ExecutionTaskStore(db)
             recovered.recover(session.id)
             val recoveryContext=recovered.context(task.id)
-            assertTrue(recoveryContext.contains(first.getString("candidate_id")))
+            assertTrue(recoveryContext, recoveryContext.contains(first.getString("candidate_id")))
             assertTrue(recoveryContext.contains("events"))
             val continuation=recovered.nextTurn(task.id)
             val lease=recovered.claim(task.id,"after-interruption")!!
