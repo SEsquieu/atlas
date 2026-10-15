@@ -265,6 +265,8 @@ class WorkspaceDeviceTest {
         WorkspaceApplicationData(db).setEnabled(workspace.id,revision.id,true)
         val scenario=ActivityScenario.launch(MainActivity::class.java)
         var web: android.webkit.WebView?=null
+        var stage="startup"
+        var lastTree=""
         suspend fun evaluatePage(script:String):String=withContext(Dispatchers.Main) { suspendCancellableCoroutine { c -> web!!.evaluateJavascript(script) { if(c.isActive)c.resume(it) } } }
         try {
             scenario.onActivity { activity -> activity.setContent { MaterialThemeForTest { WorkspaceApplicationPanel(workspace,revision,db,Modifier.fillMaxSize()) } } }
@@ -273,24 +275,43 @@ class WorkspaceDeviceTest {
                 fun find(view:android.view.View):android.webkit.WebView? { if(view is android.webkit.WebView)return view;if(view is android.view.ViewGroup)for(i in 0 until view.childCount)find(view.getChildAt(i))?.let{return it};return null }
                 web=find(activity.findViewById(android.R.id.content))
             }
+            stage="request scan"
             evaluatePage("tryBle();void 0")
             val automation=InstrumentationRegistry.getInstrumentation().uiAutomation
+            stage="find native Deny button"
             withTimeout(8_000) {
                 var clicked=false
                 while(!clicked) {
                     val root=automation.rootInActiveWindow
-                    val matches=root?.findAccessibilityNodeInfosByText("Deny").orEmpty()
-                    for(match in matches) {
-                        var node:android.view.accessibility.AccessibilityNodeInfo?=match
-                        repeat(4) { if(node?.isClickable==true)clicked=node!!.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK) || clicked else node=node?.parent }
+                    val tree=StringBuilder()
+                    fun visit(node:android.view.accessibility.AccessibilityNodeInfo?,depth:Int=0) {
+                        if(node==null || depth>24)return
+                        tree.append(" ".repeat(depth)).append(node.className).append(": ").append(node.text).append(" / ").append(node.contentDescription).append(" clickable=").append(node.isClickable).append('\n')
+                        if(!clicked && (node.text?.toString()=="Deny" || node.contentDescription?.toString()=="Deny")) {
+                            var target:android.view.accessibility.AccessibilityNodeInfo?=node
+                            repeat(4) {
+                                if(!clicked) {
+                                    if(target?.isClickable==true) clicked=target!!.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+                                    else target=target?.parent
+                                }
+                            }
+                        }
+                        for(i in 0 until node.childCount)visit(node.getChild(i),depth+1)
                     }
+                    visit(root);lastTree=tree.toString().take(16000)
                     if(!clicked)delay(100)
                 }
             }
+            stage="receive denied result"
             withTimeout(8_000) { while(evaluatePage("document.body.dataset.ble")!="\"WORKSPACE_GRANT_REQUIRED\"")delay(100) }
+            stage="reject repeat request without another dialog"
             evaluatePage("document.body.dataset.ble='';tryBle();void 0")
             withTimeout(8_000) { while(evaluatePage("document.body.dataset.ble")!="\"WORKSPACE_GRANT_REQUIRED\"")delay(100) }
             assertFalse(com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(workspace.id,revision.id)!!.getJSONObject("runtime").getJSONObject("devices").getBoolean("requests_enabled"))
+        } catch(failure:Exception) {
+            val state=runCatching { evaluatePage("document.body.dataset.ble") }.getOrDefault("unavailable")
+            val diagnostics=com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(workspace.id,revision.id)
+            throw AssertionError("BLE denial stage=$stage page=$state diagnostics=$diagnostics tree=$lastTree",failure)
         } finally { scenario.close();db.deleteComposableWorkspace(workspace.id) }
     }
     @androidx.compose.runtime.Composable private fun MaterialThemeForTest(content:@androidx.compose.runtime.Composable ()->Unit) { androidx.compose.material3.MaterialTheme(content=content) }
