@@ -14,6 +14,7 @@ android {
         applicationId = "com.grinningfrog.atlas"
         minSdk = 28
         targetSdk = 35
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild { cmake { arguments += "-DANDROID_STL=c++_static" } }
         versionCode = providers.environmentVariable("ATLAS_ANDROID_VERSION_CODE").orElse("18").get().toInt().also {
             require(it in 1..2_100_000_000) { "ATLAS_ANDROID_VERSION_CODE is outside Android limits" }
@@ -134,6 +135,9 @@ dependencies {
     add("developerImplementation", "androidx.compose.ui:ui-test-manifest")
     testImplementation("org.robolectric:robolectric:4.17")
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.json:json:20250517")

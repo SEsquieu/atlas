@@ -41,7 +41,7 @@ class WorkspaceWebPresentation(
         require(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_VIEW_RENDERER_CLIENT_BASIC_USAGE)) { "Renderer monitoring is unavailable" }
         require(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_VIEW_RENDERER_TERMINATE)) { "Renderer termination is unavailable" }
         view = WebView(context)
-        configure()
+        try { configure() } catch (failure: Throwable) { bridgeScope.cancel(); view.destroy(); throw failure }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -63,15 +63,15 @@ class WorkspaceWebPresentation(
         if (WebViewFeature.isFeatureSupported(WebViewFeature.MUTE_AUDIO)) WebViewCompat.setAudioMuted(view, true)
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) WebViewCompat.addDocumentStartJavaScript(view, """
             (() => {
-              for (const name of ['RTCPeerConnection','webkitRTCPeerConnection','mozRTCPeerConnection','AudioContext','webkitAudioContext','OfflineAudioContext','WebSocket','EventSource','Worker','SharedWorker','showOpenFilePicker','showSaveFilePicker','showDirectoryPicker']) {
+              for (const name of ['RTCPeerConnection','webkitRTCPeerConnection','mozRTCPeerConnection','AudioContext','webkitAudioContext','OfflineAudioContext','WebSocket','EventSource','Worker','SharedWorker','showOpenFilePicker','showSaveFilePicker','showDirectoryPicker','indexedDB','caches','openDatabase','localStorage','sessionStorage']) {
                 Object.defineProperty(globalThis,name,{value:undefined,writable:false,configurable:false});
               }
-              for (const name of ['clipboard','share','canShare','credentials','bluetooth','usb','serial','hid','contacts','wakeLock','serviceWorker','sendBeacon']) {
+              for (const name of ['clipboard','share','canShare','credentials','bluetooth','usb','serial','hid','contacts','wakeLock','serviceWorker','sendBeacon','mediaDevices','geolocation']) {
                 Object.defineProperty(Navigator.prototype,name,{value:undefined,writable:false,configurable:false});
                 Object.defineProperty(navigator,name,{value:undefined,writable:false,configurable:false});
               }
             })();
-        """.trimIndent(), setOf(policy.origin))
+        """.trimIndent(), setOf("*"))
         view.importantForAutofill = android.view.View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
         view.setOnDragListener { _, _ -> true }
         CookieManager.getInstance().setAcceptCookie(false)
