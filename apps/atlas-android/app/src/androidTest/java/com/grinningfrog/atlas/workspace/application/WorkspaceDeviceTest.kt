@@ -163,11 +163,12 @@ class WorkspaceDeviceTest {
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         var presentation: WorkspaceWebPresentation? = null
         try {
-            withContext(Dispatchers.Main) {
-                presentation = WorkspaceWebPresentation(context, bundle, principal, { true }, { ready.complete(Unit) }, { ready.completeExceptionally(IllegalStateException(it)) }, store)
-            }
-            scenario.onActivity {
-                it.setContentView(presentation!!.view)
+            scenario.onActivity { activity ->
+                presentation = WorkspaceWebPresentation(activity, bundle, principal, { true }, { ready.complete(Unit) }, { ready.completeExceptionally(IllegalStateException(it)) }, store)
+                val container = android.widget.FrameLayout(activity).apply {
+                    addView(presentation!!.view, android.widget.FrameLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT))
+                }
+                activity.setContentView(container)
                 presentation!!.view.doOnAttach { view -> view.doOnLayout { presentation!!.loadAttached() } }
             }
             withTimeout(15_000) { ready.await() }
