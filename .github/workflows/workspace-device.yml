@@ -15,6 +15,10 @@ jobs:
   device:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [35, 36]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
@@ -29,7 +33,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
-          api-level: 35
+          api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
           profile: pixel_2
@@ -38,7 +42,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: workspace-device-evidence
+          name: workspace-device-evidence-api-${{ matrix.api }}
           path: |
             apps/atlas-android/app/build/device-evidence
             apps/atlas-android/app/build/reports/androidTests

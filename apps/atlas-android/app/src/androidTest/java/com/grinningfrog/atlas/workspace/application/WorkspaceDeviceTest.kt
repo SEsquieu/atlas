@@ -1,6 +1,9 @@
 package com.grinningfrog.atlas.workspace.application
 
 import androidx.test.core.app.ActivityScenario
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.grinningfrog.atlas.AtlasApplication
@@ -34,6 +37,34 @@ class WorkspaceDeviceTest {
                 assertTrue("Background pixel="+Integer.toHexString(color)+" computed="+styles, android.graphics.Color.red(color)<80 && android.graphics.Color.green(color)<80 && android.graphics.Color.blue(color)<80)
             } finally { screenshot.recycle() }
         }
+    }
+    @Test fun neonValeBackgroundPaintsThroughComposePanel() = runBlocking {
+        val bundle = JSONObject(InstrumentationRegistry.getInstrumentation().context.assets.open("neon-vale-rendering.json").bufferedReader().use { it.readText() })
+        val db=(context.applicationContext as AtlasApplication).database
+        val w=db.createComposableWorkspace("Neon rendering", "", bundle.toString())
+        val revision=db.loadLiveWorkspaceRevision(w.id)!!
+        WorkspaceApplicationData(db).setEnabled(w.id,revision.id,true)
+        val scenario=ActivityScenario.launch(MainActivity::class.java)
+        try {
+            scenario.onActivity { activity -> activity.setContent { androidx.compose.material3.MaterialTheme { WorkspaceApplicationPanel(w,revision,db,Modifier.fillMaxSize()) } } }
+            withTimeout(15_000) { while(com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(w.id,revision.id)?.optJSONObject("runtime")?.optBoolean("ready") != true) delay(100) }
+            delay(500)
+            val layout=com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.inspect(w.id,revision.id)
+            val coordinates=IntArray(2)
+            scenario.onActivity { activity ->
+                fun find(view: android.view.View): android.webkit.WebView? {
+                    if(view is android.webkit.WebView) return view
+                    if(view is android.view.ViewGroup) for(i in 0 until view.childCount) find(view.getChildAt(i))?.let { return it }
+                    return null
+                }
+                requireNotNull(find(activity.findViewById(android.R.id.content))).getLocationOnScreen(coordinates)
+            }
+            val screenshot=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+            try {
+                val color=screenshot.getPixel(coordinates[0]+5,coordinates[1]+10)
+                assertTrue("Compose background="+Integer.toHexString(color)+" layout="+layout,android.graphics.Color.red(color)<80 && android.graphics.Color.green(color)<80 && android.graphics.Color.blue(color)<80)
+            } finally { screenshot.recycle() }
+        } finally { scenario.close();db.deleteComposableWorkspace(w.id) }
     }
     @Test fun isolatedWorkerExecutesAndTerminatesRunawayModule() = runBlocking {
         val worker = WorkspaceWorkerSupervisor(context)
