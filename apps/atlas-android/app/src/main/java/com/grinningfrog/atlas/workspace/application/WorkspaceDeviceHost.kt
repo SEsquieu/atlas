@@ -17,8 +17,8 @@ import org.json.JSONObject
 
 /** Permission UI lives outside the authored WebView. It cannot be clicked by workspace JavaScript. */
 @Composable
-internal fun WorkspaceDeviceHost(principal: WorkspacePrincipal, bundle: JSONObject, current: () -> Boolean, modifier: Modifier, content: @Composable (WorkspaceDeviceBroker?, Modifier) -> Unit) {
-    val requested = remember(bundle) { WorkspaceBleContract.requested(bundle.getJSONObject("manifest")) }
+internal fun WorkspaceDeviceHost(principal: WorkspacePrincipal, bundle: JSONObject, current: () -> Boolean, modifier: Modifier, database: com.grinningfrog.atlas.data.AtlasDatabase, adapterFactory: (android.content.Context,Map<String,Set<String>>)->List<WorkspaceCapabilityAdapter> = WorkspaceCapabilityRegistry::create, content: @Composable (WorkspaceDeviceBroker?, Modifier) -> Unit) {
+    val requested = remember(bundle) { WorkspaceCapabilityRegistry.requested(bundle.getJSONObject("manifest")) }
     if (requested.isEmpty()) { content(null, modifier); return }
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
@@ -26,26 +26,27 @@ internal fun WorkspaceDeviceHost(principal: WorkspacePrincipal, bundle: JSONObje
     var version by remember { mutableIntStateOf(0) }
     var prompt by remember { mutableStateOf<String?>(null) }
     var consentResult by remember { mutableStateOf<CompletableDeferred<Boolean>?>(null) }
-    var permissionResult by remember { mutableStateOf<CompletableDeferred<Boolean>?>(null) }
-    val adapter = remember { AndroidWorkspaceBle(context.applicationContext) }
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ -> permissionResult?.complete(adapter.permitted()) }
-    val broker = remember(principal) { WorkspaceDeviceBroker(principal, requested,
-        current = { owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) && current() }, adapter = adapter,
+    var permissionResult by remember { mutableStateOf<CompletableDeferred<Unit>?>(null) }
+    val adapters = remember(principal) { adapterFactory(context,requested) }
+    val audit = remember(principal) { WorkspaceDeviceAudit.Writer(database,principal.workspaceId) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ -> permissionResult?.complete(Unit) }
+    val broker = remember(principal) { WorkspaceDeviceBroker(principal, adapters,
+        current = { owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) && current() },
         consent = { message ->
             val result = CompletableDeferred<Boolean>(); consentResult = result; prompt = message
             try { withTimeout(40_000) { result.await() } } finally { if (consentResult === result) { consentResult = null; prompt = null } }
         },
-        permission = {
+        permission = { adapter ->
             if (adapter.permitted()) true else {
-                val result = CompletableDeferred<Boolean>(); permissionResult = result
-                try { launcher.launch(AndroidWorkspaceBle.permissions()); withTimeout(40_000) { result.await() } }
+                val result = CompletableDeferred<Unit>(); permissionResult = result
+                try { launcher.launch(adapter.permissions); withTimeout(40_000) { result.await() }; adapter.permitted() }
                 finally { if (permissionResult === result) permissionResult = null }
             }
-        }, scope = scope, changed = { version++ }) }
+        }, scope = scope, changed = { version++ }, audit = { audit.record(it) }) }
     DisposableEffect(broker, owner) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) broker.revoke() }
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) broker.revoke(reason="activity_stopped") }
         owner.lifecycle.addObserver(observer)
-        onDispose { owner.lifecycle.removeObserver(observer); broker.close(); consentResult?.cancel(); permissionResult?.cancel() }
+        onDispose { owner.lifecycle.removeObserver(observer); broker.close(); audit.close(); consentResult?.cancel(); permissionResult?.cancel() }
     }
     // Periodic status sampling shows peripheral disconnects and Android permission changes without a page request.
     LaunchedEffect(broker) { while (true) { kotlinx.coroutines.delay(750); broker.refreshAuthority(); version++ } }
@@ -69,7 +70,7 @@ internal fun WorkspaceDeviceHost(principal: WorkspacePrincipal, bundle: JSONObje
         content(broker, Modifier.fillMaxWidth().weight(1f))
     }
     if (prompt != null) AlertDialog(onDismissRequest = { consentResult?.complete(false) },
-        title = { Text("${bundle.getJSONObject("manifest").getString("title")} · Bluetooth") },
+        title = { Text("${bundle.getJSONObject("manifest").getString("title")} · Device access") },
         text = { Text(prompt!!) },
         confirmButton = { TextButton(onClick = { consentResult?.complete(true) }) { Text("Allow") } },
         dismissButton = { TextButton(onClick = { consentResult?.complete(false) }) { Text("Deny") } })

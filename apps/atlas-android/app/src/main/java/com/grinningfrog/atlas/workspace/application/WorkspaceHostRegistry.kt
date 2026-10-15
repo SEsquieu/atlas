@@ -13,16 +13,17 @@ object WorkspaceHostRegistry {
         "data.prepare" to JSONObject("""{"type":"object","properties":{"expected_data_version":{"type":"integer"},"request_key":{"type":"string","maxLength":128},"mutations":{"type":"array","maxItems":32,"items":{"type":"object","description":"create: kind,collection,data; update: kind,collection,record_id,data; delete: kind,collection,record_id. data is a strict JSON object; unknown mutation fields are rejected."}}},"required":["expected_data_version","request_key","mutations"],"additionalProperties":false}"""),
         "data.commit" to operationSchema, "data.inspect" to operationSchema, "data.cancel" to operationSchema,
     )
-    fun describe(principal: WorkspacePrincipal, storage: Boolean = false, bluetooth: Boolean = false): JSONObject = WorkspaceApplicationContract.descriptor()
+    fun describe(principal: WorkspacePrincipal, storage: Boolean = false, bluetooth: Boolean = false, capabilityBindings: Set<String> = if(bluetooth)setOf(WorkspaceBleContract.CAPABILITY) else emptySet()): JSONObject = WorkspaceApplicationContract.descriptor()
         .put("instance_mode", principal.mode.name.lowercase()).put("workspace_id", principal.workspaceId).put("revision_id", principal.revisionId)
         .put("epoch", principal.epoch).put("methods", JSONObject().apply { (methods + if (storage) storageMethods else emptyMap()).forEach { (name, schema) -> put(name, JSONObject(schema.toString())) } })
         .apply {
-            val available = bluetooth && principal.mode == WorkspaceInstanceMode.FOREGROUND
+            val bindings=if(principal.mode==WorkspaceInstanceMode.FOREGROUND)capabilityBindings else emptySet()
+            val available = WorkspaceBleContract.CAPABILITY in bindings
+            put("capability_registry",WorkspaceCapabilityRegistry.describe())
             put("ble_available", available).put("ble", WorkspaceBleContract.descriptor())
-            if (available) {
-                val bleMethods = WorkspaceBleContract.methodSchemas()
-                for (name in bleMethods.keys()) getJSONObject("methods").put(name, bleMethods.getJSONObject(name))
-            }
+            val installedMethods=WorkspaceCapabilityRegistry.methods(bindings)
+            for(name in installedMethods.keys())getJSONObject("methods").put(name,installedMethods.getJSONObject(name))
+
         }
         .put("authority", "core_bound_transport").put("storage_authorized", storage)
         .put("storage_contract", "Workspace-scoped foreground records only. query returns data_version and a next_offset; null ends pagination. prepare requires expected_data_version, mutations and a reusable request_key. Retry the same key with identical input after response loss; commit/inspect/cancel use the returned operation_id. Revisions fence old callers. Device access, when declared, uses the separate native BLE broker; there are no direct browser device, network, credential, or background APIs.")
@@ -36,10 +37,10 @@ object WorkspaceHostRegistry {
         } else WorkspaceJsonSchema.validate(schema, params)
         return true
     }
-    fun dispatch(principal: WorkspacePrincipal, method: String, params: JSONObject, data: WorkspaceApplicationData?, bluetooth: Boolean = false): JSONObject {
+    fun dispatch(principal: WorkspacePrincipal, method: String, params: JSONObject, data: WorkspaceApplicationData?, bluetooth: Boolean = false, capabilityBindings: Set<String> = if(bluetooth)setOf(WorkspaceBleContract.CAPABILITY) else emptySet()): JSONObject {
         val storage = data != null && principal.mode == WorkspaceInstanceMode.FOREGROUND
         require(validate(method, params, storage)) { "UNSUPPORTED_CAPABILITY" }
-        if (method == "host.describe" || method == "host.ready") return describe(principal, storage, bluetooth)
+        if (method == "host.describe" || method == "host.ready") return describe(principal, storage, bluetooth, capabilityBindings)
         val store = requireNotNull(data)
         return when (method) {
             "data.query" -> store.query(principal, params)
@@ -80,20 +81,54 @@ object WorkspaceHostRegistry {
           if(response.status!=='succeeded') { const error=Error(response.error?.summary||'Host request failed'); error.code=response.error?.code; error.receipt=response; throw error; }
           return response.result;
         }
-        async function bleCall(method,params={}) {
-          const submitted=await value('ble.'+method,params);
+        async function capabilityCall(method,params={}) {
+          const submitted=await value(method,params);
           if(!submitted.operation_id) return submitted;
           const deadline=Date.now()+50000;
           while(Date.now()<deadline) {
-            const receipt=await value('ble.operation',{operation_id:submitted.operation_id});
+            const receipt=await value(method.split('.')[0]+'.operation',{operation_id:submitted.operation_id});
             if(receipt.status==='succeeded') return receipt.result;
             if(receipt.status==='failed') { const error=Error(receipt.error?.summary||'Bluetooth operation failed'); error.code=receipt.error?.code; error.receipt=receipt; throw error; }
             await new Promise(resolve=>setTimeout(resolve,250));
           }
           const error=Error('Bluetooth result timeout; inspect before retrying writes'); error.code='BLE_TIMEOUT'; error.operation_id=submitted.operation_id; throw error;
         }
-        export const ble=Object.freeze({status:()=>value('ble.status'),scan:()=>bleCall('scan'),connect:device_id=>bleCall('connect',{device_id}),services:()=>value('ble.services'),read:characteristic_id=>bleCall('read',{characteristic_id}),write:(characteristic_id,hex)=>bleCall('write',{characteristic_id,hex}),subscribe:(characteristic_id,enabled=true)=>bleCall('subscribe',{characteristic_id,enabled}),events:()=>value('ble.events'),disconnect:()=>value('ble.disconnect'),revoke:()=>value('ble.revoke'),operation:operation_id=>value('ble.operation',{operation_id})});
-        export const host=Object.freeze({request,describe:()=>value('host.describe'),ready:()=>value('host.ready')});
+        const bleCall=(method,params={})=>capabilityCall('ble.'+method,params);
+        const channels=new Map(); let observers=0;
+        function observe(method,params,listener,options={}) {
+          if(!method.endsWith('.events') || typeof listener!=='function')throw Error('An event-stream method and listener are required');
+          if(observers>=8)throw Error('Subscription quota');strict(params);
+          const key=JSON.stringify([method,params]), interval=Math.max(250,Math.min(5000,Number(options.intervalMs)||500));
+          let channel=channels.get(key);
+          if(!channel) { channel={listeners:new Set(),timer:null,stopped:false};channels.set(key,channel); }
+          const item={listener,onError:typeof options.onError==='function'?options.onError:()=>{}};
+          channel.listeners.add(item);observers++;
+          const notifyError=(entry,error)=>{try{entry.onError(error)}catch(_){}};
+          if(channel.timer===null) {
+            const tick=async()=>{
+              if(channel.stopped)return;
+              try {
+                const result=await capabilityCall(method,params);
+                if(channel.stopped)return;
+                for(const entry of [...channel.listeners]) { try{entry.listener(result)}catch(error){notifyError(entry,error)} }
+              } catch(error) {
+                if(error.code==='BLE_BUSY' || error.code==='CAPABILITY_BUSY') { if(!channel.stopped)channel.timer=setTimeout(tick,interval);return; }
+                channel.stopped=true;channels.delete(key);
+                for(const entry of [...channel.listeners]) { observers--;notifyError(entry,error) }channel.listeners.clear();return;
+              }
+              if(!channel.stopped)channel.timer=setTimeout(tick,interval);
+            };channel.timer=setTimeout(tick,0);
+          }
+          let stopped=false;
+          return ()=>{if(stopped)return;stopped=true;if(channel.listeners.delete(item))observers--;if(channel.listeners.size===0){channel.stopped=true;clearTimeout(channel.timer);channels.delete(key);}};
+        }
+        async function watchBle(characteristic_id,listener,onError=()=>{}) {
+          await bleCall('subscribe',{characteristic_id,enabled:true});
+          const stop=observe('ble.events',{},batch=>{for(const event of batch.events||[])if(event.characteristic_id===characteristic_id)listener(event);if(batch.dropped)onError(Object.assign(Error('Notification samples dropped'),{code:'EVENTS_DROPPED',dropped:batch.dropped}));},{onError});
+          return async()=>{stop();await bleCall('subscribe',{characteristic_id,enabled:false});};
+        }
+        export const ble=Object.freeze({watch:watchBle,status:()=>value('ble.status'),scan:()=>bleCall('scan'),connect:device_id=>bleCall('connect',{device_id}),services:()=>bleCall('services'),read:characteristic_id=>bleCall('read',{characteristic_id}),write:(characteristic_id,hex)=>bleCall('write',{characteristic_id,hex}),subscribe:(characteristic_id,enabled=true)=>bleCall('subscribe',{characteristic_id,enabled}),events:()=>bleCall('events'),disconnect:()=>value('ble.disconnect'),revoke:()=>value('ble.revoke'),operation:operation_id=>value('ble.operation',{operation_id})});
+        export const host=Object.freeze({request,call:capabilityCall,observe,describe:()=>value('host.describe'),ready:()=>value('host.ready')});
         export const data=Object.freeze({query:params=>value('data.query',params),prepare:params=>value('data.prepare',params),commit:operation_id=>value('data.commit',{operation_id}),inspect:operation_id=>value('data.inspect',{operation_id}),cancel:operation_id=>value('data.cancel',{operation_id})});
     """.trimIndent()
 }

@@ -315,6 +315,63 @@ class WorkspaceDeviceTest {
         } finally { scenario.close();db.deleteComposableWorkspace(workspace.id) }
     }
     @androidx.compose.runtime.Composable private fun MaterialThemeForTest(content:@androidx.compose.runtime.Composable ()->Unit) { androidx.compose.material3.MaterialTheme(content=content) }
+    @Test fun candidateUiSimulationFindsMissingNotificationsAndVerifiesManagedWatcher() = runBlocking {
+        val db=(context.applicationContext as AtlasApplication).database
+        val session=db.createSession("UI simulation","test");val turn=db.createTurn(session.id,"user")
+        val workspace=db.createComposableWorkspace("Simulation", "",realmId=session.workspaceId)
+        val bundle=WorkspaceApplicationContract.example()
+        bundle.getJSONObject("manifest").getJSONArray("capabilities").put(WorkspaceBleContract.descriptor().getJSONObject("manifest_example"))
+        val source=InstrumentationRegistry.getInstrumentation().context.assets.open("ble-ui-simulation.js").bufferedReader().use{it.readText()}
+        bundle.getJSONObject("files").put("ui/index.html","<!doctype html><html><body><button id=scan>Scan</button><button id=connect>Connect</button><button id=services>Services</button><button id=read>Read</button><input id=hex><button id=write>Write</button><button id=subscribe>Subscribe</button><p id=message></p><script type=module src=./app.js></script></body></html>")
+        fun steps(notification:String)=JSONArray().apply {
+            fun add(action:String,selector:String,value:String=""){put(JSONObject().put("action",action).put("selector",selector).put("value",value))}
+            for((id,result) in listOf("scan" to "scanned","connect" to "connected","services" to "services","read" to "read 2a")) {add("click","#$id");add("wait_text","#message",result)}
+            add("input","#hex","01");add("click","#write");add("wait_text","#message","written");add("click","#subscribe");add("wait_text","#message",notification)
+        }
+        try {
+            val broken=source.replace("await ble.watch(char.characteristic_id,event=>{${'$'}('#message').textContent='notification '+event.hex},error=>{${'$'}('#message').textContent=error.code})","await ble.subscribe(char.characteristic_id,true);${'$'}('#message').textContent='subscribed'")
+            assertNotEquals(source,broken)
+            bundle.getJSONObject("files").put("ui/app.js",broken)
+            val repository=WorkspacePackageRepository(db)
+            val first=repository.stage(workspace.id,workspace.realmId,workspace.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,turn.id)
+            val bad=WorkspaceUiSimulation(context,db).test(workspace.id,workspace.realmId,first.getString("candidate_id"),steps("subscribed"))
+            assertFalse(bad.toString(),bad.getBoolean("passed"));assertTrue(bad.getJSONArray("missing_operations").toString().contains("events"))
+            bundle.getJSONObject("files").put("ui/app.js",source)
+            val second=repository.stage(workspace.id,workspace.realmId,workspace.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,turn.id)
+            val good=WorkspaceUiSimulation(context,db).test(workspace.id,workspace.realmId,second.getString("candidate_id"),steps("notification 2b"))
+            assertTrue(good.toString(),good.getBoolean("passed"));assertTrue(good.getString("evidence_scope").contains("simulated"))
+            assertEquals(0,db.listWorkspaceRecords(workspace.id,"notes").size)
+        } finally {db.deleteComposableWorkspace(workspace.id)}
+    }
+    @Test fun nativeGrantIsReusedAfterFailedScanAndPanelRecomposition() = runBlocking {
+        val db=(context.applicationContext as AtlasApplication).database
+        val bundle=WorkspaceApplicationContract.example()
+        bundle.getJSONObject("manifest").getJSONArray("capabilities").put(WorkspaceBleContract.descriptor().getJSONObject("manifest_example"))
+        bundle.getJSONObject("files").put("ui/app.js","""import {host,ble} from '/atlas/host.js';globalThis.tryScan=async()=>{try{await ble.scan();document.body.dataset.result='scanned'}catch(e){document.body.dataset.result=e.code}};await host.ready();""")
+        val workspace=db.createComposableWorkspace("Grant reuse","",bundle.toString());val revision=db.loadLiveWorkspaceRevision(workspace.id)!!
+        WorkspaceApplicationData(db).setEnabled(workspace.id,revision.id,true)
+        val radio=WorkspaceUiSimulation.Radio().apply{failingScans=1}
+        val scenario=ActivityScenario.launch(MainActivity::class.java);var web:android.webkit.WebView?=null
+        suspend fun evaluate(script:String):String=withContext(Dispatchers.Main){suspendCancellableCoroutine{c->web!!.evaluateJavascript(script){if(c.isActive)c.resume(it)}}}
+        try {
+            scenario.onActivity{activity->activity.setContent{MaterialThemeForTest{WorkspaceApplicationPanel(workspace,revision,db,Modifier.fillMaxSize(),deviceFactory={_,requests->listOf(WorkspaceBleCapability(requests.getValue(WorkspaceBleContract.CAPABILITY),radio))})}}}
+            withTimeout(15_000){while(com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(workspace.id,revision.id)?.optJSONObject("runtime")?.optBoolean("ready")!=true)delay(100)}
+            scenario.onActivity{activity->fun find(v:android.view.View):android.webkit.WebView?{if(v is android.webkit.WebView)return v;if(v is android.view.ViewGroup)for(i in 0 until v.childCount)find(v.getChildAt(i))?.let{return it};return null};web=find(activity.findViewById(android.R.id.content))}
+            evaluate("tryScan();void 0")
+            withTimeout(8_000){
+                var clicked=false
+                fun visit(node:android.view.accessibility.AccessibilityNodeInfo?,depth:Int=0){if(node==null||depth>24||clicked)return;if(node.text?.toString()=="Allow"){var target:android.view.accessibility.AccessibilityNodeInfo?=node;repeat(4){if(!clicked){if(target?.isClickable==true)clicked=target!!.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)else target=target?.parent}}};for(i in 0 until node.childCount)visit(node.getChild(i),depth+1)}
+                while(!clicked){visit(InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow);if(!clicked)delay(100)}
+            }
+            withTimeout(5_000){while(evaluate("document.body.dataset.result")!="\"BLE_FAILED\"")delay(100)}
+            delay(1_000) // Cross periodic native status recomposition before requesting another scan.
+            repeat(2){evaluate("document.body.dataset.result='';tryScan();void 0");withTimeout(5_000){while(evaluate("document.body.dataset.result")!="\"scanned\"")delay(100)}}
+            withTimeout(5_000){while(WorkspaceDeviceAudit(db).snapshot(workspace.id).getJSONArray("events").let{events->(0 until events.length()).count{events.getJSONObject(it).getString("kind")=="grant_reused"}}<2)delay(100)}
+            val events=WorkspaceDeviceAudit(db).snapshot(workspace.id).getJSONArray("events")
+            assertEquals(1,(0 until events.length()).count{events.getJSONObject(it).getString("kind")=="grant_requested"})
+            assertEquals(1,(0 until events.length()).map{events.getJSONObject(it).getString("instance_id")}.toSet().size)
+        }finally{scenario.close();db.deleteComposableWorkspace(workspace.id)}
+    }
     @Test fun realStorageBridgeRejectsForgedScopeAndPersistsExactlyOneRecord() = runBlocking {
         val db = (context.applicationContext as AtlasApplication).database
         val bundle = WorkspaceApplicationContract.example()

@@ -20,7 +20,7 @@ import org.json.JSONObject
 object WorkspacePackageTools {
     fun create(database: AtlasDatabase, context: android.content.Context? = null): List<AtlasToolAdapter> =
         listOf(Contract(context != null && android.os.Build.VERSION.SDK_INT >= 29), Inspect(database), Stage(database), Validate(database)) +
-            if (context != null && android.os.Build.VERSION.SDK_INT >= 29) listOf(Test(database, WorkspaceWorkerSupervisor(context))) else emptyList()
+            if (context != null && android.os.Build.VERSION.SDK_INT >= 29) listOf(Test(database, WorkspaceWorkerSupervisor(context)), UiTest(database, context)) else emptyList()
     private const val INSPECT_SCHEMA = """{"type":"object","properties":{"workspace_id":{"type":"string"},"candidate_id":{"type":"string"}},"required":["workspace_id"],"additionalProperties":false}"""
     private val CANDIDATE_SCHEMA = JSONObject(INSPECT_SCHEMA).put("required", JSONArray(listOf("workspace_id", "candidate_id"))).toString()
     private const val STAGE_SCHEMA = """{"type":"object","properties":{"workspace_id":{"type":"string"},"base_revision_id":{"type":"string"},"navigation_sequence":{"type":"integer"},"parent_candidate_id":{"type":"string"},"manifest":{"type":"object"},"files":{"type":"object"}},"required":["workspace_id","base_revision_id","navigation_sequence","files"],"additionalProperties":false}"""
@@ -110,6 +110,22 @@ object WorkspacePackageTools {
             lease?.let(execution::check)
             return ToolExecutionResult(WorkspaceCandidateChecks(database, worker::run).test(args.getString("workspace_id"), current.workspaceId, args.getString("candidate_id")) { receipt ->
                 execution.localOperation(call, lease) { ToolExecutionResult(receipt.toString()) }
+            }.toString())
+        }
+    }
+
+    private class UiTest(database: AtlasDatabase, private val context: android.content.Context) : Adapter(database), AtlasReceiptBackedAdapter {
+        override val supportsLocalMutation = true
+        override val definition = ToolDefinition("workspace_package_ui_test", "Exercise candidate DOM controls in an isolated simulation, without live records or hardware. Supply 1..32 steps {action:click|input|assert_text|wait_text,selector:CSS selector,value:string}; use empty value for click. wait_text polls up to 3 seconds. All declared BLE operations must be exercised, and subscribe requires draining events. Fixture: one device sim-device named Simulated bench device; one readable/writable/notifiable characteristic sim-char, read hex 2a, notification hex 2b. UI simulation is required before activating BLE candidates. It verifies neither painted pixels nor physical effects.",
+            """{"type":"object","properties":{"workspace_id":{"type":"string"},"candidate_id":{"type":"string"},"steps":{"type":"array","maxItems":32,"items":{"type":"object","properties":{"action":{"type":"string"},"selector":{"type":"string"},"value":{"type":"string"}},"required":["action","selector","value"],"additionalProperties":false}}},"required":["workspace_id","candidate_id","steps"],"additionalProperties":false}""", ToolRisk.SESSION_WRITE, maxCallsPerTurn=2)
+        override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
+            val args=JSONObject(call.argumentsJson)
+            WorkspaceApplicationContract.exactKeys(args,setOf("workspace_id","candidate_id","steps"),setOf("workspace_id","candidate_id","steps"))
+            val current=session(call);require(available(current,args.getString("workspace_id"))) { "TARGET_CONFLICT" }
+            val execution=ExecutionTaskStore(database);execution.receipt(call)?.let { return ToolExecutionResult(it) }
+            val lease=execution.forTurn(call.turnId)?.let { ExecutionLease(it.id,requireNotNull(it.owner),it.generation) };lease?.let(execution::check)
+            return ToolExecutionResult(WorkspaceUiSimulation(context,database).test(args.getString("workspace_id"),current.workspaceId,args.getString("candidate_id"),args.getJSONArray("steps")) { receipt ->
+                execution.localOperation(call,lease) { ToolExecutionResult(receipt.toString()) }
             }.toString())
         }
     }

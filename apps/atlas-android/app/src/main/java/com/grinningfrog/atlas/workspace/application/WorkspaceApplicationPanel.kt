@@ -17,7 +17,7 @@ import java.util.UUID
 import org.json.JSONObject
 
 @Composable
-internal fun WorkspaceApplicationPanel(workspace: ComposableWorkspace, revision: WorkspaceRevision, database: AtlasDatabase, modifier: Modifier = Modifier) {
+internal fun WorkspaceApplicationPanel(workspace: ComposableWorkspace, revision: WorkspaceRevision, database: AtlasDatabase, modifier: Modifier = Modifier, deviceFactory: (android.content.Context,Map<String,Set<String>>)->List<WorkspaceCapabilityAdapter> = WorkspaceCapabilityRegistry::create) {
     val context = LocalContext.current
     val data = remember(database) { WorkspaceApplicationData(database) }
     var refresh by remember(workspace.id, revision.id) { mutableIntStateOf(0) }
@@ -40,7 +40,7 @@ internal fun WorkspaceApplicationPanel(workspace: ComposableWorkspace, revision:
         }
         val principal = remember { WorkspacePrincipal(workspace.realmId, workspace.id, revision.id, UUID.randomUUID().toString(), epoch, WorkspaceInstanceMode.FOREGROUND) }
         val bundle = remember(revision.id) { JSONObject(revision.definitionJson) }
-        WorkspaceDeviceHost(principal, bundle, current = { runCatching { data.fence(principal); true }.getOrDefault(false) }, modifier = modifier) { devices, viewportModifier ->
+        WorkspaceDeviceHost(principal, bundle, current = { runCatching { data.fence(principal); true }.getOrDefault(false) }, modifier = modifier, database = database, adapterFactory = deviceFactory) { devices, viewportModifier ->
             val presentation = remember {
                 runCatching {
                     WorkspaceWebPresentation(context, JSONObject(revision.definitionJson), principal,

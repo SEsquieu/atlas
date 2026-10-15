@@ -36,6 +36,18 @@ class ExecutionTasksTest {
     private fun call(task: ExecutionTask, name: String = "local", args: String = "{}") = AtlasToolCall(UUID.randomUUID().toString(),session.id,store.currentTurn(task.id),name,args,ToolCallStatus.PROPOSED,ToolRisk.SESSION_WRITE,false,UUID.randomUUID().toString(),createdAtMs=clock,updatedAtMs=clock)
     private fun executor() = DurableTaskExecutor(store, {clock}, { clock += it })
 
+    @Test fun lateInferenceUsageIsReconciledOnceWithoutBorrowingANewLease() {
+        val t=task();val lease=store.claim(t.id,"owner")!!;val turn=store.currentTurn(t.id)
+        assertTrue(store.reserveInference(lease,100,85,"late-request"))
+        store.finish(lease,SliceOutcome.WAITING_PROVIDER,1)
+        val before=store.get(t.id)!!
+        store.reconcileLateInference(turn,"late-request",400,3308)
+        store.reconcileLateInference(turn,"late-request",400,3308)
+        store.reconcileLateInference(turn,"unknown-request",999,999)
+        val after=store.get(t.id)!!
+        assertEquals(before.state,after.state);assertEquals(before.generation,after.generation);assertEquals(before.owner,after.owner)
+        assertEquals(400L,after.usage.getLong("input_tokens"));assertEquals(3308L,after.usage.getLong("output_tokens"))
+    }
     @Test fun thousandSlicesContinueWithOneTaskAndNoAdditionalUserMessage() = runTest {
         val t=task();var slices=0
         val result=executor().run(t.id) { lease, turn ->

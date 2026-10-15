@@ -15,9 +15,10 @@ class WorkspaceDeviceBrokerTest {
         var scans = 0; var connections = 0; var writes = 0; var closes = 0
         var delayRead = false
         var uncertainWrite = false
+        var failingScans = 0
         override fun permitted() = permission
         override fun status() = JSONObject().put("connected", connections > closes)
-        override suspend fun scan(): JSONArray { scans++; return JSONArray().put(JSONObject().put("device_id", "seen")) }
+        override suspend fun scan(): JSONArray { scans++; if(failingScans-->0)error("BLE_FAILED");return JSONArray().put(JSONObject().put("device_id", "seen")) }
         override fun deviceLabel(id: String): String { require(id == "seen") { "DEVICE_UNAVAILABLE" }; return "Bench" }
         override suspend fun connect(id: String): JSONObject { connections++; return JSONObject().put("connected", true) }
         override fun services() = JSONArray()
@@ -32,6 +33,32 @@ class WorkspaceDeviceBrokerTest {
     private suspend fun TestScope.connected(broker: WorkspaceDeviceBroker) {
         val scan = submit(broker, "ble.scan"); runCurrent(); assertEquals("succeeded", result(broker, scan).getString("status"))
         val connect = submit(broker, "ble.connect", JSONObject().put("device_id", "seen")); runCurrent(); assertEquals("succeeded", result(broker, connect).getString("status"))
+    }
+    @Test fun failedScansAndDisconnectRetainForegroundConsentUntilExplicitRevoke() = runTest {
+        val radio=Radio();radio.failingScans=2;var prompts=0;var osPrompts=0;val audit=mutableListOf<JSONObject>()
+        val broker=WorkspaceDeviceBroker(principal,WorkspaceBleContract.operations,{true},radio,{prompts++;true},{osPrompts++;true},this,audit={audit+=it})
+        repeat(3) { val id=submit(broker,"ble.scan");runCurrent();assertEquals(if(it<2)"failed" else "succeeded",result(broker,id).getString("status")) }
+        assertEquals(1,prompts);assertEquals(0,osPrompts);assertTrue(broker.status().getBoolean("scan_approved"))
+        broker.dispatch("ble.disconnect",JSONObject());submit(broker,"ble.scan");runCurrent();assertEquals(1,prompts)
+        assertTrue(audit.any { it.getString("kind")=="grant_reused" })
+        assertTrue(audit.any { it.getString("kind")=="handles_released" && it.getJSONObject("details").optBoolean("foreground_consent_retained") })
+        broker.revoke();submit(broker,"ble.scan");runCurrent();assertEquals(2,prompts)
+    }
+    @Test fun genericCapabilityUsesTheSameConsentReceiptsAndLifecycle() = runTest {
+        var readings=0;var prompts=0;var releases=0
+        val sensor=object:WorkspaceCapabilityAdapter {
+            override val name="motion.sensor";override val namespace="motion";override val requested=setOf("read");override val permissions=emptyArray<String>()
+            override fun validate(method:String,params:JSONObject) { require(method in setOf("motion.read","motion.operation","motion.status"));WorkspaceApplicationContract.exactKeys(params,if(method=="motion.operation")setOf("operation_id") else emptySet()) }
+            override fun permitted()=true
+            override fun status()=JSONObject().put("installed",true)
+            override fun check(operation:String,access:WorkspaceCapabilityAccess) { require(operation in requested) }
+            override suspend fun execute(operation:String,params:JSONObject,access:WorkspaceCapabilityAccess):JSONObject { access.authorize("sensor","Allow motion readings?");readings++;return JSONObject().put("x",1) }
+            override fun release() { releases++ }
+        }
+        val broker=WorkspaceDeviceBroker(principal,listOf(sensor),{true},{prompts++;true},{true},this)
+        repeat(2) { val id=broker.dispatch("motion.read",JSONObject()).getString("operation_id");runCurrent();assertEquals(1,broker.dispatch("motion.operation",JSONObject().put("operation_id",id)).getJSONObject("result").getInt("x")) }
+        assertEquals(1,prompts);assertEquals(2,readings);assertTrue(broker.status().getJSONObject("capabilities").has("motion.sensor"))
+        broker.close();assertEquals(1,releases)
     }
     @Test fun nativeDenialNeverTouchesRadioAndBlocksPromptSpam() = runTest {
         val radio = Radio(); var prompts = 0; var osPrompts = 0

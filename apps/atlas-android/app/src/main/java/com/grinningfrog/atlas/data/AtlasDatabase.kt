@@ -69,7 +69,7 @@ data class ChatGptUsageSummary(
     val lastHostedSearchStatus: String? = null,
 )
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 17) {
+class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 18) {
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         db.setForeignKeyConstraintsEnabled(true)
@@ -386,9 +386,11 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         createArchiveTables(db)
         com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.createTables(db)
         com.grinningfrog.atlas.runtime.ExecutionTaskStore.createTables(db)
+        com.grinningfrog.atlas.workspace.application.WorkspaceDeviceAudit.createTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if(oldVersion < 18) com.grinningfrog.atlas.workspace.application.WorkspaceDeviceAudit.createTables(db)
         if (oldVersion < 15) com.grinningfrog.atlas.workspace.application.WorkspacePackageRepository.createTables(db)
         if (oldVersion < 14) com.grinningfrog.atlas.runtime.ExecutionTaskStore.createTables(db)
         if (oldVersion < 13) createWorkspaceUndoTable(db)
@@ -1169,6 +1171,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
                 put(JSONObject().apply { put("id", if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(JSONObject(revision.definitionJson))) record.id.removePrefix("${workspace.id}:") else record.id); put("collection", record.collection); put("data", JSONObject(record.dataJson)); put("created_at_ms", record.createdAtMs); put("updated_at_ms", record.updatedAtMs) })
             } })
             put("completeness", JSONObject().put("records", "all").put("revisionHistory", false).put("grants", false))
+            put("device_audit", com.grinningfrog.atlas.workspace.application.WorkspaceDeviceAudit(this@AtlasDatabase).snapshot(workspaceId))
             put("notice", "Capability grants and credentials are intentionally excluded.")
             require(toString().toByteArray().size <= ArchiveCodec.MAX_BYTES) { "Workspace exceeds the 32 MiB archive limit" }
         }
@@ -1180,7 +1183,7 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
         writableDatabase.transaction {
             execSQL("UPDATE sessions SET active_composable_workspace_id=NULL, workspace_navigation_sequence=workspace_navigation_sequence+1 WHERE active_composable_workspace_id=?", arrayOf(workspaceId))
             delete("archive_imports", "kind='workspace' AND destination_id=?", arrayOf(workspaceId))
-            for (table in listOf("workspace_application_activations", "workspace_application_operations", "workspace_application_checks", "workspace_application_lifecycle")) delete(table, "workspace_id=?", arrayOf(workspaceId))
+            for (table in listOf("workspace_device_audit", "workspace_application_activations", "workspace_application_operations", "workspace_application_checks", "workspace_application_lifecycle")) delete(table, "workspace_id=?", arrayOf(workspaceId))
             delete("workspace_records", "composable_workspace_id = ?", arrayOf(workspaceId))
             delete("workspace_data_versions", "workspace_id=?", arrayOf(workspaceId))
             delete("workspace_package_candidates", "workspace_id = ?", arrayOf(workspaceId))

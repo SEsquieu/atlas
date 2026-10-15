@@ -177,7 +177,7 @@ class WorkspaceApplicationData(private val database: AtlasDatabase) {
         require(workspace.liveRevisionId == revisionId && workspace.status == WorkspaceStatus.ACTIVE) { "REVISION_CONFLICT" }
         val bundle = JSONObject(database.loadLiveWorkspaceRevision(workspaceId)!!.definitionJson)
         require(isApplication(bundle) && WorkspaceApplicationContract.validate(bundle).isEmpty()) { "VALIDATION_FAILED" }
-        WorkspaceBleContract.requested(bundle.getJSONObject("manifest"))
+        WorkspaceCapabilityRegistry.requested(bundle.getJSONObject("manifest"))
         execSQL("UPDATE workspace_application_lifecycle SET epoch=epoch+1,enabled=? WHERE workspace_id=?", arrayOf(if (enabled) 1 else 0, workspaceId))
     }
     private fun integer(value: JSONObject, key: String, minimum: Long = 0, maximum: Long = 9_007_199_254_740_991L): Long {

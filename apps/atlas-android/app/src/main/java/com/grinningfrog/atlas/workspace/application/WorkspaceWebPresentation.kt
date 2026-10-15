@@ -140,13 +140,13 @@ class WorkspaceWebPresentation(
                 val request = WorkspaceHostProtocol.request(raw); requestId = request.getString("request_id")
                 val method = request.getString("method")
                 val params = request.getJSONObject("params")
-                val result = if (method.startsWith("ble.")) {
+                val result = if (devices?.handles(method) == true || method.startsWith("ble.")) {
                     require(!disposed && current()) { "REVISION_CONFLICT" }
-                    require(principal.mode == WorkspaceInstanceMode.FOREGROUND) { "EXECUTION_MODE_DENIED" }
+                    require(principal.mode == WorkspaceInstanceMode.FOREGROUND || principal.mode == WorkspaceInstanceMode.TEST && devices?.isSimulation == true) { "EXECUTION_MODE_DENIED" }
                     requireNotNull(devices) { "UNSUPPORTED_CAPABILITY" }.dispatch(method, params)
                 } else withContext(Dispatchers.IO) {
                     require(!disposed && current()) { "REVISION_CONFLICT" }
-                    WorkspaceHostRegistry.dispatch(principal, method, params, data, bluetooth = devices != null)
+                    WorkspaceHostRegistry.dispatch(principal, method, params, data, capabilityBindings = devices?.capabilityNames.orEmpty()).also { if(devices?.isSimulation==true && method in setOf("host.describe","host.ready")) it.put("ble_available",true).put("simulation",true).put("storage_authorized",false) }
                 }
                 if (method == "host.ready" && !disposed && current()) { ready = true; onReady() }
                 val response = WorkspaceHostProtocol.response(requestId, "succeeded", operation, result)

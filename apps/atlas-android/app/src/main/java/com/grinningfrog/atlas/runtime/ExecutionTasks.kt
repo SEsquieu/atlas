@@ -125,17 +125,32 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         return listOf("input_tokens","output_tokens","model_steps","tool_calls","active_ms").all { u.optLong(it)<b.getLong(it) }
     }
     /** Reserve before dispatch; missing provider usage is conservatively estimated, never charged as zero. */
-    fun reserveInference(lease: ExecutionLease, inputEstimate: Long, outputReserve: Long = 2048): Boolean = atomic {
+    fun reserveInference(lease: ExecutionLease, inputEstimate: Long, outputReserve: Long = 2048, requestId: String = UUID.randomUUID().toString()): Boolean = atomic {
         check(lease);val t=get(lease.taskId)!!;val b=t.document.getJSONObject("budget");val u=t.usage
         if(!available(t.id) || u.optLong("input_tokens")+inputEstimate>b.getLong("input_tokens") || u.optLong("output_tokens")+outputReserve>b.getLong("output_tokens")) return@atomic false
+        val reservations=t.document.optJSONObject("inference_reservations") ?: JSONObject().also { t.document.put("inference_reservations",it) }
+        require(!reservations.has(requestId))
+        reservations.put(requestId,JSONObject().put("input",inputEstimate).put("output",outputReserve))
         u.put("input_tokens",u.optLong("input_tokens")+inputEstimate).put("output_tokens",u.optLong("output_tokens")+outputReserve).put("model_steps",u.optLong("model_steps")+1)
-        t.document.put("reservation",JSONObject().put("input",inputEstimate).put("output",outputReserve));save(t.copy(leaseUntil=now()+LEASE_MS));true
+        t.document.put("reservation",JSONObject().put("input",inputEstimate).put("output",outputReserve).put("request_id",requestId));save(t.copy(leaseUntil=now()+LEASE_MS));true
     }
     fun reconcileInference(lease: ExecutionLease, input: Long?, output: Long?) = atomic {
-        check(lease);val t=get(lease.taskId)!!;val r=t.document.optJSONObject("reservation") ?: return@atomic
-        t.usage.put("input_tokens",maxOf(0,t.usage.optLong("input_tokens")-r.optLong("input")+(input ?: r.optLong("input"))))
-            .put("output_tokens",maxOf(0,t.usage.optLong("output_tokens")-r.optLong("output")+(output ?: r.optLong("output"))))
-        t.document.remove("reservation");save(t.copy(leaseUntil=now()+LEASE_MS))
+        check(lease);val task=get(lease.taskId)!!;val reservation=task.document.optJSONObject("reservation") ?: return@atomic
+        reconcileUsage(task,reservation.optString("request_id"),reservation,input,output)
+    }
+    /** Accounting only: a diagnostic late response never obtains a lease or executes its proposed tools. */
+    fun reconcileLateInference(turnId: String, requestId: String, input: Long?, output: Long?) = atomic {
+        val task=forTurn(turnId) ?: return@atomic
+        val reservation=task.document.optJSONObject("inference_reservations")?.optJSONObject(requestId) ?: return@atomic
+        reconcileUsage(task,requestId,reservation,input,output)
+        event(task,"execution.late_usage_reconciled",JSONObject().put("request_id",requestId).put("turn_id",turnId))
+    }
+    private fun reconcileUsage(task: ExecutionTask, requestId: String, reservation: JSONObject, input: Long?, output: Long?) {
+        task.usage.put("input_tokens",maxOf(0,task.usage.optLong("input_tokens")-reservation.optLong("input")+(input ?: reservation.optLong("input"))))
+            .put("output_tokens",maxOf(0,task.usage.optLong("output_tokens")-reservation.optLong("output")+(output ?: reservation.optLong("output"))))
+        task.document.optJSONObject("inference_reservations")?.remove(requestId)
+        if(task.document.optJSONObject("reservation")?.optString("request_id")==requestId)task.document.remove("reservation")
+        save(task)
     }
     /** Truncation yields for continuation, but repeated incomplete output is a diagnosable wait. */
     fun observeResponse(lease: ExecutionLease, finishReason: String?): Boolean = atomic {
@@ -190,7 +205,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
 
     /** Only discarded, side-effect-free candidate attempts can be superseded. Unknown outcomes never are. */
     private fun supersedingActivation(call: AtlasToolCall, all: List<AtlasToolCall>): AtlasToolCall? {
-        if (call.name !in setOf("workspace_package_stage", "workspace_package_test", "workspace_package_validate") ||
+        if (call.name !in setOf("workspace_package_stage", "workspace_package_test", "workspace_package_ui_test", "workspace_package_validate") ||
             call.status !in setOf(ToolCallStatus.FAILED, ToolCallStatus.REJECTED, ToolCallStatus.COMPLETED)) return null
         val args = runCatching { JSONObject(call.argumentsJson) }.getOrNull() ?: return null
         val workspace = args.optString("workspace_id").takeIf(String::isNotBlank) ?: return null

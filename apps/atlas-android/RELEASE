@@ -1,2 +1,2 @@
-0.1.0-alpha.21
-Permissioned foreground Bluetooth LE workspace bridge and native revocation controls.
+0.1.0-alpha.22
+Reusable device consent, shared capability runtime, exported audit history and sandboxed UI behavior checks.

@@ -50,7 +50,8 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
                 arrayOf(checkId, workspaceId, candidateId)).use { row ->
                 require(row.moveToFirst() && row.getString(0) == hash && row.getString(1) == base && row.getLong(2) == version) { "CHECK_REQUIRED" }
             }
-            WorkspaceBleContract.requested(bundle.getJSONObject("manifest")) // validates supported declarations; grants occur only in the foreground native UI
+            val capabilities = WorkspaceCapabilityRegistry.requested(bundle.getJSONObject("manifest"))
+            if(capabilities.isNotEmpty()) database.readableDatabase.rawQuery("SELECT 1 FROM workspace_application_checks WHERE workspace_id=? AND candidate_id=? AND content_hash=? AND base_revision_id=? AND data_version=? AND kind='ui_simulation' AND passed=1",arrayOf(workspaceId,candidateId,hash,base,version.toString())).use { require(it.moveToFirst()) { "UI_SIMULATION_REQUIRED: run workspace_package_ui_test covering declared controls before activation" } }
             val old = JSONObject(database.loadLiveWorkspaceRevision(workspaceId)!!.definitionJson)
             if (WorkspaceApplicationData.isApplication(old)) {
                 require(old.getJSONObject("manifest").getInt("data_schema_version") == bundle.getJSONObject("manifest").getInt("data_schema_version")) { "MIGRATION_REQUIRED" }

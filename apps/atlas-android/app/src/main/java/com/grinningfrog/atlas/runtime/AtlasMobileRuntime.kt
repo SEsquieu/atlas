@@ -585,7 +585,7 @@ class AtlasMobileRuntime(
                 put("memoryCount", memories.size); put("summaryThrough", summary?.throughMessageSequence); put("toolsAvailable", request.tools.size)
             })
             val estimatedInput = (request.systemPrompt.length + request.messages.sumOf { it.content.length } + request.tools.sumOf { it.parametersJson.length } + 3L) / 4 + if (request.image != null) 4096L else 0L
-            if (!executionTasks.reserveInference(lease, estimatedInput.coerceAtLeast(1), request.responseContract?.maxOutputTokens?.toLong() ?: 2048L)) { executionTasks.control(lease.taskId, ExecutionState.WAITING, "task_allowance"); break }
+            if (!executionTasks.reserveInference(lease, estimatedInput.coerceAtLeast(1), maxOf(2048L, request.responseContract?.maxOutputTokens?.toLong() ?: 2048L), request.requestId)) { executionTasks.control(lease.taskId, ExecutionState.WAITING, "task_allowance"); break }
             database.updateTurn(turnId, TurnStatus.WAITING_FOR_MODEL, stepCount = step)
             publish(phase = RuntimePhase.THINKING)
             database.appendEvent(session.id, "provider.requested", JSONObject().put("turnId", turnId).put("step", step).put("requestId", request.requestId)
@@ -830,6 +830,7 @@ class AtlasMobileRuntime(
                 if (softTimedOut.get()) {
                     database.refreshMessageDelivery(messageId, DeliveryStatus.TEXT_ONLY)
                     database.updateTurn(turnId, TurnStatus.COMPLETED_LATE, stepCount = request.step)
+                    executionTasks.reconcileLateInference(turnId,request.requestId,response.promptTokens?.toLong(),response.completionTokens?.toLong())
                     database.appendEvent(session.id, "provider.completed_late", lateResultEvent(turnId, messageId, request, response))
                     publish(error = "Response timed out at ${MODEL_SOFT_TIMEOUT_MS / 1_000}s and completed later. The diagnostic result is available below.", phase = RuntimePhase.READY)
                 } else {
