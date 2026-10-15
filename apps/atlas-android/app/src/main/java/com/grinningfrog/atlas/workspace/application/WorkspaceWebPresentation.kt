@@ -33,7 +33,7 @@ class WorkspaceWebPresentation(
     private val resources = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
     private val provider = WebViewCompat.getCurrentWebViewPackage(context)?.let { "${it.packageName}/${it.versionName}" } ?: "unknown"
     @Volatile private var ready = false
-    fun diagnostics(): JSONObject = JSONObject().put("webview_provider", provider).put("android_api", android.os.Build.VERSION.SDK_INT).put("ready", ready).put("disposed", disposed).put("resources", org.json.JSONArray(synchronized(resources) { resources.map { JSONObject(it.toString()) } })).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } }))
+    fun diagnostics(): JSONObject = JSONObject().put("webview_provider", provider).put("android_api", android.os.Build.VERSION.SDK_INT).put("native_canvas_fallback", "#010302").put("ready", ready).put("disposed", disposed).put("resources", org.json.JSONArray(synchronized(resources) { resources.map { JSONObject(it.toString()) } })).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } }))
     val view: WebView
 
     init {
@@ -51,6 +51,9 @@ class WorkspaceWebPresentation(
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun configure() {
+        // Match the native Atlas surface while the document canvas is transparent or loading.
+        // Authored opaque backgrounds still paint over this fallback.
+        view.setBackgroundColor(android.graphics.Color.rgb(1, 3, 2))
         view.settings.apply {
             javaScriptEnabled = true
             allowFileAccess = false

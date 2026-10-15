@@ -1,2 +1,2 @@
-0.1.0-alpha.19
-Workspace deletion, runtime stall/crash evidence, and package diagnostics fixes.
+0.1.0-alpha.20
+Package task outcomes, temporal diagnostics and rendered layout evidence.

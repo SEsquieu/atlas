@@ -60,7 +60,7 @@ internal class WorkspaceCandidateChecks(
         val result = JSONObject().put("check_id", id).put("candidate_id", candidateId).put("content_hash", stored.getString("content_hash"))
             .put("kind", "pure_fixtures").put("passed", passed).put("tests_run", reports.length()).put("reports", reports)
             .put("untested_exports", JSONArray((exports - covered).sorted())).put("base_revision_id", base).put("data_version", version)
-            .put("activation_authorized", false).put("evidence_scope", "Declared pure fixtures; not UI, permissions, migrations, or independent application correctness")
+            .put("activation_performed", false).put("next_step", if (passed) "Call workspace_package_activate with this candidate_id and check_id; Core will check startup, task target and data freshness." else "Repair the candidate and rerun tests before activation.").put("evidence_scope", "Declared pure fixtures; not UI, permissions, migrations, or independent application correctness")
         val executionContext = currentCoroutineContext()
         executionContext.ensureActive()
         data.atomic {

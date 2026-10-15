@@ -34,7 +34,7 @@ class WorkspaceDeviceTest {
             val screenshot = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
             try {
                 val color = screenshot.getPixel(location[0] + 5, location[1] + 10)
-                assertTrue("Background pixel="+Integer.toHexString(color)+" computed="+styles, android.graphics.Color.red(color)<80 && android.graphics.Color.green(color)<80 && android.graphics.Color.blue(color)<80)
+                assertTrue("Background pixel="+Integer.toHexString(color)+" computed="+styles, android.graphics.Color.red(color)<80 && android.graphics.Color.green(color) in 9..79 && android.graphics.Color.blue(color)<80)
             } finally { screenshot.recycle() }
         }
     }
@@ -62,9 +62,27 @@ class WorkspaceDeviceTest {
             val screenshot=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
             try {
                 val color=screenshot.getPixel(coordinates[0]+5,coordinates[1]+10)
-                assertTrue("Compose background="+Integer.toHexString(color)+" layout="+layout,android.graphics.Color.red(color)<80 && android.graphics.Color.green(color)<80 && android.graphics.Color.blue(color)<80)
+                assertTrue("Compose background="+Integer.toHexString(color)+" layout="+layout,android.graphics.Color.red(color)<80 && android.graphics.Color.green(color) in 9..79 && android.graphics.Color.blue(color)<80)
             } finally { screenshot.recycle() }
         } finally { scenario.close();db.deleteComposableWorkspace(w.id) }
+    }
+    @Test fun nativeCanvasFallbackDoesNotOverrideAuthoredLightTheme() = runBlocking {
+        val bundle=WorkspaceApplicationContract.example()
+        bundle.getJSONObject("files").put("ui/style.css","body{margin:0;background:transparent}main{padding:32px}")
+        val principal=WorkspacePrincipal("test","canvas","canvas",UUID.randomUUID().toString(),1,WorkspaceInstanceMode.PREVIEW)
+        surface(bundle,principal) { presentation ->
+            delay(300)
+            val location=IntArray(2)
+            withContext(Dispatchers.Main) { presentation.view.getLocationOnScreen(location) }
+            fun pixel(): Int {
+                val image=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                return try { image.getPixel(location[0]+5,location[1]+10) } finally { image.recycle() }
+            }
+            assertEquals(android.graphics.Color.rgb(1,3,2),pixel())
+            evaluate(presentation,"document.documentElement.style.background='white';document.body.style.background='white';")
+            delay(300)
+            assertEquals(android.graphics.Color.WHITE,pixel())
+        }
     }
     @Test fun isolatedWorkerExecutesAndTerminatesRunawayModule() = runBlocking {
         val worker = WorkspaceWorkerSupervisor(context)

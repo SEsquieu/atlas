@@ -37,7 +37,7 @@ class WorkspaceCandidateLifecycleTest {
         WorkspaceApplicationActivation(db).activate(c.getString("workspace_id"), c.getString("realm_id"), c.getString("candidate_id"), check.getString("check_id"), startup)
     @Test fun fixtureReceiptActivatesExactBytesAndSurvivesReopen() = runTest {
         val c = candidate(); val checked = checks(c)
-        assertTrue(checked.toString(), checked.getBoolean("passed")); assertFalse(checked.getBoolean("activation_authorized"))
+        assertTrue(checked.toString(), checked.getBoolean("passed")); assertFalse(checked.getBoolean("activation_performed")); assertTrue(checked.getString("next_step").contains("workspace_package_activate"))
         val result = activate(c, checked) { b, p ->
             assertEquals(WorkspaceInstanceMode.PREVIEW, p.mode)
             assertEquals(c.getString("content_hash"), WorkspaceApplicationContract.hash(WorkspaceApplicationContract.canonical(b)))
