@@ -151,3 +151,13 @@ On a phone with a known bench peripheral:
 8. Switch to a second BLE workspace. Android's app-level permission may remain granted, but this workspace must obtain its own native approvals. Archive/delete the active workspace and verify that its connection ends.
 
 Collect the session export after failures. Render diagnostics include BLE grant state, recent operation phases/times and Android GATT/scan error codes without dumping characteristic payloads. A timeout can leave a peripheral write outcome unknown; inspect the device before manually retrying. The automated SDK test uses an injected radio; passing emulator tests does not establish a successful physical BLE exchange.
+
+## Alpha.22 cleanup acceptance
+
+Before activating a new BLE revision, have Atlas run `workspace_package_ui_test` against its DOM controls. The test must cover the requested operations and display the simulated notification (`2b`); two pure filter fixtures alone cannot activate a device package. The test uses fake hardware and does not test Android consent or actual peripheral effects. After activation, inspect the live revision and capture visible output when available.
+
+On the phone, approve scanning once and repeat scans without leaving the workspace. A failed BLE operation or an explicit disconnect must release handles without discarding foreground scan consent. Reconnection to a newly selected device still requires resource approval. Native revoke, backgrounding, panel disposal, revision/epoch change and OS permission loss remain real grant boundaries. Use the audit reason to distinguish those boundaries from an ordinary radio failure.
+
+Ask Atlas to repair Bench Companion's notification collection, platform error display (`last_failure.phase/platform_code`) and stale selections using the installed contract. The SDK's `ble.watch()` manages notification draining; plain `subscribe()` needs an explicit event pump. Preserve saved records and distinguish simulated UI evidence from physical BLE acceptance.
+
+Export after the task completes and after interacting with the app. Inspect `workspaces[].device_audit` in the session ZIP, or `device_audit` in the workspace export. Both include the newest 512 committed device records across sessions/revisions. `workspace_render_diagnostics` exposes the newest 32 for in-session debugging. Match timestamps, instance, revision and epoch; diagnostic history does not restore permissions or executable state on import.
