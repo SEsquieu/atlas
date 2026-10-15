@@ -38,8 +38,10 @@ class WorkspacePackageRepository(private val database: AtlasDatabase) {
             .put("data_version", WorkspaceApplicationData(database).version(workspaceId)).put("epoch", WorkspaceApplicationData(database).epoch(workspaceId))
             .apply {
                 if (WorkspaceApplicationData.isApplication(bundle)) {
-                    put("manifest", bundle.getJSONObject("manifest"))
-                    put("files", JSONArray(bundle.getJSONObject("files").keys().asSequence().sorted().map { path -> JSONObject().put("path", path).put("sha256", WorkspaceApplicationContract.hash(bundle.getJSONObject("files").getString(path))).put("bytes", bundle.getJSONObject("files").getString(path).toByteArray(Charsets.UTF_8).size) }.toList()))
+                    val manifest = bundle.getJSONObject("manifest")
+                    if (manifest.toString().length <= 8000) put("manifest", manifest) else put("manifest_summary", WorkspaceApplicationContract.manifestSummary(manifest))
+                    put("files", JSONArray(bundle.getJSONObject("files").keys().asSequence().sorted().take(20).map { path -> JSONObject().put("path", path).put("sha256", WorkspaceApplicationContract.hash(bundle.getJSONObject("files").getString(path))).put("bytes", bundle.getJSONObject("files").getString(path).toByteArray(Charsets.UTF_8).size) }.toList()))
+                    put("files_count", bundle.getJSONObject("files").length()).put("file_index_source", "atlas/files.json")
                 } else put("legacy_format", bundle.optString("format")).put("migration", "Nonempty historical workspaces require an explicit converter; create a new package workspace to preserve the original.")
             }
     }

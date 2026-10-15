@@ -1,2 +1,4 @@
 0.1.0-alpha.18
-Status: validation pending; no installable release requested.
+Secure live-test delivery.
+Runtime device evidence: https://github.com/SEsquieu/atlas/actions/runs/38664968342
+Final commit must pass unit tests, lint and device verification before distribution.

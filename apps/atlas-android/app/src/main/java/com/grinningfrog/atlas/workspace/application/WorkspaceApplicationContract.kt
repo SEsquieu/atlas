@@ -153,6 +153,13 @@ object WorkspaceApplicationContract {
         emptyList<String>()
     }.getOrElse { listOf(it.message ?: "Invalid package") }
 
+    fun manifestSummary(manifest: JSONObject): JSONObject = JSONObject()
+        .put("format", manifest.optString("format")).put("title", manifest.optString("title")).put("entry", manifest.optString("entry"))
+        .put("host_api", manifest.optInt("host_api")).put("data_schema_version", manifest.optInt("data_schema_version"))
+        .put("export_names", JSONArray(manifest.optJSONObject("exports")?.keys()?.asSequence()?.take(16)?.toList().orEmpty()))
+        .put("exports_count", manifest.optJSONObject("exports")?.length() ?: 0).put("tests_count", manifest.optJSONArray("tests")?.length() ?: 0)
+        .put("manifest_source_path", "atlas/manifest.json").put("is_summary", true)
+
     fun descriptor(): JSONObject = JSONObject().put("format", FORMAT).put("api_version", API_VERSION)
         .put("authoring_status", "alpha_application_host").put("execution_available", true).put("activation_available", true)
         .put("minimum_android_api", 29).put("reason", "Local package execution with workspace-scoped foreground storage only; startup requires the supported contained WebView features. Device, network, credentials, schema-version migrations and persistent jobs are unavailable.")

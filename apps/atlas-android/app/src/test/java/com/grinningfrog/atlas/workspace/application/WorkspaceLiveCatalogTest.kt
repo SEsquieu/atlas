@@ -14,6 +14,25 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class)
 class WorkspaceLiveCatalogTest {
+    @Test fun pinnedManifestAndFileIndexReadsCannotCrossWorkspaceRevision() = kotlinx.coroutines.test.runTest {
+        val context = RuntimeEnvironment.getApplication(); context.deleteDatabase("atlas.db")
+        val db = AtlasDatabase(context)
+        try {
+            val session = db.createSession("Source", "Read"); val turn = db.createTurn(session.id, "user")
+            val workspace = db.createComposableWorkspace("Package", "", WorkspaceApplicationContract.example().toString(), realmId = session.workspaceId)
+            val other = db.createComposableWorkspace("Other", "", WorkspaceApplicationContract.example().toString(), realmId = session.workspaceId)
+            val tool = WorkspaceLiveTools.create(db, context).single { it.definition.name == "workspace_package_read_file" }
+            suspend fun read(path: String, revision: String = workspace.liveRevisionId): JSONObject {
+                val args = JSONObject().put("workspace_id", workspace.id).put("revision_id", revision).put("path", path)
+                val call = com.grinningfrog.atlas.model.AtlasToolCall("source-$path", session.id, turn.id, tool.definition.name, args.toString(),
+                    com.grinningfrog.atlas.model.ToolCallStatus.PROPOSED, com.grinningfrog.atlas.model.ToolRisk.READ_ONLY, false, "source-$path", createdAtMs = 0, updatedAtMs = 0)
+                return JSONObject(tool.execute(call).resultJson)
+            }
+            assertEquals(WorkspaceApplicationContract.FORMAT, JSONObject(read("atlas/manifest.json").getString("source")).getString("format"))
+            assertTrue(read("atlas/files.json").getString("source").contains("ui/app.js"))
+            assertTrue(runCatching { read("atlas/manifest.json", other.liveRevisionId) }.isFailure)
+        } finally { db.close() }
+    }
     @Test fun productionCatalogHasOneAuthoringPathAndEnoughRoomForPackageFiles() {
         val context = RuntimeEnvironment.getApplication()
         context.deleteDatabase("atlas.db")

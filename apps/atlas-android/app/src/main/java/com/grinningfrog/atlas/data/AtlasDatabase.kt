@@ -1215,8 +1215,9 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     private fun compactWorkspaceDefinition(definition: JSONObject): JSONObject = JSONObject().apply {
         if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(definition)) {
             put("format", com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.FORMAT)
-            put("manifest", definition.getJSONObject("manifest"))
-            put("files", JSONArray(definition.getJSONObject("files").keys().asSequence().sorted().toList()))
+            put("manifest_summary", com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.manifestSummary(definition.getJSONObject("manifest")))
+            put("files", JSONArray(definition.getJSONObject("files").keys().asSequence().sorted().take(20).toList()))
+            put("files_count", definition.getJSONObject("files").length())
             return@apply
         }
         put("format", definition.optString("format")); put("title", definition.optString("title")); put("entryView", definition.optString("entry_view"))

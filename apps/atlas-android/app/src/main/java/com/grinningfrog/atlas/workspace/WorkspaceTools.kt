@@ -182,7 +182,10 @@ private class InspectWorkspace(database: AtlasDatabase) : WorkspaceAdapter(datab
         }
         return ToolExecutionResult(JSONObject().apply {
             put("workspace_id", id); put("name", workspace.name); put("description", workspace.description); put("revision_id", revision.id)
-            if (args.optString("mode", "compact") == "full") put("definition", definition)
+            if (com.grinningfrog.atlas.workspace.application.WorkspaceApplicationData.isApplication(definition)) {
+                put("definition_summary", com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.manifestSummary(definition.getJSONObject("manifest")))
+                put("source_hint", "Use workspace_package_read_file for source, including atlas/manifest.json. Historical native full definitions are read-only references.")
+            } else if (args.optString("mode", "compact") == "full") put("definition", definition)
             else put("definition_summary", JSONObject().apply {
                 put("format", definition.optString("format")); put("title", definition.optString("title")); put("entry_view", definition.optString("entry_view"))
                 put("state_keys", JSONArray(definition.optJSONObject("state")?.keys()?.asSequence()?.toList().orEmpty()))

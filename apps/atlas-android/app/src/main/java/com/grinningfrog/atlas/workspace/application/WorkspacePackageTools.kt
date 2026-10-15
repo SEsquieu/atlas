@@ -54,9 +54,11 @@ object WorkspacePackageTools {
                 val bundle = result.getJSONObject("bundle")
                 val files = bundle.getJSONObject("files")
                 result.remove("bundle")
-                result.put("manifest", bundle.getJSONObject("manifest")).put("files", JSONArray().apply {
-                    files.keys().asSequence().sorted().forEach { path -> put(JSONObject().put("path", path).put("sha256", WorkspaceApplicationContract.hash(files.getString(path))).put("bytes", files.getString(path).toByteArray(Charsets.UTF_8).size)) }
-                }).put("source_content", "omitted; use workspace_package_read_file for bounded source retrieval")
+                val manifest = bundle.getJSONObject("manifest")
+                if (manifest.toString().length <= 8000) result.put("manifest", manifest) else result.put("manifest_summary", WorkspaceApplicationContract.manifestSummary(manifest))
+                result.put("files", JSONArray().apply {
+                    files.keys().asSequence().sorted().take(20).forEach { path -> put(JSONObject().put("path", path).put("sha256", WorkspaceApplicationContract.hash(files.getString(path))).put("bytes", files.getString(path).toByteArray(Charsets.UTF_8).size)) }
+                }).put("files_count", files.length()).put("file_index_source", "atlas/files.json").put("source_content", "omitted; use workspace_package_read_file for bounded source retrieval")
             }
             return ToolExecutionResult(result.toString())
         }
