@@ -69,7 +69,7 @@ internal object ExecutionWorkState {
         }
         call.error?.let { out.put("error", it.take(1000)) }
         result.optJSONArray("failed_operations")?.let { failures ->
-            out.put("failed_operations", JSONArray((0 until failures.length()).takeLast(4).map { index ->
+            out.put("failed_operations", JSONArray((maxOf(0, failures.length() - 4) until failures.length()).map { index ->
                 val event = failures.getJSONObject(index)
                 JSONObject().put("kind", event.optString("kind")).put("details", event.optJSONObject("details"))
             }))
