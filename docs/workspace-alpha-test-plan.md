@@ -178,7 +178,7 @@ Retry the existing Bench Companion repair task without manually patching its sou
 
 During an agent task, navigate between workspaces repeatedly and export after any stall or termination. Inspect runtime diagnostics together with `execution.progress`, `work_state`, exact candidate IDs and the final activation receipt. An unchanged frontier with increasing `no_progress_slices` is stagnation evidence, distinct from successful tests or implementation progress. The new guidance does not automatically cancel a long task.
 
-## Workspace iteration recovery acceptance (after alpha.24)
+## Alpha.25 workspace iteration acceptance
 
 - Resume a candidate staged in an earlier session. Verify `work_state.latest_candidate` includes the exact candidate and ancestry; failed and corrected checks appear in `latest_checks` across slices without staging duplicate bytes.
 - Trigger a malformed clarification followed by a corrected accepted control. The original rejection remains in audit, its checkpoint resolution is `corrected_control_accepted`, and it no longer keeps an otherwise completed task waiting.

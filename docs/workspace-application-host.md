@@ -216,10 +216,14 @@ All eleven instrumented tests passed on API 35 and 36 in [device run 38825337253
 
 Secure APK: `atlas-alpha24-3e0d790-secure.apk`, 69,893,974 bytes, SHA-256 `44f3f4b627b1a4a272839cb5ba32b74e0d43d5b8928125d0aad7d14d95885785`. Bench Companion source is unchanged by this host release.
 
-## Workspace iteration recovery (after alpha.24)
+## Alpha.25: workspace iteration recovery
 
 Retained candidates used in a new task now participate in derived `work_state` without a new staging call. Exact test/read/activation identifiers select the candidate, and previously inspected metadata supplies its ancestry. Checks advance the progress frontier; repeated reads do not. Accepted clarification controls now have durable tool receipts. A corrected accepted control resolves an earlier rejected control with the same action and pending-question identity, retaining both attempts in the audit. Explicit workspace IDs take precedence over an unrelated displayed workspace when selecting the requested edit target.
 
 Completed device-operation receipts retain their historical outcome after disconnect or revoke; pending work is cancelled and live handles still become unusable. Simulated UI checks distinguish attempted from successful operations. Activation requires a current verification-version-2 UI check: declared operations must succeed, and subscriptions require notification delivery plus a passed DOM assertion containing fixture payload `2b`. Generic subscription status text alone cannot satisfy this gate. Older stored UI checks must be rerun; existing live revisions are unchanged.
 
 Workspace foreground consent is held in memory outside the disposable presentation. Its identity includes realm, workspace, revision, epoch and declared capability operations. Navigation closes connections and discards peripheral handles while preserving workspace consent and native denial state. Activity stop clears grants even when the workspace panel is absent. Revision/epoch/contract changes, OS permission loss and explicit revoke still end consent. Process restart never restores authority. This is not a persistent permission grant or background execution.
+
+### Alpha.25 verification
+
+Final application source commit `daf141f42c3dde163c8f1e74a709fb7f294b5011` passed the 292-test unit suite and Secure lint in [Android run 38981645874](https://github.com/SEsquieu/atlas/actions/runs/38981645874). All eleven instrumented tests passed on API 35 and 36 in [device run 38981645885](https://github.com/SEsquieu/atlas/actions/runs/38981645885). The extended real-panel regression caught a second revocation path in WebView disposal; that path is included in the verified correction. The production runner regression covers rejected clarification, accepted correction, user reply and clean task completion. Candidate recovery, completed-receipt integrity and rejection of legacy UI checks are covered without relaxing unknown-outcome guards. These are controlled tests, not a live-model convergence or physical-radio benchmark.

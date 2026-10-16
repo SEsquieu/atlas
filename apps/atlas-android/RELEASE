@@ -1,2 +1,2 @@
-0.1.0-alpha.24
-Harden database lock ordering, durable app-task recovery, actionable failure evidence and progress tracking.
+0.1.0-alpha.25
+Smooth workspace iteration recovery, navigation consent and behavioral verification.
