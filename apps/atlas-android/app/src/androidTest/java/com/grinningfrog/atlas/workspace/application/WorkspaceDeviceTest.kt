@@ -405,7 +405,7 @@ class WorkspaceDeviceTest {
             assertEquals(0,db.listWorkspaceRecords(workspace.id,"notes").size)
         } finally {db.deleteComposableWorkspace(workspace.id)}
     }
-    @Test fun nativeGrantIsReusedAfterFailedScanAndPanelRecomposition() = runBlocking {
+    @Test fun nativeGrantSurvivesNavigationButBackgroundingFromListRevokesIt() = runBlocking {
         val db=(context.applicationContext as AtlasApplication).database
         val bundle=WorkspaceApplicationContract.example()
         bundle.getJSONObject("manifest").getJSONArray("capabilities").put(WorkspaceBleContract.descriptor().getJSONObject("manifest_example"))
@@ -414,9 +414,10 @@ class WorkspaceDeviceTest {
         WorkspaceApplicationData(db).setEnabled(workspace.id,revision.id,true)
         val radio=WorkspaceUiSimulation.Radio().apply{failingScans=1}
         val scenario=ActivityScenario.launch(MainActivity::class.java);var web:android.webkit.WebView?=null
+        val visible=androidx.compose.runtime.mutableStateOf(true)
         suspend fun evaluate(script:String):String=withContext(Dispatchers.Main){suspendCancellableCoroutine{c->web!!.evaluateJavascript(script){if(c.isActive)c.resume(it)}}}
         try {
-            scenario.onActivity{activity->activity.setContent{MaterialThemeForTest{WorkspaceApplicationPanel(workspace,revision,db,Modifier.fillMaxSize(),deviceFactory={_,requests->listOf(WorkspaceBleCapability(requests.getValue(WorkspaceBleContract.CAPABILITY),radio))})}}}
+            scenario.onActivity{activity->activity.setContent{MaterialThemeForTest{if(visible.value) WorkspaceApplicationPanel(workspace,revision,db,Modifier.fillMaxSize(),deviceFactory={_,requests->listOf(WorkspaceBleCapability(requests.getValue(WorkspaceBleContract.CAPABILITY),radio))}) else androidx.compose.material3.Text("Workspace list")}}}
             withTimeout(15_000){while(com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(workspace.id,revision.id)?.optJSONObject("runtime")?.optBoolean("ready")!=true)delay(100)}
             scenario.onActivity{activity->fun find(v:android.view.View):android.webkit.WebView?{if(v is android.webkit.WebView)return v;if(v is android.view.ViewGroup)for(i in 0 until v.childCount)find(v.getChildAt(i))?.let{return it};return null};web=find(activity.findViewById(android.R.id.content))}
             evaluate("tryScan();void 0")
@@ -432,6 +433,31 @@ class WorkspaceDeviceTest {
             val events=WorkspaceDeviceAudit(db).snapshot(workspace.id).getJSONArray("events")
             assertEquals(1,(0 until events.length()).count{events.getJSONObject(it).getString("kind")=="grant_requested"})
             assertEquals(1,(0 until events.length()).map{events.getJSONObject(it).getString("instance_id")}.toSet().size)
+            suspend fun reopen() {
+                scenario.onActivity{visible.value=true}
+                withTimeout(10_000){while(com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(workspace.id,revision.id)?.optJSONObject("runtime")?.optBoolean("ready")!=true)delay(100)}
+                scenario.onActivity{activity->fun find(v:android.view.View):android.webkit.WebView?{if(v is android.webkit.WebView)return v;if(v is android.view.ViewGroup)for(i in 0 until v.childCount)find(v.getChildAt(i))?.let{return it};return null};web=find(activity.findViewById(android.R.id.content))}
+            }
+            suspend fun leave() {
+                scenario.onActivity{visible.value=false}
+                withTimeout(5_000){while(com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(workspace.id,revision.id)!=null)delay(100)}
+            }
+            leave();reopen()
+            evaluate("tryScan();void 0")
+            withTimeout(5_000){while(evaluate("document.body.dataset.result")!="\"scanned\"")delay(100)}
+            var audit=WorkspaceDeviceAudit(db).snapshot(workspace.id).getJSONArray("events")
+            assertEquals(1,(0 until audit.length()).count{audit.getJSONObject(it).getString("kind")=="grant_requested"})
+            leave()
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            reopen();evaluate("tryScan();void 0")
+            withTimeout(5_000){
+                while(WorkspaceDeviceAudit(db).snapshot(workspace.id).getJSONArray("events").let{rows->(0 until rows.length()).count{rows.getJSONObject(it).getString("kind")=="grant_requested"}}<2)delay(100)
+            }
+            audit=WorkspaceDeviceAudit(db).snapshot(workspace.id).getJSONArray("events")
+            assertEquals(2,(0 until audit.length()).count{audit.getJSONObject(it).getString("kind")=="grant_requested"})
+            assertNotEquals("\"scanned\"",evaluate("document.body.dataset.result"))
+
         }finally{scenario.close();db.deleteComposableWorkspace(workspace.id)}
     }
     @Test fun realStorageBridgeRejectsForgedScopeAndPersistsExactlyOneRecord() = runBlocking {
