@@ -71,6 +71,34 @@ class ExecutionRuntimeTest {
         assertEquals(ExecutionState.COMPLETED,ExecutionTaskStore(db).get(task.id)!!.state)
     }
 
+    @Test fun productionRunnerFinishesAfterCorrectedClarificationAndReply() = runTest {
+        var requests=0
+        val runtime=runtime(this,emptyList()) { request ->
+            val args=when(++requests) {
+                1 -> """{"action":"request","question":"Which fixture?"}"""
+                2 -> """{"action":"request","question":"Which fixture?","reason":"Two fixtures are named alike","blocking":true}"""
+                3 -> JSONObject().put("action","resolve").put("clarification_id",db.loadPendingClarification(session.id)!!.id)
+                    .put("normalized_answer","Fixture A").toString()
+                else -> null
+            }
+            response(request,args?.let { listOf(ToolCallProposal("control-$requests",ToolHarness.CLARIFICATION_TOOL,it)) }.orEmpty())
+        }
+        runtime.ask("Inspect the fixture")
+        assertNotNull(db.loadPendingClarification(session.id))
+        runtime.ask("Fixture A")
+        assertEquals(4,requests)
+        val task=ExecutionTaskStore(db).list(session.id).single()
+        assertEquals(ExecutionState.COMPLETED,task.state)
+        val controls=ExecutionTaskStore(db).calls(task.id).filter { it.name==ToolHarness.CLARIFICATION_TOOL }
+        assertEquals(3,controls.size)
+        assertEquals(ToolCallStatus.REJECTED,controls.first().status)
+        assertTrue(controls.drop(1).all { JSONObject(it.resultJson!!).getBoolean("accepted") })
+        val results=db.loadMessages(session.id).filter { it.kind==MessageKind.TOOL_RESULT }
+        assertEquals(3,results.size)
+        assertEquals(3,results.map { it.toolCallId }.distinct().size)
+        assertEquals(0,task.document.getJSONObject("checkpoint").getJSONArray("unresolved_operation_ids").length())
+    }
+
     @Test fun productionRunnerAutomaticallyContinuesAfterEightSteps() = runTest {
         var requests=0;var executions=0;val turns=mutableListOf<String>()
         val runtime=runtime(this,listOf(diagnostic {executions++})) { request ->
