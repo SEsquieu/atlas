@@ -416,6 +416,7 @@ class WorkspaceDeviceTest {
         val scenario=ActivityScenario.launch(MainActivity::class.java);var web:android.webkit.WebView?=null
         val visible=androidx.compose.runtime.mutableStateOf(true)
         suspend fun evaluate(script:String):String=withContext(Dispatchers.Main){suspendCancellableCoroutine{c->web!!.evaluateJavascript(script){if(c.isActive)c.resume(it)}}}
+        var stage="initial approval"
         try {
             scenario.onActivity{activity->activity.setContent{MaterialThemeForTest{if(visible.value) WorkspaceApplicationPanel(workspace,revision,db,Modifier.fillMaxSize(),deviceFactory={_,requests->listOf(WorkspaceBleCapability(requests.getValue(WorkspaceBleContract.CAPABILITY),radio))}) else androidx.compose.material3.Text("Workspace list")}}}
             withTimeout(15_000){while(com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(workspace.id,revision.id)?.optJSONObject("runtime")?.optBoolean("ready")!=true)delay(100)}
@@ -442,11 +443,13 @@ class WorkspaceDeviceTest {
                 scenario.onActivity{visible.value=false}
                 withTimeout(5_000){while(com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(workspace.id,revision.id)!=null)delay(100)}
             }
+            stage="navigation without renewed approval"
             leave();reopen()
             evaluate("tryScan();void 0")
             withTimeout(5_000){while(evaluate("document.body.dataset.result")!="\"scanned\"")delay(100)}
             var audit=WorkspaceDeviceAudit(db).snapshot(workspace.id).getJSONArray("events")
             assertEquals(1,(0 until audit.length()).count{audit.getJSONObject(it).getString("kind")=="grant_requested"})
+            stage="background from workspace list"
             leave()
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
@@ -458,6 +461,8 @@ class WorkspaceDeviceTest {
             assertEquals(2,(0 until audit.length()).count{audit.getJSONObject(it).getString("kind")=="grant_requested"})
             assertNotEquals("\"scanned\"",evaluate("document.body.dataset.result"))
 
+        }catch(failure:Throwable){
+            throw AssertionError("Consent navigation stage=$stage visible=${visible.value} diagnostics=${com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(workspace.id,revision.id)} audit=${WorkspaceDeviceAudit(db).snapshot(workspace.id)}",failure)
         }finally{scenario.close();db.deleteComposableWorkspace(workspace.id)}
     }
     @Test fun realStorageBridgeRejectsForgedScopeAndPersistsExactlyOneRecord() = runBlocking {

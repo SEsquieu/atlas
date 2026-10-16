@@ -226,11 +226,11 @@ class WorkspaceWebPresentation(
 
     fun loadAttached() { if (!disposed && view.isAttachedToWindow && view.width > 0 && view.height > 0) load() }
     fun load() { check(!disposed); view.loadUrl(policy.entryUrl) }
-    fun dispose() {
+    fun dispose(preserveDeviceConsent: Boolean = false) {
         if (disposed) return
         disposed = true
         bridgeScope.cancel()
-        devices?.close()
+        devices?.close(preserveConsent = preserveDeviceConsent)
         view.stopLoading()
         (view.parent as? android.view.ViewGroup)?.removeView(view)
         WebStorage.getInstance().deleteOrigin(policy.origin)

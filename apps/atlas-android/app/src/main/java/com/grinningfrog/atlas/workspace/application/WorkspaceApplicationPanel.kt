@@ -61,7 +61,7 @@ internal fun WorkspaceApplicationPanel(workspace: ComposableWorkspace, revision:
                     onDispose {
                         com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.unregister(token)
                         if (presentation.view.viewTreeObserver.isAlive) presentation.view.viewTreeObserver.removeOnDrawListener(listener)
-                        presentation.dispose()
+                        presentation.dispose(preserveDeviceConsent = true)
                     }
                 }
                 LaunchedEffect(presentation) { delay(10_000); if (!ready) failed("Application did not signal readiness. Records are preserved.") }
