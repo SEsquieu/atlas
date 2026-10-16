@@ -14,17 +14,19 @@ class WorkspaceDeviceBroker internal constructor(
     private val changed: () -> Unit = {},
     private val audit: (JSONObject) -> Unit = {},
     val isSimulation: Boolean = false,
+    private val grants: WorkspaceCapabilityGrants = WorkspaceCapabilityGrants(),
 ) {
     internal constructor(principal: WorkspacePrincipal, requested: Set<String>, current: () -> Boolean, adapter: WorkspaceBleAdapter,
         consent: suspend (String)->Boolean, permission: suspend ()->Boolean, scope: CoroutineScope, changed: ()->Unit = {}, audit: (JSONObject)->Unit = {}) :
         this(principal,listOf(WorkspaceBleCapability(requested,adapter)),current,consent,{permission()},scope,changed,audit)
     val errorCodes: Set<String> get() = adapters.flatMap{it.errors+setOf(it.busyCode,it.failureCode,it.timeoutCode)}.toSet()
     val capabilityNames: Set<String> get() = adapters.map { it.name }.toSet()
-    private val grants=WorkspaceCapabilityGrants()
     private var generation=0L
     private var active=true
     private var busy=false
-    private var requestsEnabled=true
+    private var requestsEnabled: Boolean
+        get() = grants.requestsEnabled
+        set(value) { grants.requestsEnabled = value }
     private var job: Job?=null
     private val receipts=linkedMapOf<String,JSONObject>()
     private var auditSequence=0L
@@ -140,11 +142,11 @@ class WorkspaceDeviceBroker internal constructor(
     private fun reset(reason: String, revokeConsent: Boolean, cancel: Boolean) {
         if(cancel) { generation++; job?.cancel(); job=null; busy=false }
         for(adapter in adapters) { adapter.release(); if(revokeConsent)grants.revoke(adapter.name) else grants.releaseHandles(adapter.name) }
-        if(cancel)receipts.values.filter { it.optString("status") in setOf("pending","waiting_user","succeeded") }.forEach {
+        if(cancel)receipts.values.filter { it.optString("status") in setOf("pending","waiting_user") }.forEach {
             it.remove("result");it.put("status","failed").put("error",JSONObject().put("code","GRANT_REVOKED").put("summary",reason))
         }
         event(if(revokeConsent)"grants_revoked" else "handles_released",details=JSONObject().put("reason",reason).put("foreground_consent_retained",!revokeConsent)); changed()
     }
     fun revoke(blockRequests: Boolean=false, reason: String="explicit_revoke") { if(blockRequests)requestsEnabled=false; reset(reason,true,true) }
-    fun close() { if(!active)return; active=false; reset("instance_disposed",true,true) }
+    fun close(preserveConsent: Boolean = false) { if(!active)return; active=false; reset("instance_disposed",!preserveConsent,true) }
 }

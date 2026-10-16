@@ -32,6 +32,7 @@ internal interface WorkspaceCapabilityAccess {
 
 /** Resource handles are disposable. Foreground consent survives ordinary device failures. */
 internal class WorkspaceCapabilityGrants {
+    var requestsEnabled = true
     private val grants = mutableMapOf<Pair<String,String>,Boolean>()
     fun hasAny(capability: String) = grants.keys.any { it.first == capability }
     fun has(capability: String, resource: String) = grants.containsKey(capability to resource)
@@ -64,7 +65,7 @@ internal class WorkspaceBleCapability(
     }
     suspend override fun execute(operation: String, params: JSONObject, access: WorkspaceCapabilityAccess): JSONObject = when(operation) {
         "scan" -> {
-            access.authorize("nearby_devices", "Allow this workspace to use Bluetooth LE while it is open? Nearby device names and services will be visible. Repeated scans reuse this approval; access to a selected peripheral is approved separately.")
+            access.authorize("nearby_devices", "Allow this workspace to use Bluetooth LE while Atlas remains in the foreground? Nearby device names and services will be visible. Repeated scans and returning to this workspace reuse this approval; access to a selected peripheral is approved separately.")
             JSONObject().put("devices", radio.scan())
         }
         "connect" -> {

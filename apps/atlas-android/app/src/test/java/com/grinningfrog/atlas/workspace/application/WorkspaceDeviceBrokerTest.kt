@@ -84,18 +84,43 @@ class WorkspaceDeviceBrokerTest {
         val connect = submit(broker, "ble.connect", JSONObject().put("device_id", "seen")); runCurrent()
         assertEquals("WORKSPACE_GRANT_REQUIRED", result(broker, connect).getJSONObject("error").getString("code")); assertEquals(0, radio.connections)
     }
-    @Test fun operationReceiptsDoNotRepeatWritesAndRevokeInvalidatesReceipts() = runTest {
+    @Test fun operationReceiptsPreserveCompletedWritesWhileRevokeEndsAuthority() = runTest {
         val radio = Radio(); val broker = WorkspaceDeviceBroker(principal, WorkspaceBleContract.operations, { true }, radio, { true }, { true }, this)
         connected(broker)
         val id = submit(broker, "ble.write", JSONObject().put("characteristic_id", "char").put("hex", "0102")); runCurrent()
         repeat(3) { assertTrue(result(broker, id).getJSONObject("result").getBoolean("acknowledged")) }
         assertEquals(1, radio.writes)
         broker.revoke(blockRequests = true)
-        assertEquals("GRANT_REVOKED", result(broker, id).getJSONObject("error").getString("code"))
+        assertTrue(result(broker, id).getJSONObject("result").getBoolean("acknowledged"))
+        assertEquals("succeeded", result(broker, id).getString("status"))
         assertTrue(runCatching { broker.dispatch("ble.services", JSONObject()) }.isFailure)
         val other = WorkspaceDeviceBroker(principal.copy(workspaceId = "other"), WorkspaceBleContract.operations, { true }, Radio(), { true }, { true }, this)
         assertTrue(runCatching { result(other, id) }.isFailure)
     }
+    @Test fun navigationPreservesConsentButReleasesHandlesAndBackgroundClearsHiddenConsent() = runTest {
+        val store=WorkspaceConsentStore();val requested=mapOf(WorkspaceBleContract.CAPABILITY to WorkspaceBleContract.operations)
+        var prompts=0
+        fun broker(p:WorkspacePrincipal=principal):WorkspaceDeviceBroker = WorkspaceDeviceBroker(p,
+            listOf(WorkspaceBleCapability(WorkspaceBleContract.operations,Radio())),{true},{prompts++;true},{true},this,
+            grants=store.acquire(p,requested))
+        val first=broker();connected(first);assertEquals(2,prompts)
+        first.close(preserveConsent=true)
+        val second=broker(principal.copy(instanceId="second"))
+        assertTrue(second.status().getBoolean("scan_approved"));assertFalse(second.status().getBoolean("device_approved"))
+        submit(second,"ble.scan");runCurrent();assertEquals(2,prompts)
+        second.revoke(blockRequests=true);second.close(preserveConsent=true)
+        val denied=broker();assertFalse(denied.status().getBoolean("requests_enabled"))
+        denied.enableRequests();submit(denied,"ble.scan");runCurrent();assertEquals(3,prompts)
+        denied.close(preserveConsent=true)
+        store.clear() // Activity stops while the workspace panel is absent.
+        val returned=broker();assertFalse(returned.status().getBoolean("scan_approved"))
+        submit(returned,"ble.scan");runCurrent();assertEquals(4,prompts)
+        returned.close(preserveConsent=true)
+        val changed=broker(principal.copy(revisionId="new-revision",epoch=5))
+        assertFalse(changed.status().getBoolean("scan_approved"));changed.close()
+        assertFalse(store.acquire(principal,requested).hasAny(WorkspaceBleContract.CAPABILITY))
+    }
+
     @Test fun timedOutWriteClosesConnectionAndNeverRetries() = runTest {
         val radio = Radio(); val broker = WorkspaceDeviceBroker(principal, WorkspaceBleContract.operations, { true }, radio, { true }, { true }, this)
         connected(broker); radio.uncertainWrite = true

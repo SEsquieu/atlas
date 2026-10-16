@@ -41,6 +41,8 @@ class WorkspaceCandidateLifecycleTest {
         val pure = checks(c)
         assertTrue(runCatching { activate(c,pure) { _,_->true } }.exceptionOrNull()?.message?.startsWith("UI_SIMULATION_REQUIRED")==true)
         db.writableDatabase.execSQL("INSERT INTO workspace_application_checks(check_id,workspace_id,candidate_id,content_hash,kind,passed,base_revision_id,data_version,result_json,created_at) VALUES(?,?,?,?,'ui_simulation',1,?,0,?,0)",arrayOf("ui-check",c.getString("workspace_id"),c.getString("candidate_id"),c.getString("content_hash"),db.loadComposableWorkspace(c.getString("workspace_id"))!!.liveRevisionId,JSONObject().put("base_revision_id",db.loadComposableWorkspace(c.getString("workspace_id"))!!.liveRevisionId).put("data_version",0).put("passed",true).put("kind","ui_simulation").toString()))
+        assertTrue(runCatching { activate(c,pure) { _,_->true } }.exceptionOrNull()?.message?.contains("older checks")==true)
+        db.writableDatabase.execSQL("UPDATE workspace_application_checks SET result_json=? WHERE check_id='ui-check'",arrayOf(JSONObject().put("passed",true).put("verification_version",2).toString()))
         val result = activate(c, pure) { bundle, principal ->
             assertEquals(WorkspaceInstanceMode.PREVIEW, principal.mode)
             assertEquals(WorkspaceBleContract.operations, WorkspaceBleContract.requested(bundle.getJSONObject("manifest")))

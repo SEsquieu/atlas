@@ -87,6 +87,44 @@ class ExecutionTasksTest {
         assertEquals(ExecutionState.READY,store.get(t.id)!!.state)
     }
 
+    @Test fun retainedCandidateChecksSurviveWithoutStagingInThisTask() {
+        val w=db.createComposableWorkspace("Retained", "")
+        val t=task();val lease=store.claim(t.id,"owner")!!;store.bindWorkspace(store.currentTurn(t.id),w.id)
+        fun receipt(name:String,args:JSONObject,result:JSONObject) {
+            clock++
+            val c=call(t,name,args.put("workspace_id",w.id).toString());db.insertToolCall(c)
+            db.updateToolCall(c.id,ToolCallStatus.COMPLETED,resultJson=result.toString())
+        }
+        receipt("workspace_package_inspect",JSONObject(),JSONObject("""{"candidates":[{"candidate_id":"retained","base_revision_id":"base","parent_candidate_id":"parent","content_hash":"hash"}]}"""))
+        receipt("workspace_package_ui_test",JSONObject().put("candidate_id","retained"),JSONObject("""{"candidate_id":"retained","passed":false,"missing_operations":["write"]}"""))
+        store.finish(lease,SliceOutcome.YIELDED,1)
+        val state=store.get(t.id)!!.document.getJSONObject("work_state")
+        assertEquals("retained",state.getJSONObject("latest_candidate").getString("candidate_id"))
+        assertEquals("parent",state.getJSONObject("latest_candidate").getString("parent_candidate_id"))
+        assertEquals(1,state.getJSONArray("latest_checks").length())
+        assertTrue(ExecutionTaskStore(db).context(t.id).contains("write"))
+        val before=state.getString("frontier")
+        store.nextTurn(t.id);val next=store.claim(t.id,"next")!!
+        receipt("workspace_package_ui_test",JSONObject().put("candidate_id","retained"),JSONObject("""{"candidate_id":"retained","passed":true,"missing_operations":[]}"""))
+        store.finish(next,SliceOutcome.YIELDED,1)
+        assertNotEquals(before,store.get(t.id)!!.document.getJSONObject("work_state").getString("frontier"))
+        assertEquals(0,store.get(t.id)!!.document.optInt("no_progress_slices"))
+    }
+
+    @Test fun acceptedClarificationResolvesRejectedControlWithoutRewritingAudit() {
+        val t=task();val lease=store.claim(t.id,"owner")!!
+        val rejected=call(t,ToolHarness.CLARIFICATION_TOOL,"""{"action":"request","question":"Which?"}""")
+        db.insertToolCall(rejected);db.updateToolCall(rejected.id,ToolCallStatus.REJECTED,error="Clarification request requires a question and reason")
+        clock++
+        val accepted=call(t,ToolHarness.CLARIFICATION_TOOL,"""{"action":"request","question":"Which?","reason":"Ambiguous target"}""")
+        db.insertToolCall(accepted);db.updateToolCall(accepted.id,ToolCallStatus.COMPLETED,resultJson="""{"accepted":true,"action":"request"}""")
+        val finished=store.finish(lease,SliceOutcome.RESPONDED,1)!!
+        assertEquals(ExecutionState.COMPLETED,finished.state)
+        assertEquals(0,finished.document.getJSONObject("checkpoint").getJSONArray("unresolved_operation_ids").length())
+        assertTrue(finished.document.getJSONObject("checkpoint").getJSONArray("resolved_operations").toString().contains(rejected.id))
+        assertEquals(ToolCallStatus.REJECTED,db.loadToolCall(rejected.id)!!.status)
+    }
+
     @Test fun lateInferenceUsageIsReconciledOnceWithoutBorrowingANewLease() {
         val t=task();val lease=store.claim(t.id,"owner")!!;val turn=store.currentTurn(t.id)
         assertTrue(store.reserveInference(lease,100,85,"late-request"))

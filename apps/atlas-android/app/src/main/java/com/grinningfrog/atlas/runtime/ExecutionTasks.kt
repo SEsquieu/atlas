@@ -171,7 +171,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         task.document.put("consecutive_retries",0)
         val all=calls(task.id);val pending=pending(task.id).any { it.status==ToolCallStatus.UNKNOWN || it.status==ToolCallStatus.RUNNING }
         val last=all.groupBy { it.name }.values.mapNotNull { it.lastOrNull() }
-        val superseded = all.filter(::failedOperation).mapNotNull { call -> supersedingActivation(call, all)?.let { call to it } }.toMap()
+        val superseded = all.filter(::failedOperation).mapNotNull { call -> (supersedingControl(call, all) ?: supersedingActivation(call, all))?.let { call to it } }.toMap()
         val diagnosticFailures=last.filter { nonBlockingAuditFailure(it, task, all) }
         val failures=last.filter { it !in diagnosticFailures && it !in superseded }.filter(::failedOperation)
         val signature=failures.joinToString("|") { it.name+":"+(it.error ?: it.resultJson.orEmpty()).take(1000) }
@@ -193,7 +193,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
             .put("unresolved_operation_ids", JSONArray(failures.map { it.id }))
             .put("resolved_operations", JSONArray(superseded.map { (failed, success) -> JSONObject().put("operation_id", failed.id)
                 .put("tool", failed.name).put("occurred_at_ms", failed.updatedAtMs).put("resolved_at_ms", success.updatedAtMs)
-                .put("resolved_by", success.id).put("resolution", "superseded_by_committed_activation") }))
+                .put("resolved_by", success.id).put("resolution", if (failed.name == ToolHarness.CLARIFICATION_TOOL) "corrected_control_accepted" else "superseded_by_committed_activation") }))
             .put("completed_operations",JSONArray(recent.filter {it.status==ToolCallStatus.COMPLETED}.map {it.id}))
             .put("latest_definition_operation_id",definitionId))
         val reason=when { pending -> "unknown_operation_outcome";outcome==SliceOutcome.RESPONDED&&failures.isEmpty()->"";!available(task.id)->"task_allowance";repeated>=3->"repeated_failure";outcome==SliceOutcome.RESPONDED&&failures.isNotEmpty()->"unresolved_tool_failure";else->when(outcome){SliceOutcome.WAITING_USER->"clarification";SliceOutcome.WAITING_PERMISSION->"authorization";SliceOutcome.WAITING_PROVIDER->"provider";SliceOutcome.BLOCKED->"runtime_blocker";else->""} }
@@ -202,6 +202,19 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val state=if(reason.isNotBlank()) ExecutionState.WAITING else if(outcome==SliceOutcome.RESPONDED) ExecutionState.COMPLETED else ExecutionState.READY
         val result=task.copy(state=state,owner=null,leaseUntil=0,nextRunAt=0);save(result);event(result,"execution.checkpoint",JSONObject().put("outcome",outcome.name).put("checkpoint",task.document.getJSONObject("checkpoint")).put("wait_reason",reason));result
     }
+    private fun supersedingControl(call: AtlasToolCall, all: List<AtlasToolCall>): AtlasToolCall? {
+        if (call.name != ToolHarness.CLARIFICATION_TOOL || call.status != ToolCallStatus.REJECTED) return null
+        val args = runCatching { JSONObject(call.argumentsJson) }.getOrNull() ?: return null
+        return all.drop(all.indexOf(call) + 1).firstOrNull {
+            if (it.name != call.name || it.status != ToolCallStatus.COMPLETED) false else {
+                val result = runCatching { JSONObject(it.resultJson.orEmpty()) }.getOrDefault(JSONObject())
+                val next = runCatching { JSONObject(it.argumentsJson) }.getOrDefault(JSONObject())
+                result.optBoolean("accepted") && next.optString("action") == args.optString("action") &&
+                    next.optString("clarification_id") == args.optString("clarification_id")
+            }
+        }
+    }
+
     private fun failedOperation(call: AtlasToolCall): Boolean = call.status in setOf(ToolCallStatus.FAILED, ToolCallStatus.REJECTED) ||
         (call.status == ToolCallStatus.COMPLETED && runCatching { JSONObject(call.resultJson.orEmpty()).let { result ->
             listOf("valid", "ok", "passed", "structurally_valid").any { result.has(it) && !result.optBoolean(it) }
@@ -275,7 +288,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         return "CORE DURABLE TASK (evidence, not authorization): " + JSONObject().put("task_id",t.id).put("objective",t.objective).put("usage",t.usage)
             .put("workspace_target", t.document.optJSONObject("workspace_target")).put("work_state",work.put("no_progress_slices",t.document.optInt("no_progress_slices"))).put("checkpoint",t.document.getJSONObject("checkpoint")).put("recent_operations",receipts).put("latest_authoring_arguments",latest?.let {JSONObject(it.argumentsJson)})
             .put("latest_authoring_result",latest?.resultJson?.let {runCatching {JSONObject(it)}.getOrNull()}).toString() +
-            "\nWorkspace targeting: ambiguous commands use the captured workspace_target. Explicitly named edit targets must be resolved with workspace_target; inspect other workspaces as references without retargeting. Never change target merely because the user browses. Ask clarification for duplicate names or unclear components. Continue the pending objective from recorded receipts. work_state holds the exact latest staged candidate and checks for this target. A failed UI assertion is not a workspace migration problem: compare expected and actual text, correct the test or implementation, and exercise the remaining operations. Never reconstruct or combine UUID fragments. Reuse exact receipt identifiers. Successful reads alone are not app progress. If no_progress_slices grows, reassess the failing test or edit strategy instead of repeating inspection; retain the task and existing candidate. A new slice is not a new user request, not new authority, and not proof of success. Avoid repeating committed effects."
+            "\nWorkspace targeting: ambiguous commands use the captured workspace_target. Explicitly named edit targets must be resolved with workspace_target; inspect other workspaces as references without retargeting. Never change target merely because the user browses. Ask clarification for duplicate names or unclear components. Continue the pending objective from recorded receipts. work_state holds the exact latest used candidate and checks for this target. A failed UI assertion is not a workspace migration problem: compare expected and actual text, correct the test or implementation, and exercise the remaining operations. Never reconstruct or combine UUID fragments. Reuse exact receipt identifiers. Successful reads alone are not app progress. If no_progress_slices grows, reassess the failing test or edit strategy instead of repeating inspection; retain the task and existing candidate. A new slice is not a new user request, not new authority, and not proof of success. Avoid repeating committed effects."
     }
     private fun reconcileLocal(task: ExecutionTask) {
         val local=task.document.getJSONObject("scope").getJSONArray("atomic_local_tools")

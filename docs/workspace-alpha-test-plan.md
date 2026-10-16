@@ -177,3 +177,12 @@ Unrecoverable requests (including user content exceeding the budget or excessive
 Retry the existing Bench Companion repair task without manually patching its source. Confirm that the current target and latest candidate survive slice boundaries and app restart. When a UI test fails, the next request should retain failed selector, actual/expected text and missing operations. Atlas should correct the assertion or implementation, cover the requested interactions, and activate a verified revision while preserving records. A completed read or a merely staged candidate is not task completion.
 
 During an agent task, navigate between workspaces repeatedly and export after any stall or termination. Inspect runtime diagnostics together with `execution.progress`, `work_state`, exact candidate IDs and the final activation receipt. An unchanged frontier with increasing `no_progress_slices` is stagnation evidence, distinct from successful tests or implementation progress. The new guidance does not automatically cancel a long task.
+
+## Workspace iteration recovery acceptance (after alpha.24)
+
+- Resume a candidate staged in an earlier session. Verify `work_state.latest_candidate` includes the exact candidate and ancestry; failed and corrected checks appear in `latest_checks` across slices without staging duplicate bytes.
+- Trigger a malformed clarification followed by a corrected accepted control. The original rejection remains in audit, its checkpoint resolution is `corrected_control_accepted`, and it no longer keeps an otherwise completed task waiting.
+- In simulated BLE tests, exercise every declared operation successfully and assert visible notification payload `2b`. A generic “notification” assertion alone must fail. Old pre-version-2 checks must not authorize activation.
+- Scan twice, return to the workspace list, then reopen the same revision. Scans reuse workspace consent, but connections and peripheral handles are gone. Revoke/deny, navigate away and return: requests stay blocked until native re-enable.
+- Background Atlas while on the workspace list, return and reopen: scanning requires fresh consent. Repeat after revision/epoch change and OS permission loss. Verify another workspace cannot reuse the grant.
+- Complete a write, disconnect and inspect its receipt: the completed outcome remains unchanged, while use of old handles is denied. Revoke during a pending operation: its delivery is cancelled and no write is automatically retried.

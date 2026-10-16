@@ -23,6 +23,7 @@ internal fun WorkspaceDeviceHost(principal: WorkspacePrincipal, bundle: JSONObje
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+    val consentStore = remember(owner) { WorkspaceConsentStore.forLifecycle(owner.lifecycle) }
     var version by remember { mutableIntStateOf(0) }
     var prompt by remember { mutableStateOf<String?>(null) }
     var consentResult by remember { mutableStateOf<CompletableDeferred<Boolean>?>(null) }
@@ -42,11 +43,12 @@ internal fun WorkspaceDeviceHost(principal: WorkspacePrincipal, bundle: JSONObje
                 try { launcher.launch(adapter.permissions); withTimeout(40_000) { result.await() }; adapter.permitted() }
                 finally { if (permissionResult === result) permissionResult = null }
             }
-        }, scope = scope, changed = { version++ }, audit = { audit.record(it) }) }
+        }, scope = scope, changed = { version++ }, audit = { audit.record(it) },
+        grants = consentStore.acquire(principal, requested)) }
     DisposableEffect(broker, owner) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) broker.revoke(reason="activity_stopped") }
         owner.lifecycle.addObserver(observer)
-        onDispose { owner.lifecycle.removeObserver(observer); broker.close(); audit.close(); consentResult?.cancel(); permissionResult?.cancel() }
+        onDispose { owner.lifecycle.removeObserver(observer); broker.close(preserveConsent = true); audit.close(); consentResult?.cancel(); permissionResult?.cancel() }
     }
     // Periodic status sampling shows peripheral disconnects and Android permission changes without a page request.
     LaunchedEffect(broker) { while (true) { kotlinx.coroutines.delay(750); broker.refreshAuthority(); version++ } }

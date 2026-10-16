@@ -386,8 +386,12 @@ class WorkspaceDeviceTest {
             val lease=recovered.claim(task.id,"after-interruption")!!
             bundle.getJSONObject("files").put("ui/app.js",source)
             val second=repository.stage(workspace.id,workspace.realmId,workspace.liveRevisionId,first.getString("candidate_id"),null,JSONObject().put("ui/app.js",source),session.id,continuation)
+            val weak=WorkspaceUiSimulation(context,db).test(workspace.id,workspace.realmId,second.getString("candidate_id"),steps("notification"))
+            assertFalse(weak.toString(),weak.getBoolean("passed"))
+            assertTrue(weak.toString(),weak.getBoolean("notification_delivered"))
+            assertFalse(weak.getBoolean("notification_verified"))
             val good=WorkspaceUiSimulation(context,db).test(workspace.id,workspace.realmId,second.getString("candidate_id"),steps("notification 2b"))
-            assertTrue(good.toString(),good.getBoolean("passed"));assertTrue(good.getString("evidence_scope").contains("simulated"))
+            assertTrue(good.toString(),good.getBoolean("passed"));assertTrue(good.getBoolean("notification_verified"));assertTrue(good.getString("evidence_scope").contains("simulated"))
             record("workspace_package_stage",JSONObject().put("workspace_id",workspace.id).put("files",JSONObject().put("ui/app.js",source)),second)
             record("workspace_package_ui_test",JSONObject().put("workspace_id",workspace.id).put("candidate_id",second.getString("candidate_id")),good)
             val pure=WorkspaceCandidateChecks(db,WorkspaceWorkerSupervisor(context)::run).test(workspace.id,workspace.realmId,second.getString("candidate_id"))

@@ -10,6 +10,7 @@ import com.grinningfrog.atlas.device.ListeningCallbacks
 import com.grinningfrog.atlas.device.SpeechCallbacks
 import com.grinningfrog.atlas.model.AtlasSession
 import com.grinningfrog.atlas.model.AtlasMessage
+import com.grinningfrog.atlas.model.ToolRisk
 import com.grinningfrog.atlas.model.AtlasToolCall
 import com.grinningfrog.atlas.model.ContextMode
 import com.grinningfrog.atlas.model.ClarificationAmbiguity
@@ -750,9 +751,17 @@ class AtlasMobileRuntime(
     }
 
     private fun recordClarificationControlResult(sessionId: String, turnId: String, proposal: ToolCallProposal, action: String, clarificationId: String) {
-        database.insertMessage(AtlasMessage(sessionId = sessionId, turnId = turnId, role = MessageRole.TOOL,
-            content = JSONObject().put("ok", true).put("action", action).put("clarification_id", clarificationId).toString(),
-            createdAtMs = System.currentTimeMillis(), kind = MessageKind.TOOL_RESULT, toolCallId = proposal.id))
+        val result = JSONObject().put("ok", true).put("accepted", true).put("action", action).put("clarification_id", clarificationId).toString()
+        val now = System.currentTimeMillis()
+        database.writeTransaction {
+            val receipt = AtlasToolCall(id = proposal.id, sessionId = sessionId, turnId = turnId,
+                name = proposal.name, argumentsJson = proposal.argumentsJson, status = ToolCallStatus.COMPLETED,
+                risk = ToolRisk.SESSION_WRITE, requiresConfirmation = false, idempotencyKey = "$turnId:control:${proposal.id}",
+                createdAtMs = now, updatedAtMs = now)
+            database.insertToolCall(receipt)
+            database.updateToolCall(receipt.id, ToolCallStatus.COMPLETED, resultJson = result)
+            recordToolResult(receipt, result)
+        }
     }
 
     private suspend fun ensureClarificationDelivered(session: AtlasSession, turnId: String, clarification: PendingClarification, spoken: Boolean) {

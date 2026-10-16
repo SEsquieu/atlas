@@ -52,7 +52,12 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
                 require(row.moveToFirst() && row.getString(0) == hash && row.getString(1) == base && row.getLong(2) == version) { "CHECK_REQUIRED" }
             }
             val capabilities = WorkspaceCapabilityRegistry.requested(bundle.getJSONObject("manifest"))
-            if(capabilities.isNotEmpty()) database.readableDatabase.rawQuery("SELECT check_id FROM workspace_application_checks WHERE workspace_id=? AND candidate_id=? AND content_hash=? AND base_revision_id=? AND data_version=? AND kind='ui_simulation' AND passed=1 ORDER BY created_at DESC,check_id DESC LIMIT 1",arrayOf(workspaceId,candidateId,hash,base,version.toString())).use { require(it.moveToFirst()) { "UI_SIMULATION_REQUIRED: run workspace_package_ui_test covering declared controls before activation" }; uiCheckId=it.getString(0) }
+            if(capabilities.isNotEmpty()) database.readableDatabase.rawQuery("SELECT check_id,result_json FROM workspace_application_checks WHERE workspace_id=? AND candidate_id=? AND content_hash=? AND base_revision_id=? AND data_version=? AND kind='ui_simulation' AND passed=1 ORDER BY created_at DESC,check_id DESC LIMIT 1",arrayOf(workspaceId,candidateId,hash,base,version.toString())).use {
+                require(it.moveToFirst()) { "UI_SIMULATION_REQUIRED: run workspace_package_ui_test covering declared controls before activation" }
+                val evidence=JSONObject(it.getString(1))
+                require(evidence.optInt("verification_version") >= 2) { "UI_SIMULATION_REQUIRED: rerun workspace_package_ui_test; older checks did not verify successful operations and visible notification delivery" }
+                uiCheckId=it.getString(0)
+            }
             val old = JSONObject(database.loadLiveWorkspaceRevision(workspaceId)!!.definitionJson)
             if (WorkspaceApplicationData.isApplication(old)) {
                 require(old.getJSONObject("manifest").getInt("data_schema_version") == bundle.getJSONObject("manifest").getInt("data_schema_version")) { "MIGRATION_REQUIRED" }

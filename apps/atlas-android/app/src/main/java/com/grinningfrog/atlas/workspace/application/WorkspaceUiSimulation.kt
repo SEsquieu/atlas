@@ -16,7 +16,8 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
         val calls=linkedMapOf<String,Int>()
         private var connected=false
         private var subscribed=false
-        private var delivered=false
+        var delivered=false
+            private set
         private fun call(name: String) { calls[name]=(calls[name] ?: 0)+1 }
         override fun permitted()=true
         override fun status()=JSONObject().put("installed",true).put("os_permission_granted",true).put("platform_enabled",true).put("connected",connected).put("device_label",if(connected)"Simulated bench device" else JSONObject.NULL)
@@ -48,10 +49,17 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
         val bundle=candidate.getJSONObject("bundle")
         val requested=WorkspaceCapabilityRegistry.requested(bundle.getJSONObject("manifest"))[WorkspaceBleContract.CAPABILITY].orEmpty()
         val reports=JSONArray();val radio=Radio();var runtimeEvidence:JSONObject?=null
+        val succeeded=linkedMapOf<String,Int>();val failed=JSONArray()
         withContext(Dispatchers.Main.immediate) {
             val ready=CompletableDeferred<Unit>();val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
             val principal=WorkspacePrincipal(realmId,workspaceId,"simulation-$candidateId",UUID.randomUUID().toString(),0,WorkspaceInstanceMode.TEST)
-            val broker=if(requested.isEmpty())null else WorkspaceDeviceBroker(principal,listOf(WorkspaceBleCapability(requested,radio,simulated=true)),{true},{true},{true},scope,isSimulation=true)
+            val broker=if(requested.isEmpty())null else WorkspaceDeviceBroker(principal,listOf(WorkspaceBleCapability(requested,radio,simulated=true)),{true},{true},{true},scope,isSimulation=true, audit={ event ->
+                val details=event.getJSONObject("details");val method=details.optString("method").substringAfter('.')
+                when(event.getString("kind")) {
+                    "operation_succeeded" -> succeeded[method]=(succeeded[method] ?: 0)+1
+                    "operation_failed", "request_rejected" -> failed.put(JSONObject(event.toString()))
+                }
+            })
             var presentation: WorkspaceWebPresentation?=null
             suspend fun evaluate(script: String): String = suspendCancellableCoroutine { c -> presentation!!.view.evaluateJavascript(script) { if(c.isActive)c.resume(it) } }
             try {
@@ -73,11 +81,19 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
             } finally { runtimeEvidence=presentation?.diagnostics();presentation?.dispose();broker?.close();scope.cancel() }
         }
         val required=requested+if("subscribe" in requested)setOf("events") else emptySet()
-        val missing=required.filter { (radio.calls[it] ?: 0)==0 }
-        val passed=reports.length()==steps.length() && (0 until reports.length()).all { reports.getJSONObject(it).getBoolean("passed") } && missing.isEmpty()
+        val missing=required.filter { (succeeded[it] ?: 0)==0 }
+        val notificationAsserted = (0 until reports.length()).any { index ->
+            val step=steps.getJSONObject(index)
+            reports.getJSONObject(index).optBoolean("passed") && step.getString("action") in setOf("assert_text","wait_text") &&
+                step.getString("value").contains("2b", ignoreCase=true)
+        }
+        val notificationVerified = "subscribe" !in requested || radio.delivered && notificationAsserted
+        val passed=reports.length()==steps.length() && (0 until reports.length()).all { reports.getJSONObject(it).getBoolean("passed") } && missing.isEmpty() && notificationVerified
         val id=UUID.randomUUID().toString()
         val result=JSONObject().put("check_id",id).put("candidate_id",candidateId).put("content_hash",hash).put("base_revision_id",base).put("data_version",version)
             .put("runtime",runtimeEvidence ?: JSONObject.NULL).put("kind","ui_simulation").put("passed",passed).put("steps",reports).put("operation_counts",JSONObject(radio.calls as Map<*,*>)).put("missing_operations",JSONArray(missing))
+            .put("successful_operation_counts",JSONObject(succeeded as Map<*,*>)).put("failed_operations",failed)
+            .put("verification_version",2).put("notification_verified",notificationVerified).put("notification_delivered",radio.delivered)
             .put("evidence_scope","DOM controls and simulated BLE responses only. No physical device, Android/native consent dialog, painted pixels, or saved records were verified.")
         currentCoroutineContext().ensureActive()
         WorkspaceApplicationData(database).atomic {
