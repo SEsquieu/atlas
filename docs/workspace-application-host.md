@@ -227,3 +227,9 @@ Workspace foreground consent is held in memory outside the disposable presentati
 ### Alpha.25 verification
 
 Final application source commit `daf141f42c3dde163c8f1e74a709fb7f294b5011` passed the 292-test unit suite and Secure lint in [Android run 38981645874](https://github.com/SEsquieu/atlas/actions/runs/38981645874). All eleven instrumented tests passed on API 35 and 36 in [device run 38981645885](https://github.com/SEsquieu/atlas/actions/runs/38981645885). The extended real-panel regression caught a second revocation path in WebView disposal; that path is included in the verified correction. The production runner regression covers rejected clarification, accepted correction, user reply and clean task completion. Candidate recovery, completed-receipt integrity and rejection of legacy UI checks are covered without relaxing unknown-outcome guards. These are controlled tests, not a live-model convergence or physical-radio benchmark.
+
+### Alpha.25 delivered Secure build
+
+Release commit `64a530956d075ba2c83b7f402c4cc179c60e439d` sets Android version name `0.1.0-alpha.25`; [Android run 38982781747](https://github.com/SEsquieu/atlas/actions/runs/38982781747) passed unit tests, lint and persistent signing. The packaged manifest is `com.grinningfrog.atlas`, version code `1211`. All eleven instrumented tests also passed on both API 35 and 36 for this exact release commit in [device run 38982781778](https://github.com/SEsquieu/atlas/actions/runs/38982781778).
+
+The single Secure APK is `atlas-alpha25-64a5309-secure.apk`, 69,926,742 bytes, SHA-256 `de0f3b50e4f26080dd5addb639077948396d788674d74b0acb19587247e6f411`. Its signing certificate SHA-256 is unchanged: `2ca9f44b3f730da52b9151d9a53a794c35605619ed011fccd98fd4ee3dcf079b`. Upload metadata was read back from App Builds. Install as an update without clearing data; physical BLE behavior and live-model iteration remain phone acceptance work.
