@@ -301,6 +301,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
 
     private fun recoverableVerification(call: AtlasToolCall) =
         (call.name in setOf("workspace_package_test", "workspace_package_ui_test", "workspace_package_validate") ||
+            call.name=="workspace_package_read_file" && call.status==ToolCallStatus.FAILED && call.error.orEmpty().startsWith("EMPTY_PACKAGE_DRAFT") ||
             call.name=="workspace_package_stage" && (call.status==ToolCallStatus.COMPLETED && runCatching {JSONObject(call.resultJson.orEmpty()).optString("error")=="STAGING_ARGUMENTS_INVALID"}.getOrDefault(false) || call.status==ToolCallStatus.FAILED && (call.error.orEmpty().startsWith("VALIDATION_FAILED") || call.error.orEmpty().startsWith("Unknown fields:"))) ||
             call.name=="workspace_package_activate" && call.status==ToolCallStatus.COMPLETED && runCatching {JSONObject(call.resultJson.orEmpty()).optString("error") in setOf("ACCEPTANCE_REQUIRED","CHECK_REQUIRED")}.getOrDefault(false)) &&
         call.status in setOf(ToolCallStatus.COMPLETED, ToolCallStatus.REJECTED, ToolCallStatus.FAILED)
@@ -329,6 +330,10 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         }
     }
     private fun nonBlockingAuditFailure(call: AtlasToolCall, task: ExecutionTask, all: List<AtlasToolCall>): Boolean {
+        if(call.name=="workspace_package_read_file" && call.status==ToolCallStatus.FAILED && call.error.orEmpty().startsWith("EMPTY_PACKAGE_DRAFT")) {
+            val workspace=runCatching {JSONObject(call.argumentsJson).getString("workspace_id")}.getOrNull() ?: return false
+            return all.drop(all.indexOf(call)+1).any {next -> next.name=="workspace_package_stage" && next.status==ToolCallStatus.COMPLETED && runCatching {val r=JSONObject(next.resultJson.orEmpty());r.optString("workspace_id")==workspace && r.optBoolean("structurally_valid")}.getOrDefault(false)}
+        }
         if(call.name=="workspace_capture_view" && call.status==ToolCallStatus.FAILED) {
             val args=runCatching {JSONObject(call.argumentsJson)}.getOrDefault(JSONObject())
             val requirement=task.document.optJSONObject("completion_requirement")

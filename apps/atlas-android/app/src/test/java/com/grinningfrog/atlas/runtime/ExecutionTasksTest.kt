@@ -152,6 +152,34 @@ class ExecutionTasksTest {
         assertEquals(ExecutionState.WAITING,store.reconcileDelivered(t.id)!!.state)
     }
 
+    @Test fun declaredPersistenceCannotBeSatisfiedByPassingDomOnlyChecks() {
+        val w=db.createComposableWorkspace("Saved app", "")
+        val t=task();store.claim(t.id,"owner")!!
+        store.bindWorkspace(store.currentTurn(t.id),w.id,"activation",requirePersistence=true)
+        fun check(candidate:String,persistent:Boolean) {
+            clock++
+            val c=call(t,"workspace_package_ui_test");db.insertToolCall(c)
+            db.updateToolCall(c.id,ToolCallStatus.COMPLETED,resultJson=JSONObject().put("candidate_id",candidate).put("passed",true).put("storage_verified",persistent).put("storage_scope","isolated_test_database").toString())
+        }
+        check("candidate",false);assertEquals(1,store.missingAcceptance(store.currentTurn(t.id),"candidate").size)
+        check("other",true);assertEquals(1,store.missingAcceptance(store.currentTurn(t.id),"candidate").size)
+        check("candidate",true);assertTrue(store.missingAcceptance(store.currentTurn(t.id),"candidate").isEmpty())
+        store.bindWorkspace(store.currentTurn(t.id),w.id,"activation")
+        assertTrue(store.get(t.id)!!.document.getJSONObject("completion_requirement").getBoolean("require_persistence"))
+    }
+    @Test fun emptyDraftReadAndStagingValidationRecoverOnTheSameTask() {
+        val w=db.createComposableWorkspace("Draft", "")
+        val t=task();val lease=store.claim(t.id,"owner")!!
+        store.bindWorkspace(store.currentTurn(t.id),w.id)
+        val read=call(t,"workspace_package_read_file",JSONObject().put("workspace_id",w.id).toString());db.insertToolCall(read);db.updateToolCall(read.id,ToolCallStatus.FAILED,error="EMPTY_PACKAGE_DRAFT: stage a package")
+        val bad=call(t,"workspace_package_stage",JSONObject().put("workspace_id",w.id).toString());db.insertToolCall(bad);db.updateToolCall(bad.id,ToolCallStatus.COMPLETED,resultJson="""{"ok":false,"error":"STAGING_ARGUMENTS_INVALID"}""")
+        assertEquals(ExecutionState.READY,store.finish(lease,SliceOutcome.RESPONDED,1)!!.state)
+        store.nextTurn(t.id);val next=store.claim(t.id,"corrected")!!
+        val good=call(t,"workspace_package_stage",JSONObject().put("workspace_id",w.id).toString());db.insertToolCall(good);db.updateToolCall(good.id,ToolCallStatus.COMPLETED,resultJson=JSONObject().put("workspace_id",w.id).put("candidate_id","candidate").put("structurally_valid",true).toString())
+        assertEquals(ExecutionState.COMPLETED,store.finish(next,SliceOutcome.RESPONDED,1)!!.state)
+        assertEquals(ToolCallStatus.FAILED,db.loadToolCall(read.id)!!.status)
+    }
+
     @Test fun writerAndWorkspaceSwitchUseOneLockOrder() {
         val w = db.createComposableWorkspace("Concurrent", "")
         val entered = java.util.concurrent.CountDownLatch(1)
