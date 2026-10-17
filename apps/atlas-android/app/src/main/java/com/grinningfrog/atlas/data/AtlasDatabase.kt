@@ -851,11 +851,11 @@ class AtlasDatabase(context: Context, databaseName: String? = "atlas.db") : SQLi
     }
 
     fun listComposableWorkspaces(includeArchived: Boolean = false): List<ComposableWorkspace> = readableDatabase.rawQuery(
-        "SELECT composable_workspace_id,realm_id,name,description,status,live_revision_id,created_at,updated_at,(SELECT definition_json FROM workspace_revisions WHERE revision_id=composable_workspaces.live_revision_id),(SELECT COUNT(*) FROM workspace_records WHERE composable_workspace_id=composable_workspaces.composable_workspace_id) FROM composable_workspaces ${if (includeArchived) "" else "WHERE status = 'ACTIVE'"} ORDER BY updated_at DESC", null
+        "SELECT composable_workspace_id,realm_id,name,description,status,live_revision_id,created_at,updated_at,(SELECT CASE WHEN length(definition_json)<=16384 THEN definition_json ELSE NULL END FROM workspace_revisions WHERE revision_id=composable_workspaces.live_revision_id),(SELECT COUNT(*) FROM workspace_records WHERE composable_workspace_id=composable_workspaces.composable_workspace_id) FROM composable_workspaces ${if (includeArchived) "" else "WHERE status = 'ACTIVE'"} ORDER BY updated_at DESC", null
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toComposableWorkspace()) } }
 
     fun loadComposableWorkspace(id: String): ComposableWorkspace? = readableDatabase.rawQuery(
-        "SELECT composable_workspace_id,realm_id,name,description,status,live_revision_id,created_at,updated_at,(SELECT definition_json FROM workspace_revisions WHERE revision_id=composable_workspaces.live_revision_id),(SELECT COUNT(*) FROM workspace_records WHERE composable_workspace_id=composable_workspaces.composable_workspace_id) FROM composable_workspaces WHERE composable_workspace_id = ?", arrayOf(id)
+        "SELECT composable_workspace_id,realm_id,name,description,status,live_revision_id,created_at,updated_at,(SELECT CASE WHEN length(definition_json)<=16384 THEN definition_json ELSE NULL END FROM workspace_revisions WHERE revision_id=composable_workspaces.live_revision_id),(SELECT COUNT(*) FROM workspace_records WHERE composable_workspace_id=composable_workspaces.composable_workspace_id) FROM composable_workspaces WHERE composable_workspace_id = ?", arrayOf(id)
     ).use { if (it.moveToFirst()) it.toComposableWorkspace() else null }
 
     fun loadWorkspaceRevision(revisionId: String): WorkspaceRevision? = readableDatabase.rawQuery(
