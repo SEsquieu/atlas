@@ -365,20 +365,22 @@ class AtlasMobileRuntime(
     }
 
     /** Explicit resume retains cumulative usage and never reconciles an unknown effect by retrying it. */
-    fun resumeExecution(taskId: String) {
-        val task = executionTasks.get(taskId) ?: return
+    suspend fun resumeExecution(taskId: String) = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        operations.withLock {
+        val task = executionTasks.get(taskId) ?: return@withContext
         require(task.sessionId == requireActiveSession().id)
-        if(executionTasks.reconcileDelivered(taskId)?.state==ExecutionState.COMPLETED) { publish();return }
+        if(executionTasks.reconcileDelivered(taskId)?.state==ExecutionState.COMPLETED) { publish();return@withContext }
         require(task.state in setOf(ExecutionState.READY, ExecutionState.PAUSED, ExecutionState.WAITING))
         require(task.waitReason !in setOf("clarification", "authorization", "unknown_operation_outcome")) { "Resolve the recorded blocker first" }
         if (task.waitReason == "provider") require(lateTurnJob?.isActive != true) { "Provider request is still unresolved" }
-        if (!executionTasks.available(taskId)) { publish(error = "Task allowance exhausted; remaining usage is preserved"); return }
+        if (!executionTasks.available(taskId)) { publish(error = "Task allowance exhausted; remaining usage is preserved"); return@withContext }
         if (task.state != ExecutionState.READY) {
             val resumed=executionTasks.control(taskId, ExecutionState.READY, "User resumed")
             require(resumed?.state == ExecutionState.READY) { "Operation outcome requires reconciliation before resuming" }
             executionTasks.nextTurn(taskId)
         }
         resumeReadyExecution(task.sessionId)
+        }
     }
 
     fun cancelExecution(taskId: String) {
