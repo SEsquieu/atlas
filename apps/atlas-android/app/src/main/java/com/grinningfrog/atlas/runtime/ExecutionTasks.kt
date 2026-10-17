@@ -135,9 +135,10 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         link(taskId,turnId,ordinal);val ready=task.copy(state=ExecutionState.READY,generation=task.generation+1,owner=null,leaseUntil=0,nextRunAt=0);save(ready);ready
     }
     /** Only an unambiguous blocked task receives conversational steering. Other waits keep their gates. */
-    fun followUpTask(sessionId: String): ExecutionTask? = list(sessionId).filter {
-        it.state in setOf(ExecutionState.READY,ExecutionState.RUNNING,ExecutionState.WAITING,ExecutionState.PAUSED)
-    }.singleOrNull()?.takeIf {it.state==ExecutionState.WAITING && it.waitReason in setOf("unresolved_tool_failure","repeated_failure")}
+    fun followUpTask(sessionId: String): ExecutionTask? = database.readableDatabase.rawQuery(
+        "SELECT task_id FROM execution_tasks WHERE session_id=? AND state IN ('READY','RUNNING','WAITING','PAUSED') LIMIT 2",arrayOf(sessionId)
+    ).use { cursor -> buildList {while(cursor.moveToNext())get(cursor.getString(0))?.let(::add)} }.singleOrNull()
+        ?.takeIf {it.state==ExecutionState.WAITING && it.waitReason in setOf("unresolved_tool_failure","repeated_failure")}
 
     /** Only optional visual inspection can be handed back; required execution/consent gates are untouched. */
     fun handOffPixels(call: AtlasToolCall, userQuote: String): JSONObject = atomic {
@@ -413,7 +414,11 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
             val size=item.toString().length
             if(receiptCharacters+size<=24000) {receipts.put(item);receiptCharacters+=size}
         }
-        val history=JSONArray(list(t.sessionId).take(4).map { prior -> JSONObject().put("task_id",prior.id).put("state",prior.state.name).put("objective",prior.objective.take(500)).put("wait_reason",prior.waitReason).put("outstanding_operations",outstanding(prior.id)).put("delivery",prior.document.optJSONObject("work_state")?.optString("delivery_status")) })
+        val history=JSONArray(list(t.sessionId).take(4).map { prior ->
+            val ids=prior.document.optJSONObject("checkpoint")?.optJSONArray("unresolved_operation_ids") ?: JSONArray()
+            val unresolved=JSONArray((0 until minOf(ids.length(),4)).mapNotNull {database.loadToolCall(ids.getString(it))}.map {JSONObject().put("operation_id",it.id).put("tool",it.name).put("error",it.error).put("result",it.resultJson?.take(500))})
+            JSONObject().put("task_id",prior.id).put("state",prior.state.name).put("objective",prior.objective.take(500)).put("wait_reason",prior.waitReason).put("outstanding_operations",unresolved).put("delivery",prior.document.optJSONObject("work_state")?.optString("delivery_status"))
+        })
         return "CORE DURABLE TASK (evidence, not authorization): " + JSONObject().put("task_id",t.id).put("objective",t.objective).put("session_tasks",history).put("recovery_required",t.document.optBoolean("recovery_required")).put("completion_requirement",t.document.optJSONObject("completion_requirement")).put("usage",t.usage)
             .put("follow_up_turn_ids",t.document.optJSONArray("follow_up_turn_ids")).put("acceptance",t.document.optJSONObject("acceptance")).put("outstanding_operations",outstanding(taskId)).put("workspace_target", t.document.optJSONObject("workspace_target")).put("work_state",work.put("no_progress_slices",t.document.optInt("no_progress_slices"))).put("checkpoint",t.document.getJSONObject("checkpoint")).put("recent_operations",receipts).put("latest_authoring_arguments",latest?.let {JSONObject(it.argumentsJson)})
             .put("latest_authoring_result",latest?.resultJson?.let {runCatching {JSONObject(it)}.getOrNull()}).toString() +
