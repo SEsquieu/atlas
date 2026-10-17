@@ -131,6 +131,8 @@ class ExecutionRuntimeTest {
         assertEquals(3,task.document.getInt("slice_count"))
         assertNotEquals(w.liveRevisionId,db.loadComposableWorkspace(w.id)!!.liveRevisionId)
         assertEquals("activated",task.document.getJSONObject("work_state").getString("delivery_status"))
+        val evidence=task.document.getJSONObject("work_state").getJSONObject("latest_candidate")
+        assertTrue(evidence.getBoolean("activated"));assertTrue(evidence.getBoolean("executed"));assertEquals(1,evidence.getInt("tests_run"))
         assertEquals(1,db.loadMessages(session.id).count { it.role==MessageRole.USER })
     }
 

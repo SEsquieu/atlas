@@ -26,7 +26,9 @@ internal object ExecutionWorkState {
         val candidate = candidateId?.let { id -> JSONObject().put("candidate_id", id).apply {
             inspected?.let { metadata -> for (key in metadata.keys()) put(key, metadata.get(key)) }
             stage?.let { call ->
-                val result = json(call.resultJson); for (key in result.keys()) put(key, result.get(key))
+                val result = json(call.resultJson)
+                for (key in listOf("candidate_id","workspace_id","content_hash","base_revision_id","parent_candidate_id","structurally_valid"))
+                    if(result.has(key))put(key,result.get(key))
                 val args = json(call.argumentsJson)
                 for (key in listOf("base_revision_id", "parent_candidate_id", "navigation_sequence")) if (args.has(key)) put(key, args.get(key))
             }
@@ -41,8 +43,13 @@ internal object ExecutionWorkState {
             .put("changed_files", JSONArray(changedFiles.take(128))).put("latest_checks", evidence)
             .put("activation", activated?.let(::receipt)).put("authority", "Evidence only; identifiers must still pass target, freshness and permission checks.")
         val published = activated?.let { json(it.resultJson) }
+        val matchingActivation = candidateId != null && published?.optString("candidate_id") == candidateId && published?.optBoolean("still_active",true) == true
+        candidate?.put("executed",checks.isNotEmpty())?.put("activated",matchingActivation)
+        checks.lastOrNull { it.name == "workspace_package_test" }?.let { call ->
+            val result=json(call.resultJson);if(result.has("tests_run"))candidate?.put("tests_run",result.getInt("tests_run"))
+        }
         val delivery = when {
-            candidateId != null && published?.optString("candidate_id") == candidateId -> "activated"
+            matchingActivation -> "activated"
             evidence.length() > 0 && (0 until evidence.length()).any { evidence.getJSONObject(it).has("passed") && !evidence.getJSONObject(it).optBoolean("passed") } -> "verification_failed"
             candidateId != null -> "staged_not_activated"
             else -> "inspecting"
