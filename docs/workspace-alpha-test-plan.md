@@ -212,3 +212,5 @@ Alpha.27 source `05a9160298bd61a6fc808a980a8de97898b2c0f4` passed unit/lint run 
 - Retry creation across interrupted tasks and verify one session-owned draft. Identical staging must reuse the candidate with a no-change receipt. Existing drafts are never deleted automatically.
 - A durable authoring response after 71 seconds must remain on its original request; ordinary interaction detachment and cancellation remain supported.
 - Install Secure over alpha.27 without clearing data. Live-model convergence and a fresh 0-to-1 demo remain acceptance work after controlled validation.
+
+Alpha.28 source `43dfbed2b5fe1ea4e79f9027c6119cfc45dec71d` passed unit/lint run 39051664155 and all 13 instrumented tests on both API 35 and 36 in run 39051664133. Package `4dc97f952576fc3f4d68a311af20d23fb70e9c94` passed unit/lint/signing run 39052437693. Version code 1228, package identity, persistent signing certificate and APK checksum were verified from the downloaded Secure APK. Drive App Builds readback matched its filename and 70,008,662-byte size. Live-model convergence and actual phone-process restart remain separate acceptance work.
