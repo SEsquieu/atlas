@@ -16,6 +16,7 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
         val calls=linkedMapOf<String,Int>()
         private var connected=false
         private var subscribed=false
+        private var emitted=false
         var delivered=false
             private set
         private fun call(name: String) { calls[name]=(calls[name] ?: 0)+1 }
@@ -32,8 +33,8 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
         override suspend fun read(id: String): JSONObject { characteristic(id);call("read");return JSONObject().put("hex","2a").put("truncated",false).put("gatt_status",0) }
         override suspend fun write(id: String, hex: String): JSONObject { characteristic(id);call("write");return JSONObject().put("acknowledged",true).put("gatt_status",0) }
         override suspend fun subscribe(id: String, enabled: Boolean): JSONObject { characteristic(id);call("subscribe");subscribed=enabled;return JSONObject().put("enabled",enabled).put("gatt_status",0) }
-        override fun events(): JSONObject { call("events");return JSONObject().put("events",JSONArray().apply { if(connected && subscribed && !delivered) { delivered=true;put(JSONObject().put("characteristic_id","sim-char").put("hex","2b").put("truncated",false).put("received_at_ms",System.currentTimeMillis())) } }).put("dropped",0) }
-        override fun close() { connected=false;subscribed=false }
+        override fun events(): JSONObject { call("events");return JSONObject().put("events",JSONArray().apply { if(connected && subscribed && !emitted) { delivered=true;emitted=true;put(JSONObject().put("characteristic_id","sim-char").put("hex","2b").put("truncated",false).put("received_at_ms",System.currentTimeMillis())) } }).put("dropped",0) }
+        override fun close() { connected=false;subscribed=false;emitted=false }
     }
     suspend fun test(workspaceId: String, realmId: String, candidateId: String, steps: JSONArray, verifyStorage: Boolean = false, randomValues: List<Double>? = null, committed: (JSONObject)->Unit = {}): JSONObject = withTimeout(30_000) {
         require(steps.length() in 1..32)
@@ -54,27 +55,33 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
         val reports=JSONArray();val radio=Radio();var runtimeEvidence:JSONObject?=null
         val succeeded=linkedMapOf<String,Int>();val failed=JSONArray()
         val isolated=withContext(Dispatchers.IO) {WorkspaceTestStorage(context,bundle)}
-        val bridgeEvidence=JSONArray();var reloads=0;var recordAfterReload=false;var commits=0
+        val bridgeFailures=JSONArray();var hostFailureCount=0;var reloads=0;var recordAfterReload=false;var commits=0
         try {
         withContext(Dispatchers.Main.immediate) {
             var ready=CompletableDeferred<Unit>();val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
             val principal=isolated.principal()
-            val broker=if(requested.isEmpty())null else WorkspaceDeviceBroker(principal,listOf(WorkspaceBleCapability(requested,radio,simulated=true)),{true},{true},{true},scope,isSimulation=true, audit={ event ->
+            fun makeBroker()=if(requested.isEmpty())null else WorkspaceDeviceBroker(principal,listOf(WorkspaceBleCapability(requested,radio,simulated=true)),{true},{true},{true},scope,isSimulation=true, audit={ event ->
                 val details=event.getJSONObject("details");val method=details.optString("method").substringAfter('.')
                 when(event.getString("kind")) {
                     "operation_succeeded" -> succeeded[method]=(succeeded[method] ?: 0)+1
                     "operation_failed", "request_rejected" -> failed.put(JSONObject(event.toString()))
                 }
             })
+            var broker: WorkspaceDeviceBroker?=null
             var presentation: WorkspaceWebPresentation?=null
             suspend fun evaluate(script: String): String = suspendCancellableCoroutine { c -> presentation!!.view.evaluateJavascript(script) { if(c.isActive)c.resume(it) } }
                 fun collect() {
-                    val calls=presentation?.diagnostics()?.optJSONArray("host_calls") ?: JSONArray()
-                    for(j in 0 until calls.length()) {val c=calls.getJSONObject(j);bridgeEvidence.put(c);if(c.optString("method")=="data.commit" && c.optString("status")=="succeeded")commits++}
+                    val diagnostic=presentation?.diagnostics() ?: return
+                    hostFailureCount+=diagnostic.optInt("host_failure_count")
+                    val errors=diagnostic.optJSONArray("host_failures") ?: JSONArray()
+                    for(j in 0 until errors.length()) {if(bridgeFailures.length()>=16)bridgeFailures.remove(0);bridgeFailures.put(errors.getJSONObject(j))}
+                    val calls=diagnostic.optJSONArray("host_calls") ?: JSONArray()
+                    for(j in 0 until calls.length()) {val c=calls.getJSONObject(j);if(c.optString("method")=="data.commit" && c.optString("status")=="succeeded")commits++}
                 }
             try {
                 suspend fun open() {
                     ready=CompletableDeferred()
+                    broker=makeBroker()
                     val surface=WorkspaceWebPresentation(context,bundle,principal,{true},{ready.complete(Unit)},{ready.completeExceptionally(IllegalStateException(it))},data=isolated.data,devices=broker,testRandomValues=randomValues)
                     presentation=surface;surface.view.layout(0,0,1080,900);surface.load()
                     withTimeout(8_000) {ready.await()}
@@ -120,13 +127,13 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
                 step.getString("value").contains("2b", ignoreCase=true)
         }
         val notificationVerified = "subscribe" !in requested || radio.delivered && notificationAsserted
-        val hostFailures=(0 until bridgeEvidence.length()).map {bridgeEvidence.getJSONObject(it)}.filter {it.optString("status")=="failed"}
+        val hostFailures=(0 until bridgeFailures.length()).map {bridgeFailures.getJSONObject(it)}
         val storageVerified=recordAfterReload
-        val passed=(!verifyStorage || storageVerified) && hostFailures.isEmpty() && reports.length()==steps.length() && (0 until reports.length()).all { reports.getJSONObject(it).getBoolean("passed") } && missing.isEmpty() && notificationVerified
+        val passed=(!verifyStorage || storageVerified) && hostFailureCount==0 && reports.length()==steps.length() && (0 until reports.length()).all { reports.getJSONObject(it).getBoolean("passed") } && missing.isEmpty() && notificationVerified
         val verified=if(passed)(0 until steps.length()).mapNotNull {steps.getJSONObject(it).optString("criterion").trim().takeIf(String::isNotBlank)}.distinct() else emptyList()
         val id=UUID.randomUUID().toString()
         val result=JSONObject().put("check_id",id).put("candidate_id",candidateId).put("content_hash",hash).put("base_revision_id",base).put("data_version",version)
-            .put("storage_verified",storageVerified).put("storage_scope","isolated_test_database").put("storage_evidence",JSONObject().put("commits",commits).put("reloads",reloads).put("record_asserted_after_reload",recordAfterReload)).put("host_failures",JSONArray(hostFailures)).put("random_values",randomValues?.let(::JSONArray)).put("runtime",runtimeEvidence ?: JSONObject.NULL).put("kind","ui_simulation").put("passed",passed).put("steps",reports).put("operation_counts",JSONObject(radio.calls as Map<*,*>)).put("missing_operations",JSONArray(missing))
+            .put("storage_verified",storageVerified).put("storage_scope","isolated_test_database").put("storage_evidence",JSONObject().put("commits",commits).put("reloads",reloads).put("record_asserted_after_reload",recordAfterReload)).put("host_failure_count",hostFailureCount).put("host_failures",JSONArray(hostFailures)).put("random_values",randomValues?.let(::JSONArray)).put("runtime",runtimeEvidence ?: JSONObject.NULL).put("kind","ui_simulation").put("passed",passed).put("steps",reports).put("operation_counts",JSONObject(radio.calls as Map<*,*>)).put("missing_operations",JSONArray(missing))
             .put("successful_operation_counts",JSONObject(succeeded as Map<*,*>)).put("failed_operations",failed)
             .put("verified_criteria",JSONArray(verified)).put("verification_version",3).put("notification_verified",notificationVerified).put("notification_delivered",radio.delivered)
             .put("evidence_scope","DOM controls, isolated SQLite storage when exercised, and simulated BLE responses. storage_verified requires commit, page reload and exact record assertion. No live phone records, physical device, Android/native consent dialog or painted pixels were verified.")

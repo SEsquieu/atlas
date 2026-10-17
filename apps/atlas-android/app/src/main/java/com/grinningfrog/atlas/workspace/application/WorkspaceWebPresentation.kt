@@ -32,12 +32,14 @@ class WorkspaceWebPresentation(
     private var messageWindow = android.os.SystemClock.elapsedRealtime()
     private val bridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val console = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
+    @Volatile private var hostFailureCount=0
+    private val hostFailures=mutableListOf<JSONObject>()
     private val hostCalls = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
-    private fun hostAudit(method: String, status: String, code: String? = null, message: String? = null) { synchronized(hostCalls) { if(hostCalls.size>=64)hostCalls.removeAt(0);hostCalls.add(JSONObject().put("method",method).put("status",status).put("error_code",code).put("message",message?.take(500))) } }
+    private fun hostAudit(method: String, status: String, code: String? = null, message: String? = null) { synchronized(hostCalls) { if(hostCalls.size>=64)hostCalls.removeAt(0);val event=JSONObject().put("method",method).put("status",status).put("error_code",code).put("message",message?.take(500));hostCalls.add(event);if(status=="failed") {hostFailureCount++;if(hostFailures.size>=16)hostFailures.removeAt(0);hostFailures.add(event)} } }
     private val resources = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
     private val provider = WebViewCompat.getCurrentWebViewPackage(context)?.let { "${it.packageName}/${it.versionName}" } ?: "unknown"
     @Volatile private var ready = false
-    fun diagnostics(): JSONObject = JSONObject().put("instance_mode",principal.mode.name.lowercase()).put("simulation",devices?.isSimulation==true).put("webview_provider", provider).put("android_api", android.os.Build.VERSION.SDK_INT).put("native_canvas_fallback", "#010302").put("devices", devices?.status() ?: JSONObject.NULL).put("ready", ready).put("disposed", disposed).put("resources", org.json.JSONArray(synchronized(resources) { resources.map { JSONObject(it.toString()) } })).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } })).put("host_calls",org.json.JSONArray(synchronized(hostCalls) {hostCalls.map {JSONObject(it.toString())}}))
+    fun diagnostics(): JSONObject = JSONObject().put("instance_mode",principal.mode.name.lowercase()).put("simulation",devices?.isSimulation==true).put("webview_provider", provider).put("android_api", android.os.Build.VERSION.SDK_INT).put("native_canvas_fallback", "#010302").put("devices", devices?.status() ?: JSONObject.NULL).put("ready", ready).put("disposed", disposed).put("resources", org.json.JSONArray(synchronized(resources) { resources.map { JSONObject(it.toString()) } })).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } })).put("host_failure_count",hostFailureCount).put("host_failures",org.json.JSONArray(synchronized(hostCalls) {hostFailures.map {JSONObject(it.toString())}})).put("host_calls",org.json.JSONArray(synchronized(hostCalls) {hostCalls.map {JSONObject(it.toString())}}))
     val view: WebView
 
     init {

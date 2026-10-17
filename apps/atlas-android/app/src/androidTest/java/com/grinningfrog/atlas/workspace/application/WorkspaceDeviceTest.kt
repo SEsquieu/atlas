@@ -368,7 +368,7 @@ class WorkspaceDeviceTest {
                 .put(step("reload")).put(step("wait_text","#notes","Saved across reload"))
                 .put(step("assert_record",value="""{"collection":"notes","data":{"text":"Saved across reload"}}""").put("criterion","A saved note survives page reload")),verifyStorage=true,randomValues=listOf(0.25,0.75))
             assertTrue(result.toString(),result.getBoolean("passed"));assertTrue(result.getBoolean("storage_verified"))
-            assertEquals(0,WorkspaceApplicationData(db).version(w.id));assertTrue(db.listWorkspaceRecords(w.id).isEmpty());assertEquals(1,db.listComposableWorkspaces().count {it.name=="Storage simulation"})
+            assertEquals(0L,WorkspaceApplicationData(db).version(w.id));assertTrue(db.listWorkspaceRecords(w.id).isEmpty());assertEquals(1,db.listComposableWorkspaces().count {it.name=="Storage simulation"})
             // A new simulation receives a fresh dataset rather than a retained previous test's data.
             val fresh=WorkspaceUiSimulation(context,db).test(w.id,w.realmId,good.getString("candidate_id"),JSONArray().put(step("assert_record",value="""{"collection":"notes","data":{"text":"Saved across reload"}}""")),verifyStorage=true)
             assertFalse(fresh.getBoolean("passed"));assertFalse(fresh.getBoolean("storage_verified"))

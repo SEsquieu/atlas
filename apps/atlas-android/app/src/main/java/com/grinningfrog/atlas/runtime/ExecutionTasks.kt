@@ -247,7 +247,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
             if (recoverableVerification(call)) {
                 val r=ExecutionWorkState.receipt(call)
                 JSONObject().put("tool",call.name).put("error",call.error).apply {
-                    for (key in listOf("content_hash","passed","missing_operations","missing_criteria","failed_steps","failed_fixtures","notification_verified"))
+                    for (key in listOf("content_hash","passed","detail","host_failures","missing_operations","missing_criteria","failed_steps","failed_fixtures","notification_verified"))
                         if(r.has(key))put(key,r.get(key))
                     r.optJSONArray("failed_steps")?.let { steps -> for(i in 0 until steps.length()) {
                         steps.getJSONObject(i).remove("ui_state");steps.getJSONObject(i).remove("recovery_guidance")

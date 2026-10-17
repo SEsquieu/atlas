@@ -837,7 +837,7 @@ class AtlasDatabase(context: Context, databaseName: String? = "atlas.db") : SQLi
         }
         val workspaceId = UUID.randomUUID().toString()
         val revisionId = UUID.randomUUID().toString()
-        val workspace = ComposableWorkspace(workspaceId, realmId, name.trim().take(120), description.trim().take(1_000), WorkspaceStatus.ACTIVE, revisionId, nowMs, nowMs)
+        val workspace = ComposableWorkspace(workspaceId, realmId, name.trim().take(120), description.trim().take(1_000), WorkspaceStatus.ACTIVE, revisionId, nowMs, nowMs, applicationDraft=com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.isEmptyDraft(JSONObject(definitionJson)))
         writeTransaction {
             insertOrThrow("composable_workspaces", null, ContentValues().apply {
                 put("composable_workspace_id", workspaceId); put("realm_id", realmId); put("name", workspace.name)
