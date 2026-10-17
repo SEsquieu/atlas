@@ -53,6 +53,9 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
         val requested=WorkspaceCapabilityRegistry.requested(bundle.getJSONObject("manifest"))[WorkspaceBleContract.CAPABILITY].orEmpty()
         val reports=JSONArray();val radio=Radio();var runtimeEvidence:JSONObject?=null
         val succeeded=linkedMapOf<String,Int>();val failed=JSONArray()
+        val isolated=withContext(Dispatchers.IO) {WorkspaceTestStorage(context,bundle)}
+        val bridgeEvidence=JSONArray();var reloads=0;var recordAfterReload=false;var commits=0
+        try {
         withContext(Dispatchers.Main.immediate) {
             var ready=CompletableDeferred<Unit>();val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
             val principal=isolated.principal()
