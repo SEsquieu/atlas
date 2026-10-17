@@ -133,12 +133,23 @@ class ExecutionTasksTest {
         val w=db.createComposableWorkspace("Delivered", "")
         val t=task();val lease=store.claim(t.id,"owner")!!;store.bindWorkspace(store.currentTurn(t.id),w.id,"activation")
         delivered(t,lease,w.id,w.liveRevisionId)
+        val capture=call(t,"workspace_capture_view",JSONObject().put("workspace_id",w.id).toString());db.insertToolCall(capture);db.updateToolCall(capture.id,ToolCallStatus.FAILED,error="WORKSPACE_NOT_OPEN")
         store.finish(lease,SliceOutcome.RESPONDED,1)
         // Simulate an alpha.26 persisted WAITING row with a now-classified optional capture.
         db.writableDatabase.update("execution_tasks",android.content.ContentValues().apply {put("state","WAITING");put("document_json",store.get(t.id)!!.document.put("wait_reason","unresolved_tool_failure").toString())},"task_id=?",arrayOf(t.id))
         val before=store.turns(t.id).size
         assertEquals(ExecutionState.COMPLETED,store.reconcileDelivered(t.id)!!.state)
         assertEquals(before,store.turns(t.id).size)
+        assertEquals(0,store.get(t.id)!!.document.getJSONObject("checkpoint").getJSONArray("unresolved_operation_ids").length())
+        assertEquals(capture.id,store.get(t.id)!!.document.getJSONObject("checkpoint").getJSONArray("diagnostic_operation_ids").getString(0))
+    }
+    @Test fun resumeCannotEraseAnUnperformedRequiredPixelCheck() {
+        val w=db.createComposableWorkspace("Required pixels", "")
+        val t=task();val lease=store.claim(t.id,"owner")!!;store.bindWorkspace(store.currentTurn(t.id),w.id,"activation",requirePixels=true)
+        delivered(t,lease,w.id,w.liveRevisionId)
+        store.finish(lease,SliceOutcome.RESPONDED,1)
+        store.control(t.id,ExecutionState.WAITING,"repeated_failure")
+        assertEquals(ExecutionState.WAITING,store.reconcileDelivered(t.id)!!.state)
     }
 
     @Test fun writerAndWorkspaceSwitchUseOneLockOrder() {

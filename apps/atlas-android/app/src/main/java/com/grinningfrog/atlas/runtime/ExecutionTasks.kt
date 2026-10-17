@@ -233,7 +233,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val requirement=task.document.optJSONObject("completion_requirement")
         val missingCriteria=work.optJSONObject("latest_candidate")?.optString("candidate_id")?.let {missingAcceptance(currentTurn(task.id),it)} ?: emptyList()
         work.put("missing_criteria",JSONArray(missingCriteria))
-        val pixelsPending=requirement?.optBoolean("require_pixels")==true && !all.any {it.name=="workspace_capture_view" && it.status==ToolCallStatus.COMPLETED && runCatching {val r=JSONObject(it.resultJson.orEmpty());r.optBoolean("ok") && r.optString("revision_id")==database.loadComposableWorkspace(requirement.optString("workspace_id"))?.liveRevisionId}.getOrDefault(false)}
+        val pixelsPending=!pixelsSatisfied(task,all)
         val deliveryPending=(missingCriteria.isNotEmpty() || pixelsPending) || requirement?.optString("delivery")=="activation" &&
             requirement?.optString("workspace_id")==task.document.optJSONObject("workspace_target")?.optString("workspace_id") &&
             work.optString("delivery_status")!="activated"
@@ -345,6 +345,15 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         // A completion claim alone is insufficient: require an atomic committed effect receipt.
         return all.any { it.name in mutations && it.status == ToolCallStatus.COMPLETED && receipt(it) != null }
     }
+    private fun pixelsSatisfied(task: ExecutionTask, all: List<AtlasToolCall>): Boolean {
+        val requirement=task.document.optJSONObject("completion_requirement") ?: return true
+        if(!requirement.optBoolean("require_pixels"))return true
+        val workspace=requirement.optString("workspace_id")
+        val revision=database.loadComposableWorkspace(workspace)?.liveRevisionId ?: return false
+        return all.any {it.name=="workspace_capture_view" && it.status==ToolCallStatus.COMPLETED && runCatching {
+            val r=JSONObject(it.resultJson.orEmpty());r.optBoolean("ok") && r.optString("workspace_id")==workspace && r.optString("revision_id")==revision
+        }.getOrDefault(false)}
+    }
     fun outstanding(taskId: String): JSONArray {
         val task=get(taskId) ?: return JSONArray();val all=calls(taskId)
         return JSONArray(all.groupBy {it.name}.values.mapNotNull {it.lastOrNull()}.filter {
@@ -359,7 +368,11 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val work=ExecutionWorkState.build(calls(taskId),task.document.optJSONObject("workspace_target")?.optString("workspace_id"))
         val activation=work.optJSONObject("activation") ?: return@atomic task
         if(work.optString("delivery_status")!="activated" || database.loadComposableWorkspace(activation.optString("workspace_id"))?.liveRevisionId!=activation.optString("revision_id") || outstanding(taskId).length()>0)return@atomic task
-        if(missingAcceptance(currentTurn(taskId),activation.optString("candidate_id")).isNotEmpty())return@atomic task
+        if(missingAcceptance(currentTurn(taskId),activation.optString("candidate_id")).isNotEmpty() || !pixelsSatisfied(task,calls(taskId)))return@atomic task
+        val checkpoint=task.document.optJSONObject("checkpoint") ?: JSONObject()
+        val diagnostics=calls(taskId).filter {nonBlockingAuditFailure(it,task,calls(taskId))}.map {it.id}
+        checkpoint.put("unresolved_operation_ids",JSONArray()).put("diagnostic_operation_ids",JSONArray(diagnostics))
+        task.document.put("checkpoint",checkpoint)
         task.document.put("work_state",work).put("wait_reason","").put("recovery_required",false).put("completion_kind","delivered; optional inspection unavailable")
         val result=task.copy(state=ExecutionState.COMPLETED,generation=task.generation+1,owner=null,leaseUntil=0,nextRunAt=0)
         save(result);event(result,"execution.delivery_reconciled");result
