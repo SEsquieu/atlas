@@ -236,7 +236,7 @@ private fun WorkspaceLibrary(
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(workspace.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         if (workspace.description.isNotBlank()) Text(workspace.description, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("revision ${workspace.liveRevisionId.take(8)} · ${workspace.status.name.lowercase()}", style = MaterialTheme.typography.labelSmall)
+                        Text(if(workspace.applicationDraft) "Draft · app not activated" else "revision ${workspace.liveRevisionId.take(8)} · ${workspace.status.name.lowercase()}", style = MaterialTheme.typography.labelSmall)
                     }
                     if (workspace.status == WorkspaceStatus.ACTIVE) {
                         IconButton(onClick = { onArchive(workspace) }) { Icon(Icons.Default.Archive, "Archive ${workspace.name}") }

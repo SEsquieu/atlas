@@ -69,7 +69,8 @@ data class ChatGptUsageSummary(
     val lastHostedSearchStatus: String? = null,
 )
 
-class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", null, 18) {
+class AtlasDatabase(context: Context, databaseName: String? = "atlas.db") : SQLiteOpenHelper(context, databaseName, null, 18) {
+    internal val isolatedInMemory = databaseName == null
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         db.setForeignKeyConstraintsEnabled(true)
@@ -850,11 +851,11 @@ class AtlasDatabase(context: Context) : SQLiteOpenHelper(context, "atlas.db", nu
     }
 
     fun listComposableWorkspaces(includeArchived: Boolean = false): List<ComposableWorkspace> = readableDatabase.rawQuery(
-        "SELECT composable_workspace_id,realm_id,name,description,status,live_revision_id,created_at,updated_at FROM composable_workspaces ${if (includeArchived) "" else "WHERE status = 'ACTIVE'"} ORDER BY updated_at DESC", null
+        "SELECT composable_workspace_id,realm_id,name,description,status,live_revision_id,created_at,updated_at,(SELECT definition_json FROM workspace_revisions WHERE revision_id=composable_workspaces.live_revision_id),(SELECT COUNT(*) FROM workspace_records WHERE composable_workspace_id=composable_workspaces.composable_workspace_id) FROM composable_workspaces ${if (includeArchived) "" else "WHERE status = 'ACTIVE'"} ORDER BY updated_at DESC", null
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toComposableWorkspace()) } }
 
     fun loadComposableWorkspace(id: String): ComposableWorkspace? = readableDatabase.rawQuery(
-        "SELECT composable_workspace_id,realm_id,name,description,status,live_revision_id,created_at,updated_at FROM composable_workspaces WHERE composable_workspace_id = ?", arrayOf(id)
+        "SELECT composable_workspace_id,realm_id,name,description,status,live_revision_id,created_at,updated_at,(SELECT definition_json FROM workspace_revisions WHERE revision_id=composable_workspaces.live_revision_id),(SELECT COUNT(*) FROM workspace_records WHERE composable_workspace_id=composable_workspaces.composable_workspace_id) FROM composable_workspaces WHERE composable_workspace_id = ?", arrayOf(id)
     ).use { if (it.moveToFirst()) it.toComposableWorkspace() else null }
 
     fun loadWorkspaceRevision(revisionId: String): WorkspaceRevision? = readableDatabase.rawQuery(
@@ -1963,6 +1964,7 @@ private fun android.database.Cursor.toClarification() = PendingClarification(
 private fun android.database.Cursor.toComposableWorkspace() = ComposableWorkspace(
     id = getString(0), realmId = getString(1), name = getString(2), description = getString(3),
     status = WorkspaceStatus.valueOf(getString(4)), liveRevisionId = getString(5), createdAtMs = getLong(6), updatedAtMs = getLong(7),
+    applicationDraft = columnCount>9 && getInt(9)==0 && runCatching {com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.isEmptyDraft(JSONObject(getString(8)))}.getOrDefault(false),
 )
 
 private fun android.database.Cursor.toWorkspaceRevision() = WorkspaceRevision(

@@ -83,6 +83,9 @@ class WorkspacePackageRepository(private val database: AtlasDatabase) {
             require(used.first < 64 && used.second + bundle.toString().toByteArray(Charsets.UTF_8).size <= 16L * 1024 * 1024) { "QUOTA_EXCEEDED: staging retention limit" }
             val canonical = WorkspaceApplicationContract.canonical(bundle)
             val hash = WorkspaceApplicationContract.hash(canonical)
+            db.rawQuery("SELECT candidate_id FROM workspace_package_candidates WHERE workspace_id=? AND base_revision_id=? AND content_hash=? ORDER BY created_at DESC,rowid DESC LIMIT 1",arrayOf(workspaceId,baseRevisionId,hash)).use {row->
+                if(row.moveToFirst())return@writeTransaction JSONObject().put("workspace_id",workspaceId).put("candidate_id",row.getString(0)).put("content_hash",hash).put("structurally_valid",true).put("reused_unchanged_candidate",true).put("recovery","Submitted bytes are identical to this retained candidate; no source change was applied.")
+            }
             val candidate = UUID.randomUUID().toString()
             db.insertOrThrow("workspace_package_candidates", null, ContentValues().apply {
                 put("candidate_id", candidate); put("workspace_id", workspaceId); put("base_revision_id", baseRevisionId)

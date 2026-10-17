@@ -884,7 +884,12 @@ class AtlasMobileRuntime(
         }
         lateTurnJob = collector
         lateTurnId = turnId
-        val timely = withTimeoutOrNull(MODEL_SOFT_TIMEOUT_MS) { result.await() }
+        result.invokeOnCompletion {if(result.isCancelled)collector.cancel()}
+        val durableAuthoring=activeExecutionLease?.let {executionTasks.get(it.taskId)?.document?.optJSONObject("completion_requirement")?.optString("delivery") in setOf("activation","draft")}==true
+        val timely = awaitModelResponse(result,durableAuthoring,{
+            database.appendEvent(session.id,"provider.authoring_still_running",JSONObject().put("turnId",turnId).put("requestId",request.requestId).put("interaction_deadline_ms",MODEL_SOFT_TIMEOUT_MS))
+            publish(error=null)
+        },{activeExecutionLease?.let(executionTasks::check) ?: throw CancellationException("Task lease unavailable")})
         if (timely != null) return timely.getOrThrow()
 
         softTimedOut.set(true)
@@ -1447,3 +1452,15 @@ private class SoftTimeoutDetached : Exception()
 
 private const val STREAM_CHECKPOINT_INTERVAL_MS = 250L
 private const val MODEL_SOFT_TIMEOUT_MS = 60_000L
+
+/** An authoring request keeps its lease and original result beyond the interactive notification deadline. */
+internal suspend fun <T> awaitModelResponse(pending: kotlinx.coroutines.Deferred<T>, keepWorking: Boolean, onSlow: () -> Unit, check: () -> Unit): T? {
+    val timely=kotlinx.coroutines.withTimeoutOrNull(60_000L) {pending.await()}
+    if(timely!=null || !keepWorking)return timely
+    onSlow()
+    try {while(true) {
+        check()
+        val next=kotlinx.coroutines.withTimeoutOrNull(60_000L) {pending.await()}
+        if(next!=null)return next
+    }} catch(cancelled: CancellationException) {pending.cancel(cancelled);throw cancelled}
+}

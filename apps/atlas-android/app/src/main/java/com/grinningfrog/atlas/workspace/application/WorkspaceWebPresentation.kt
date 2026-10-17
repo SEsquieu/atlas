@@ -23,6 +23,7 @@ class WorkspaceWebPresentation(
     private val onFailure: (String) -> Unit,
     private val data: WorkspaceApplicationData? = null,
     private val devices: WorkspaceDeviceBroker? = null,
+    private val testRandomValues: List<Double>? = null,
 ) {
     private val files = JSONObject(bundle.getJSONObject("files").toString())
     private val policy = WorkspacePresentationPolicy(principal, bundle.getJSONObject("manifest").getString("entry"))
@@ -31,13 +32,16 @@ class WorkspaceWebPresentation(
     private var messageWindow = android.os.SystemClock.elapsedRealtime()
     private val bridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val console = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
+    private val hostCalls = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
+    private fun hostAudit(method: String, status: String, code: String? = null, message: String? = null) { synchronized(hostCalls) { if(hostCalls.size>=64)hostCalls.removeAt(0);hostCalls.add(JSONObject().put("method",method).put("status",status).put("error_code",code).put("message",message?.take(500))) } }
     private val resources = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
     private val provider = WebViewCompat.getCurrentWebViewPackage(context)?.let { "${it.packageName}/${it.versionName}" } ?: "unknown"
     @Volatile private var ready = false
-    fun diagnostics(): JSONObject = JSONObject().put("instance_mode",principal.mode.name.lowercase()).put("simulation",devices?.isSimulation==true).put("webview_provider", provider).put("android_api", android.os.Build.VERSION.SDK_INT).put("native_canvas_fallback", "#010302").put("devices", devices?.status() ?: JSONObject.NULL).put("ready", ready).put("disposed", disposed).put("resources", org.json.JSONArray(synchronized(resources) { resources.map { JSONObject(it.toString()) } })).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } }))
+    fun diagnostics(): JSONObject = JSONObject().put("instance_mode",principal.mode.name.lowercase()).put("simulation",devices?.isSimulation==true).put("webview_provider", provider).put("android_api", android.os.Build.VERSION.SDK_INT).put("native_canvas_fallback", "#010302").put("devices", devices?.status() ?: JSONObject.NULL).put("ready", ready).put("disposed", disposed).put("resources", org.json.JSONArray(synchronized(resources) { resources.map { JSONObject(it.toString()) } })).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } })).put("host_calls",org.json.JSONArray(synchronized(hostCalls) {hostCalls.map {JSONObject(it.toString())}}))
     val view: WebView
 
     init {
+        require(testRandomValues==null || principal.mode==WorkspaceInstanceMode.TEST) { "Random overrides are test-only" }
         require(WorkspaceApplicationContract.validate(bundle).isEmpty()) { "Invalid package" }
         // Unsupported providers fail closed. Single-process rendering cannot run authored scripts.
         require(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) { "Browser capability guards are unavailable" }
@@ -70,6 +74,10 @@ class WorkspaceWebPresentation(
             mediaPlaybackRequiresUserGesture = true
         }
         if (WebViewFeature.isFeatureSupported(WebViewFeature.MUTE_AUDIO)) WebViewCompat.setAudioMuted(view, true)
+        testRandomValues?.let { values ->
+            require(values.isNotEmpty() && values.size<=32 && values.all {it.isFinite() && it>=0 && it<1})
+            WebViewCompat.addDocumentStartJavaScript(view,"(()=>{const values=${org.json.JSONArray(values)};let i=0;Math.random=()=>values[(i++)%values.length];})();",setOf("*"))
+        }
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) WebViewCompat.addDocumentStartJavaScript(view, """
             (() => {
               addEventListener('error', event => console.error('Uncaught application error: '+event.message));
@@ -136,9 +144,10 @@ class WorkspaceWebPresentation(
             bridgeScope.launch {
             val operation = UUID.randomUUID().toString()
             var requestId = "invalid"
+            var requestedMethod="invalid"
             val response = runCatching {
                 val request = WorkspaceHostProtocol.request(raw); requestId = request.getString("request_id")
-                val method = request.getString("method")
+                val method = request.getString("method");requestedMethod=method
                 val params = request.getJSONObject("params")
                 val result = if (devices?.handles(method) == true || method.startsWith("ble.")) {
                     require(!disposed && current()) { "REVISION_CONFLICT" }
@@ -146,9 +155,10 @@ class WorkspaceWebPresentation(
                     requireNotNull(devices) { "UNSUPPORTED_CAPABILITY" }.dispatch(method, params)
                 } else withContext(Dispatchers.IO) {
                     require(!disposed && current()) { "REVISION_CONFLICT" }
-                    WorkspaceHostRegistry.dispatch(principal, method, params, data, capabilityBindings = devices?.capabilityNames.orEmpty()).also { if(devices?.isSimulation==true && method in setOf("host.describe","host.ready")) it.put("ble_available",true).put("simulation",true).put("storage_authorized",false).apply { val methods=WorkspaceCapabilityRegistry.methods(devices.capabilityNames);for(name in methods.keys())getJSONObject("methods").put(name,methods.getJSONObject(name)) } }
+                    WorkspaceHostRegistry.dispatch(principal, method, params, data, capabilityBindings = devices?.capabilityNames.orEmpty()).also { if(devices?.isSimulation==true && method in setOf("host.describe","host.ready")) it.put("ble_available",true).put("simulation",true).apply { val methods=WorkspaceCapabilityRegistry.methods(devices.capabilityNames);for(name in methods.keys())getJSONObject("methods").put(name,methods.getJSONObject(name)) } }
                 }
                 if (method == "host.ready" && !disposed && current()) { ready = true; onReady() }
+                hostAudit(method,"succeeded")
                 val response = WorkspaceHostProtocol.response(requestId, "succeeded", operation, result)
                 require(response.toString().toByteArray(Charsets.UTF_8).size <= WorkspaceApplicationContract.MAX_MESSAGE_BYTES) { "QUOTA_EXCEEDED" }
                 response
@@ -156,7 +166,9 @@ class WorkspaceWebPresentation(
                 if (it is CancellationException) throw it
                 val known = setOf("REVISION_CONFLICT", "DATA_CONFLICT", "TARGET_CONFLICT", "OPERATION_CONFLICT", "OPERATION_UNAVAILABLE", "QUOTA_EXCEEDED", "RECEIPT_QUOTA_EXCEEDED", "UNSUPPORTED_CAPABILITY", "EXECUTION_MODE_DENIED", "FORMAT_TOOL_MISMATCH")
                 val code = it.message?.takeIf { message -> message in known || message in WorkspaceBleContract.errors || message in devices?.errorCodes.orEmpty() } ?: "VALIDATION_FAILED"
-                WorkspaceHostProtocol.failure(requestId, operation, code, code, if (code == "DATA_CONFLICT") "inspect_and_retry" else "never")
+                val detail=it.message?.take(500) ?: code
+                hostAudit(requestedMethod,"failed",code,detail)
+                WorkspaceHostProtocol.failure(requestId, operation, code, detail, if (code == "DATA_CONFLICT") "inspect_and_retry" else "never")
             }
             if (!disposed && current()) reply.postMessage(response.toString())
             }

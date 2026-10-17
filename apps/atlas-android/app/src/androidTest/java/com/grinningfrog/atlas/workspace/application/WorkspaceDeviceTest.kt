@@ -343,6 +343,38 @@ class WorkspaceDeviceTest {
         } finally { scenario.close();db.deleteComposableWorkspace(workspace.id) }
     }
     @androidx.compose.runtime.Composable private fun MaterialThemeForTest(content:@androidx.compose.runtime.Composable ()->Unit) { androidx.compose.material3.MaterialTheme(content=content) }
+    @Test fun isolatedStorageRunsRealBridgeValidationAndSurvivesPageReloadWithoutPhoneWrites() = runBlocking {
+        val db=(context.applicationContext as AtlasApplication).database
+        val session=db.createSession("Storage simulation","Test saved app");val turn=db.createTurn(session.id,"test")
+        val w=db.createComposableWorkspace("Storage simulation", "")
+        try {
+            val bundle=WorkspaceApplicationContract.example()
+            bundle.getJSONObject("files").put("ui/index.html","<!doctype html><html><body><input id=text><button id=save>Save</button><button id=roll>Roll</button><button id=remove>Remove</button><p id=random></p><p id=temporary>Temporary</p><p id=status></p><div id=notes></div><script type=module src=./app.js></script></body></html>")
+            val source="""import {host,data} from '/atlas/host.js';const status=document.querySelector('#status');async function refresh(){try{const page=await data.query({collection:'notes',limit:100});document.querySelector('#notes').textContent=page.records.map(r=>r.data.text).join(',');return page.data_version;}catch(e){status.textContent='Fallback: '+e.message;return 0;}}await refresh();document.querySelector('#save').onclick=async()=>{const version=await refresh();const p=await data.prepare({expected_data_version:version,request_key:'save',mutations:[{kind:'create',collection:'notes',data:{text:document.querySelector('#text').value}}]});await data.commit(p.operation_id);await refresh();status.textContent='Saved';};document.querySelector('#roll').onclick=()=>document.querySelector('#random').textContent=String(Math.random());document.querySelector('#remove').onclick=()=>document.querySelector('#temporary').remove();await host.ready();"""
+            bundle.getJSONObject("files").put("ui/app.js",source.replace("limit:100","limit:200"))
+            val repository=WorkspacePackageRepository(db)
+            val bad=repository.stage(w.id,w.realmId,w.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,turn.id)
+            fun step(action:String,selector:String="",value:String?=null)=JSONObject().put("action",action).put("selector",selector).apply {if(value!=null)put("value",value)}
+            val caught=WorkspaceUiSimulation(context,db).test(w.id,w.realmId,bad.getString("candidate_id"),JSONArray().put(step("wait_text","#status","Fallback:")))
+            assertFalse(caught.getBoolean("passed"));assertEquals("data.query",caught.getJSONArray("host_failures").getJSONObject(0).getString("method"))
+            assertTrue(caught.getJSONArray("host_failures").getJSONObject(0).getString("message").contains("1..100"))
+            bundle.getJSONObject("files").put("ui/app.js",source)
+            val good=repository.stage(w.id,w.realmId,w.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,turn.id)
+            val result=WorkspaceUiSimulation(context,db).test(w.id,w.realmId,good.getString("candidate_id"),JSONArray()
+                .put(step("click","#roll")).put(step("assert_text","#random","0.25"))
+                .put(step("click","#roll")).put(step("assert_text","#random","0.75"))
+                .put(step("click","#remove")).put(step("assert_absent","#temporary")).put(step("assert_count","#temporary","0"))
+                .put(step("input","#text","Saved across reload")).put(step("click","#save")).put(step("wait_text","#status","Saved"))
+                .put(step("reload")).put(step("wait_text","#notes","Saved across reload"))
+                .put(step("assert_record",value="""{"collection":"notes","data":{"text":"Saved across reload"}}""").put("criterion","A saved note survives page reload")),verifyStorage=true,randomValues=listOf(0.25,0.75))
+            assertTrue(result.toString(),result.getBoolean("passed"));assertTrue(result.getBoolean("storage_verified"))
+            assertEquals(0,WorkspaceApplicationData(db).version(w.id));assertTrue(db.listWorkspaceRecords(w.id).isEmpty());assertEquals(1,db.listComposableWorkspaces().count {it.name=="Storage simulation"})
+            // A new simulation receives a fresh dataset rather than a retained previous test's data.
+            val fresh=WorkspaceUiSimulation(context,db).test(w.id,w.realmId,good.getString("candidate_id"),JSONArray().put(step("assert_record",value="""{"collection":"notes","data":{"text":"Saved across reload"}}""")),verifyStorage=true)
+            assertFalse(fresh.getBoolean("passed"));assertFalse(fresh.getBoolean("storage_verified"))
+        } finally {db.deleteComposableWorkspace(w.id)}
+    }
+
     @Test fun uiSimulationReportsPrerequisitesAndVerifiesSelectVisibilityAndChangeEvents() = runBlocking {
         val db=(context.applicationContext as AtlasApplication).database
         val session=db.createSession("Form diagnostics","Test UI controls")

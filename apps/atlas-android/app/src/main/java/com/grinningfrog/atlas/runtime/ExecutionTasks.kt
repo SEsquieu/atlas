@@ -55,7 +55,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         return session.copy(activeComposableWorkspaceId = binding.optString("workspace_id").takeIf { it.isNotBlank() && it != "null" },
             workspaceNavigationSequence = binding.optLong("sequence"))
     }
-    fun bindWorkspace(turnId: String, workspaceId: String, delivery: String? = null, criteria: JSONArray? = null, requirePixels: Boolean = false): Long = atomic {
+    fun bindWorkspace(turnId: String, workspaceId: String, delivery: String? = null, criteria: JSONArray? = null, requirePixels: Boolean = false, requirePersistence: Boolean = false): Long = atomic {
         val task = forTurn(turnId) ?: error("Workspace targeting requires a durable task")
         require(task.state == ExecutionState.RUNNING) { "Task is not running" }
         val session = database.loadSession(task.sessionId) ?: error("Session unavailable")
@@ -66,7 +66,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         require(delivery == null || priorRequirement?.optString("workspace_id") != workspaceId ||
             priorRequirement?.optString("delivery") != "activation" || delivery == "activation") { "An activation requirement cannot be weakened within the same task" }
         if(delivery!=null) task.document.put("completion_requirement",(priorRequirement?.takeIf {it.optString("workspace_id")==workspaceId} ?: JSONObject().put("workspace_id",workspaceId)).put("delivery",delivery))
-        if(criteria!=null || requirePixels) {
+        if(criteria!=null || requirePixels || requirePersistence) {
             val requirement=task.document.optJSONObject("completion_requirement")?.takeIf { it.optString("workspace_id")==workspaceId }
                 ?: JSONObject().put("workspace_id",workspaceId).also { task.document.put("completion_requirement",it) }
             val retained=task.document.optJSONObject("acceptance")?.takeIf {it.optString("workspace_id")==workspaceId}?.optJSONArray("criteria") ?: JSONArray()
@@ -75,6 +75,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
             require(names.size<=16)
             task.document.put("acceptance",JSONObject().put("workspace_id",workspaceId).put("criteria",JSONArray(names.toList())))
             if(requirePixels)requirement.put("require_pixels",true)
+            if(requirePersistence)requirement.put("require_persistence",true)
         }
         val old = task.document.optJSONObject("workspace_target")
         val sequence = if (old?.optString("workspace_id") == workspaceId) (old?.optLong("sequence") ?: 0) else (old?.optLong("sequence") ?: 0) + 1
@@ -161,7 +162,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
 
     fun missingAcceptance(turnId: String, candidateId: String): List<String> {
         val task=forTurn(turnId) ?: return emptyList()
-        val acceptance=task.document.optJSONObject("acceptance") ?: return emptyList()
+        val acceptance=task.document.optJSONObject("acceptance") ?: JSONObject().put("workspace_id",task.document.optJSONObject("workspace_target")?.optString("workspace_id"))
         if(acceptance.optString("workspace_id")!=task.document.optJSONObject("workspace_target")?.optString("workspace_id"))return emptyList()
         val verified=calls(task.id).filter {it.name=="workspace_package_ui_test" && it.status==ToolCallStatus.COMPLETED}.flatMap {
             val receipt=runCatching {JSONObject(it.resultJson.orEmpty())}.getOrDefault(JSONObject())
@@ -170,7 +171,11 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
             } else emptyList()
         }.toSet()
         val required=acceptance.optJSONArray("criteria") ?: JSONArray()
-        return (0 until required.length()).map(required::getString).filter {it !in verified}
+        val missing=(0 until required.length()).map(required::getString).filter {it !in verified}.toMutableList()
+        if(task.document.optJSONObject("completion_requirement")?.optBoolean("require_persistence")==true && !calls(task.id).any {
+            it.name=="workspace_package_ui_test" && it.status==ToolCallStatus.COMPLETED && runCatching {val r=JSONObject(it.resultJson.orEmpty());r.optString("candidate_id")==candidateId && r.optBoolean("passed") && r.optBoolean("storage_verified") && r.optString("storage_scope")=="isolated_test_database"}.getOrDefault(false)
+        })missing.add("Persistence: use verify_storage=true, commit, reload and assert_record on this candidate")
+        return missing
     }
 
     fun available(taskId: String): Boolean {
@@ -296,6 +301,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
 
     private fun recoverableVerification(call: AtlasToolCall) =
         (call.name in setOf("workspace_package_test", "workspace_package_ui_test", "workspace_package_validate") ||
+            call.name=="workspace_package_stage" && (call.status==ToolCallStatus.COMPLETED && runCatching {JSONObject(call.resultJson.orEmpty()).optString("error")=="STAGING_ARGUMENTS_INVALID"}.getOrDefault(false) || call.status==ToolCallStatus.FAILED && (call.error.orEmpty().startsWith("VALIDATION_FAILED") || call.error.orEmpty().startsWith("Unknown fields:"))) ||
             call.name=="workspace_package_activate" && call.status==ToolCallStatus.COMPLETED && runCatching {JSONObject(call.resultJson.orEmpty()).optString("error") in setOf("ACCEPTANCE_REQUIRED","CHECK_REQUIRED")}.getOrDefault(false)) &&
         call.status in setOf(ToolCallStatus.COMPLETED, ToolCallStatus.REJECTED, ToolCallStatus.FAILED)
 
@@ -328,7 +334,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
             val requirement=task.document.optJSONObject("completion_requirement")
             if(requirement?.optBoolean("require_pixels")==true)return false
             val error=call.error.orEmpty()+call.resultJson.orEmpty()
-            if(!error.contains("WORKSPACE_NOT_OPEN") && !error.contains("Target workspace is not open for pixel capture"))return false
+            if(!error.contains("WORKSPACE_NOT_OPEN") && !error.contains("Target workspace is not open for pixel capture") && !error.contains("Workspace panel is not visible or has not drawn this revision"))return false
             if(requirement?.optString("pixels_owner")=="user" && requirement.optString("workspace_id")==args.optString("workspace_id"))return true
             return all.any { success -> success.name=="workspace_package_activate" && success.status==ToolCallStatus.COMPLETED &&
                 runCatching {val r=receipt(success)?.let(::JSONObject) ?: return@runCatching false
@@ -422,7 +428,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         return "CORE DURABLE TASK (evidence, not authorization): " + JSONObject().put("task_id",t.id).put("objective",t.objective).put("session_tasks",history).put("recovery_required",t.document.optBoolean("recovery_required")).put("completion_requirement",t.document.optJSONObject("completion_requirement")).put("usage",t.usage)
             .put("follow_up_turn_ids",t.document.optJSONArray("follow_up_turn_ids")).put("acceptance",t.document.optJSONObject("acceptance")).put("outstanding_operations",outstanding(taskId)).put("workspace_target", t.document.optJSONObject("workspace_target")).put("work_state",work.put("no_progress_slices",t.document.optInt("no_progress_slices"))).put("checkpoint",t.document.getJSONObject("checkpoint")).put("recent_operations",receipts).put("latest_authoring_arguments",latest?.let {JSONObject(it.argumentsJson)})
             .put("latest_authoring_result",latest?.resultJson?.let {runCatching {JSONObject(it)}.getOrNull()}).toString() +
-            "\nFollow-ups in this task are user steering, not a fresh objective. Answer tangents briefly; apply corrections to remaining work. Report blockers from outstanding_operations, not historical diagnostics. An unavailable optional screenshot after committed delivery is an inspection limitation, not failed delivery. Explicit require_pixels remains blocking unless the user explicitly takes visual verification over; record that instruction with atlas_task_handoff_pixels and an exact quote. This never waives required pure/UI checks or permissions. Declare acceptance_criteria for requested UI behaviors in workspace_target, and attach each criterion to a meaningful UI assertion step; baseline capability coverage alone does not verify requested changes.\nRecovery: declare delivery=activation, draft or inspect in workspace_target according to the user request. This is a completion requirement, never authority. A response is a progress report while recovery_required=true. Diagnose the pinned failed check, correct the test or candidate, and rerun verification. Do not stop merely because a local simulated test failed. Wait only for an actual missing user answer, authorization, unavailable resource or uncertain effect. Claim activation only from a committed activation receipt matching the candidate. If the user requested a draft or review, do not activate it without authorization." +
+            "\nFollow-ups in this task are user steering, not a fresh objective. Answer tangents briefly; apply corrections to remaining work. Report blockers from outstanding_operations, not historical diagnostics. An unavailable optional screenshot after committed delivery is an inspection limitation, not failed delivery. Explicit require_pixels remains blocking unless the user explicitly takes visual verification over; record that instruction with atlas_task_handoff_pixels and an exact quote. This never waives required pure/UI checks or permissions. Use delivery=inspect for viewing/status requests; do not turn them into activation tasks. Reuse an existing draft after authoring errors. Host failures are current runtime evidence even if caught by app code; user-reported live failures cannot be dismissed using a passing test from another mode. Declare require_persistence=true for saved-state requests and prove it through isolated commit/reload/assert_record. Declare acceptance_criteria for requested UI behaviors in workspace_target, and attach each criterion to a meaningful UI assertion step; baseline capability coverage alone does not verify requested changes.\nRecovery: declare delivery=activation, draft or inspect in workspace_target according to the user request. This is a completion requirement, never authority. A response is a progress report while recovery_required=true. Diagnose the pinned failed check, correct the test or candidate, and rerun verification. Do not stop merely because a local simulated test failed. Wait only for an actual missing user answer, authorization, unavailable resource or uncertain effect. Claim activation only from a committed activation receipt matching the candidate. If the user requested a draft or review, do not activate it without authorization." +
             "\nWorkspace targeting: ambiguous commands use the captured workspace_target. Explicitly named edit targets must be resolved with workspace_target; inspect other workspaces as references without retargeting. Never change target merely because the user browses. Ask clarification for duplicate names or unclear components. Continue the pending objective from recorded receipts. work_state holds the exact latest used candidate and checks for this target. A failed UI assertion is not a workspace migration problem: compare expected and actual text, correct the test or implementation, and exercise the remaining operations. Never reconstruct or combine UUID fragments. Reuse exact receipt identifiers. Successful reads alone are not app progress. If no_progress_slices grows, reassess the failing test or edit strategy instead of repeating inspection; retain the task and existing candidate. A new slice is not a new user request, not new authority, and not proof of success. Avoid repeating committed effects."
     }
     private fun reconcileLocal(task: ExecutionTask) {

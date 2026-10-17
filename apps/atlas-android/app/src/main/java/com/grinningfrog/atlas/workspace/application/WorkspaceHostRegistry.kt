@@ -26,7 +26,8 @@ object WorkspaceHostRegistry {
 
         }
         .put("authority", "core_bound_transport").put("storage_authorized", storage)
-        .put("storage_contract", "Workspace-scoped foreground records only. query returns data_version and a next_offset; null ends pagination. prepare requires expected_data_version, mutations and a reusable request_key. Retry the same key with identical input after response loss; commit/inspect/cancel use the returned operation_id. Revisions fence old callers. Device access, when declared, uses the separate native BLE broker; there are no direct browser device, network, credential, or background APIs.")
+        .put("storage_limits",JSONObject().put("query_limit",JSONObject().put("minimum",1).put("maximum",100).put("default",50)).put("query_offset",JSONObject().put("minimum",0).put("maximum",30000)).put("mutations_per_prepare",32))
+        .put("storage_contract", "Workspace-scoped foreground records, or isolated disposable test records when storage_scope=isolated_test_database. query limit is 1..100 (default 50); use next_offset to paginate. query returns data_version and a next_offset; null ends pagination. prepare requires expected_data_version, mutations and a reusable request_key. Retry the same key with identical input after response loss; commit/inspect/cancel use the returned operation_id. Revisions fence old callers. Device access, when declared, uses the separate native BLE broker; there are no direct browser device, network, credential, or background APIs.")
     fun validate(method: String, params: JSONObject, storage: Boolean = false): Boolean {
         val schema = methods[method] ?: if (storage) storageMethods[method] else null
         if (schema == null) return false
@@ -38,9 +39,9 @@ object WorkspaceHostRegistry {
         return true
     }
     fun dispatch(principal: WorkspacePrincipal, method: String, params: JSONObject, data: WorkspaceApplicationData?, bluetooth: Boolean = false, capabilityBindings: Set<String> = if(bluetooth)setOf(WorkspaceBleContract.CAPABILITY) else emptySet()): JSONObject {
-        val storage = data != null && principal.mode == WorkspaceInstanceMode.FOREGROUND
+        val storage = data != null && data.acceptsMode(principal)
         require(validate(method, params, storage)) { "UNSUPPORTED_CAPABILITY" }
-        if (method == "host.describe" || method == "host.ready") return describe(principal, storage, bluetooth, capabilityBindings)
+        if (method == "host.describe" || method == "host.ready") return describe(principal, storage, bluetooth, capabilityBindings).put("storage_scope",if(storage && data?.isolatedTestStorage==true) "isolated_test_database" else if(storage) "live_workspace" else "unavailable")
         val store = requireNotNull(data)
         return when (method) {
             "data.query" -> store.query(principal, params)

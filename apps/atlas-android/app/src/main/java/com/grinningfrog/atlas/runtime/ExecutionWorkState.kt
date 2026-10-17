@@ -91,7 +91,7 @@ internal object ExecutionWorkState {
     fun receipt(call: AtlasToolCall): JSONObject {
         val result = json(call.resultJson)
         val out = JSONObject().put("operation_id", call.id).put("tool", call.name).put("status", call.status.name)
-        for (key in listOf("workspace_id", "candidate_id", "base_revision_id", "revision_id", "check_id", "content_hash", "passed", "activated", "error", "missing_operations", "operation_counts", "successful_operation_counts", "notification_verified", "notification_delivered", "verified_criteria", "missing_criteria", "evidence_scope")) {
+        for (key in listOf("workspace_id", "candidate_id", "base_revision_id", "revision_id", "check_id", "content_hash", "passed", "activated", "error", "missing_operations", "operation_counts", "successful_operation_counts", "notification_verified", "notification_delivered", "verified_criteria", "missing_criteria", "storage_verified", "storage_scope", "storage_evidence", "host_failures", "evidence_scope")) {
             if (result.has(key)) out.put(key, result.get(key))
         }
         call.error?.let { out.put("error", it.take(1000)) }

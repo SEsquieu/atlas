@@ -10,6 +10,8 @@ import java.util.UUID
 
 /** Host-owned records and receipts. JavaScript never runs within these transactions. */
 class WorkspaceApplicationData(private val database: AtlasDatabase) {
+    internal val isolatedTestStorage: Boolean get() = database.isolatedInMemory
+    internal fun acceptsMode(principal: WorkspacePrincipal) = principal.mode == WorkspaceInstanceMode.FOREGROUND || isolatedTestStorage && principal.mode == WorkspaceInstanceMode.TEST
     companion object {
         fun createTables(db: SQLiteDatabase) {
             db.execSQL("""CREATE TABLE IF NOT EXISTS workspace_data_versions (
@@ -50,7 +52,7 @@ class WorkspaceApplicationData(private val database: AtlasDatabase) {
         val workspace = database.loadComposableWorkspace(principal.workspaceId) ?: error("TARGET_CONFLICT")
         require(workspace.realmId == principal.realmId && workspace.status == WorkspaceStatus.ACTIVE) { "TARGET_CONFLICT" }
         require(workspace.liveRevisionId == principal.revisionId && epoch(workspace.id) == principal.epoch) { "REVISION_CONFLICT" }
-        require(principal.mode == WorkspaceInstanceMode.FOREGROUND) { "EXECUTION_MODE_DENIED" }
+        require(acceptsMode(principal)) { "EXECUTION_MODE_DENIED" }
         require(isApplication(JSONObject(database.loadLiveWorkspaceRevision(workspace.id)!!.definitionJson))) { "FORMAT_TOOL_MISMATCH" }
     }
     fun query(principal: WorkspacePrincipal, params: JSONObject): JSONObject {
@@ -182,9 +184,9 @@ class WorkspaceApplicationData(private val database: AtlasDatabase) {
     }
     private fun integer(value: JSONObject, key: String, minimum: Long = 0, maximum: Long = 9_007_199_254_740_991L): Long {
         val raw = value.get(key)
-        require(raw is Number) { "VALIDATION_FAILED" }
+        require(raw is Number) { "VALIDATION_FAILED: $key must be an integer in $minimum..$maximum" }
         val number = raw.toDouble()
-        require(number.isFinite() && number % 1.0 == 0.0 && number >= minimum.toDouble() && number <= maximum.toDouble()) { "VALIDATION_FAILED" }
+        require(number.isFinite() && number % 1.0 == 0.0 && number >= minimum.toDouble() && number <= maximum.toDouble()) { "VALIDATION_FAILED: $key must be an integer in $minimum..$maximum; actual=$raw" }
         return number.toLong()
     }
     private fun collection(value: String) { require(value.matches(Regex("[A-Za-z][A-Za-z0-9_-]{0,63}")) && value != "AtlasRuntimeState") { "Invalid or reserved collection" } }

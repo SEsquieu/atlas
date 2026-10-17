@@ -18,14 +18,33 @@ internal object WorkspaceLiveTools {
     }
     private class Create(db: AtlasDatabase) : Adapter(db), AtlasLocalMutationAdapter {
         override val supportsLocalMutation = true
-        override val definition = ToolDefinition("workspace_package_create", "Create a new local application draft and bind this task to it without changing the viewed workspace. Returns workspace_id, base_revision_id and navigation_sequence for staging. Then stage HTML/CSS/JS, test declared pure fixtures and activate. No legacy definition argument is supported.",
-            """{"type":"object","properties":{"name":{"type":"string","maxLength":120},"description":{"type":"string","maxLength":1000}},"required":["name"],"additionalProperties":false}""", ToolRisk.SESSION_WRITE, maxCallsPerTurn = 3)
+        override val definition = ToolDefinition("workspace_package_create", "Create or recover a session-owned application draft by exact name, binding this task without changing the viewed workspace. Repeated calls reuse the existing unactivated draft and return its latest candidate; do not create replacement workspaces after errors. new_draft=true is only for an explicitly requested separate app. Declare delivery, acceptance_criteria and require_persistence for saved-state apps. Returns workspace_id, base_revision_id and navigation_sequence for staging. Then stage HTML/CSS/JS, test declared pure fixtures and activate. No legacy definition argument is supported.",
+            """{"type":"object","properties":{"name":{"type":"string","maxLength":120},"description":{"type":"string","maxLength":1000},"new_draft":{"type":"boolean"},"delivery":{"type":"string","enum":["activation","draft","inspect"]},"acceptance_criteria":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":200}},"require_persistence":{"type":"boolean"}},"required":["name"],"additionalProperties":false}""", ToolRisk.SESSION_WRITE, maxCallsPerTurn = 3)
         override fun executeLocal(call: AtlasToolCall): ToolExecutionResult {
-            val a = JSONObject(call.argumentsJson); WorkspaceApplicationContract.exactKeys(a, setOf("name", "description"), setOf("name"))
+            val a = JSONObject(call.argumentsJson); WorkspaceApplicationContract.exactKeys(a, setOf("name", "description","new_draft","delivery","acceptance_criteria","require_persistence"), setOf("name"))
             val s = session(call); val name = a.getString("name").trim(); require(name.length in 1..120)
-            val w = db.createComposableWorkspace(name, a.optString("description").take(1000), realmId = s.workspaceId, sourceSessionId = s.id, sourceTurnId = call.turnId)
-            val sequence = if (ExecutionTaskStore(db).forTurn(call.turnId) != null) ExecutionTaskStore(db).bindWorkspace(call.turnId, w.id) else db.activateComposableWorkspace(s.id, w.id)
-            return ToolExecutionResult(JSONObject().put("workspace_id", w.id).put("base_revision_id", w.liveRevisionId).put("navigation_sequence", sequence).put("activated", false).put("next", "workspace_package_stage -> workspace_package_test -> workspace_package_activate").toString())
+            val drafts=if(a.optBoolean("new_draft"))emptyList() else sessionDrafts(s.id,name)
+            if(drafts.size>1)return ToolExecutionResult(JSONObject().put("ok",false).put("error","DRAFT_AMBIGUOUS").put("candidates",org.json.JSONArray(drafts)).put("recovery","Choose an exact existing workspace with workspace_target; do not create another replacement draft.").toString())
+            val recovered=drafts.singleOrNull()?.let(db::loadComposableWorkspace)
+            val w = recovered ?: db.createComposableWorkspace(name, a.optString("description").take(1000), realmId = s.workspaceId, sourceSessionId = s.id, sourceTurnId = call.turnId)
+            val sequence = if (ExecutionTaskStore(db).forTurn(call.turnId) != null) ExecutionTaskStore(db).bindWorkspace(call.turnId, w.id,a.optString("delivery").takeIf(String::isNotBlank),a.optJSONArray("acceptance_criteria"),requirePersistence=a.optBoolean("require_persistence")) else db.activateComposableWorkspace(s.id, w.id)
+            val latest=db.readableDatabase.rawQuery("SELECT candidate_id FROM workspace_package_candidates WHERE workspace_id=? AND base_revision_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",arrayOf(w.id,w.liveRevisionId)).use {if(it.moveToFirst())it.getString(0) else null}
+            return ToolExecutionResult(JSONObject().put("workspace_id", w.id).put("base_revision_id", w.liveRevisionId).put("navigation_sequence", sequence).put("reused_draft",recovered!=null).put("latest_candidate_id",latest).put("activated", false).put("next", "workspace_package_stage -> workspace_package_test -> workspace_package_activate").toString())
+        }
+        private fun sessionDrafts(sessionId: String, name: String): List<String> {
+            val ids=linkedSetOf<String>()
+            db.readableDatabase.rawQuery("SELECT tc.arguments_json,r.result_json FROM tool_calls tc JOIN local_operation_receipts r ON r.operation_id=tc.tool_call_id WHERE tc.session_id=? AND tc.name='workspace_package_create' AND tc.status='COMPLETED'",arrayOf(sessionId)).use { c ->
+                while(c.moveToNext())runCatching {
+                    val args=JSONObject(c.getString(0));val result=JSONObject(c.getString(1))
+                    if(args.optString("name").trim().equals(name,ignoreCase=true))result.optString("workspace_id").takeIf(String::isNotBlank)?.let(ids::add)
+                }
+            }
+            return ids.filter {id->
+                val w=db.loadComposableWorkspace(id)
+                w!=null && w.status==com.grinningfrog.atlas.workspace.WorkspaceStatus.ACTIVE && WorkspaceApplicationContract.isEmptyDraft(JSONObject(db.loadLiveWorkspaceRevision(id)!!.definitionJson)) &&
+                    db.readableDatabase.rawQuery("SELECT COUNT(*) FROM workspace_records WHERE composable_workspace_id=?",arrayOf(id)).use {it.moveToFirst();it.getInt(0)==0} &&
+                    db.readableDatabase.rawQuery("SELECT COUNT(*) FROM workspace_application_activations WHERE workspace_id=?",arrayOf(id)).use {it.moveToFirst();it.getInt(0)==0}
+            }
         }
     }
     private class Activate(db: AtlasDatabase, private val context: Context) : Adapter(db), AtlasReceiptBackedAdapter {
@@ -62,7 +81,7 @@ internal object WorkspaceLiveTools {
             require(a.has("input")) { "Missing input" }
             val w = requireNotNull(db.loadComposableWorkspace(a.getString("workspace_id"))) { "WORKSPACE_NOT_FOUND: copy the exact workspace_id from workspace_target or workspace_list" }; require(w.realmId == session(call).workspaceId && w.status == com.grinningfrog.atlas.workspace.WorkspaceStatus.ACTIVE) { "TARGET_CONFLICT" }
             val bundle = if (a.has("candidate_id")) WorkspacePackageRepository(db).inspect(w.id, w.realmId, a.getString("candidate_id")).getJSONObject("bundle") else JSONObject(db.loadLiveWorkspaceRevision(w.id)!!.definitionJson)
-            require(WorkspaceApplicationData.isApplication(bundle)) { "FORMAT_TOOL_MISMATCH" }
+            require(WorkspaceApplicationData.isApplication(bundle)) { "EMPTY_PACKAGE_DRAFT: No application package exists yet. Reuse this workspace; stage manifest and files against its base_revision_id. capabilities/dependencies are manifest fields; file paths belong inside files." }
             val hash = WorkspaceApplicationContract.hash(WorkspaceApplicationContract.canonical(bundle))
             val result = worker.run(bundle, a.getString("export"), a.get("input"))
             require(db.loadComposableWorkspace(w.id)?.let { it.realmId == w.realmId && it.status == com.grinningfrog.atlas.workspace.WorkspaceStatus.ACTIVE && (a.has("candidate_id") || it.liveRevisionId == w.liveRevisionId) } == true) { "REVISION_CONFLICT" }

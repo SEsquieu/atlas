@@ -203,3 +203,12 @@ Repeated identical failed checks must eventually enter the existing repeated-fai
 - Install Secure over alpha.26 without clearing data. A fresh app demo comes after installation; live-model quality is separate from controlled regression coverage.
 
 Alpha.27 source `05a9160298bd61a6fc808a980a8de97898b2c0f4` passed unit/lint run 39041134658 and all 12 instrumented tests on both API 35 and 36 in run 39041134604. Package `f1741b0a90b122be97f455b06c089105d97e1bba` passed unit/lint/signing run 39041830469; version code 1221 and the existing signing certificate were verified from the downloaded Secure APK. Drive App Builds metadata matched the uploaded filename and 69,975,894-byte size. Live model behavior remains acceptance work.
+
+## Alpha.28 acceptance
+
+- Reproduce the invalid query limit even when the app catches it and renders fallback content: the check must fail with data.query and range evidence.
+- Exercise save, actual prepare/commit, page reload, restored DOM content and exact isolated record assertion. Verify no real workspace records/version changed, and a separate test starts empty.
+- Test removed nodes with assert_absent/count and repeatable random_values; retain BLE containment/notification tests.
+- Retry creation across interrupted tasks and verify one session-owned draft. Identical staging must reuse the candidate with a no-change receipt. Existing drafts are never deleted automatically.
+- A durable authoring response after 71 seconds must remain on its original request; ordinary interaction detachment and cancellation remain supported.
+- Install Secure over alpha.27 without clearing data. Live-model convergence and a fresh 0-to-1 demo remain acceptance work after controlled validation.

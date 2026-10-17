@@ -14,6 +14,7 @@ data class ComposableWorkspace(
     val liveRevisionId: String,
     val createdAtMs: Long,
     val updatedAtMs: Long,
+    val applicationDraft: Boolean = false,
 )
 
 data class WorkspaceRevision(
