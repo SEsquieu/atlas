@@ -1,2 +1,2 @@
-0.1.0-alpha.27
-Close delivered tasks cleanly, preserve conversational verification handoff and track requested UI behavior checks.
+0.1.0-alpha.28
+Exercise isolated save/reload storage, recover authoring drafts, and expose actionable host failures.
