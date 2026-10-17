@@ -361,9 +361,11 @@ class WorkspaceDeviceTest {
             val good=WorkspaceUiSimulation(context,db).test(w.id,w.realmId,c.getString("candidate_id"),JSONArray()
                 .put(step("click","#choose")).put(step("click","#connect"))
                 .put(step("select","#filter","errors")).put(step("assert_value","#filter","errors"))
-                .put(step("assert_hidden","#ok")).put(step("assert_visible","#bad"))
+                .put(step("assert_hidden","#ok").put("criterion","Errors filter hides success events")).put(step("assert_visible","#bad"))
                 .put(step("input","#field","01")).put(step("assert_text","#edited","01")))
             assertTrue(good.toString(),good.getBoolean("passed"))
+            assertEquals("Errors filter hides success events",good.getJSONArray("verified_criteria").getString(0))
+            assertEquals(0,bad.getJSONArray("verified_criteria").length())
         } finally { db.deleteComposableWorkspace(w.id) }
     }
 

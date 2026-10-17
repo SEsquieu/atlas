@@ -133,8 +133,8 @@ private class ValidateDefinition(database: AtlasDatabase) : WorkspaceAdapter(dat
 
 private class TargetWorkspace(database: AtlasDatabase) : LocalWorkspaceMutation(database) {
     override val definition = ToolDefinition(
-        "workspace_target", "Resolve an explicitly requested workspace by exact name or an inspected workspace ID and bind it as this task's edit target without navigating the UI. Use only for user-requested edit targets; reference inspection does not change the edit target. Duplicate names return candidates and require clarification. Subsequent ambiguous commands in this task refer to this target. For app work declare delivery: activation when the user requests a working/live update, draft for staging without activation, inspect for review only. Activation requirements cannot be weakened within the task; this field never grants permission.",
-        """{"type":"object","properties":{"name":{"type":"string"},"workspace_id":{"type":"string"},"delivery":{"type":"string","enum":["activation","draft","inspect"]}},"additionalProperties":false}""",
+        "workspace_target", "Resolve an explicitly requested workspace by exact name or an inspected workspace ID and bind it as this task's edit target without navigating the UI. Use only for user-requested edit targets; reference inspection does not change the edit target. Duplicate names return candidates and require clarification. Subsequent ambiguous commands in this task refer to this target. For app work declare delivery: activation when the user requests a working/live update, draft for staging without activation, inspect for review only. Activation requirements cannot be weakened within the task; this field never grants permission. Declare acceptance_criteria (up to 16 short UI behaviors) for requested changes. Set require_pixels=true only when painted-pixel verification is a delivery requirement; optional screenshots do not block an otherwise activated update.",
+        """{"type":"object","properties":{"name":{"type":"string"},"workspace_id":{"type":"string"},"delivery":{"type":"string","enum":["activation","draft","inspect"]},"acceptance_criteria":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":200}},"require_pixels":{"type":"boolean"}},"additionalProperties":false}""",
         ToolRisk.SESSION_WRITE, maxCallsPerTurn = 6,
     )
     override fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision {
@@ -153,7 +153,7 @@ private class TargetWorkspace(database: AtlasDatabase) : LocalWorkspaceMutation(
         if (matches.size != 1) return ToolExecutionResult(JSONObject().put("ok", false).put("reason", if (matches.isEmpty()) "workspace_not_found" else "ambiguous_workspace_name")
             .put("candidates", JSONArray(matches.map { JSONObject().put("workspace_id", it.id).put("name", it.name) })).put("requires_clarification", true).toString())
         val target = matches.single()
-        val sequence = com.grinningfrog.atlas.runtime.ExecutionTaskStore(database).bindWorkspace(call.turnId, target.id, args.optString("delivery").takeIf { it.isNotBlank() })
+        val sequence = com.grinningfrog.atlas.runtime.ExecutionTaskStore(database).bindWorkspace(call.turnId, target.id, args.optString("delivery").takeIf { it.isNotBlank() }, args.optJSONArray("acceptance_criteria"), args.optBoolean("require_pixels"))
         return ToolExecutionResult(JSONObject().put("ok", true).put("workspace_id", target.id).put("name", target.name).put("navigation_sequence", sequence).put("ui_navigation_changed", false).toString())
     }
 }
@@ -429,7 +429,7 @@ private class CaptureWorkspace(database: AtlasDatabase, private val media: Media
         val (session, id) = target(call)
         val revision = database.loadLiveWorkspaceRevision(id) ?: error("Workspace is unavailable")
         val viewing = database.loadSession(session.id) ?: error("Session is unavailable")
-        require(viewing.activeComposableWorkspaceId == id && viewing.permissions.observe) { "Target workspace is not open for pixel capture; use headless render diagnostics" }
+        require(viewing.activeComposableWorkspaceId == id && viewing.permissions.observe) { "WORKSPACE_NOT_OPEN: Target workspace is not open for pixel capture; use headless render diagnostics. This is unavailable inspection, not an activation failure." }
         val (bitmap, rendered) = WorkspaceRenderSurface.capture(id, revision.id)
         val ref = media.ingestWorkspaceBitmap(bitmap, session.id)
         val current = database.loadSession(session.id) ?: error("Session is unavailable")
@@ -440,6 +440,6 @@ private class CaptureWorkspace(database: AtlasDatabase, private val media: Media
             timing = ObservationTiming(ref.processingMs, 0, ref.processingMs), summary = "Atlas workspace UI viewport; workspace=$id; revision=${revision.id}. Not a physical camera observation.")
         database.saveObservation(observation)
         database.appendEvent(session.id, "workspace.capture_completed", JSONObject().put("workspace_id", id).put("revision_id", revision.id).put("media_id", ref.id).put("observation_id", observation.id).put("rendered", rendered))
-        return ToolExecutionResult(JSONObject().put("ok", true).put("source", "workspace_ui").put("observation_id", observation.id).put("width", ref.width).put("height", ref.height).put("rendered", rendered).toString(), observation)
+        return ToolExecutionResult(JSONObject().put("ok", true).put("source", "workspace_ui").put("workspace_id",id).put("revision_id",revision.id).put("observation_id", observation.id).put("width", ref.width).put("height", ref.height).put("rendered", rendered).toString(), observation)
     }
 }

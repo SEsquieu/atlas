@@ -192,3 +192,12 @@ During an agent task, navigate between workspaces repeatedly and export after an
 Retry the staged diagnostic-log candidate in the existing BLE workspace. A disabled Connect test step should expose prerequisite controls; Atlas should select a device, supply valid write input, correct filter interactions and continue verification without another user prompt. An intermediate model failure report must not end recoverable work. Check the task card for staged/not-live, failed-verification and activated status; confirm the workspace live revision prefix changes only after committed activation. Assert actual filter visibility and notification payload delivery, not generic success text.
 
 Repeated identical failed checks must eventually enter the existing repeated-failure wait despite fresh check IDs. Genuine missing-answer/permission waits and uncertain physical outcomes must still stop. Background from the workspace list and verify a consent_expired audit with activity_stopped; navigation alone must continue retaining scan consent. Export after completion or any stall. Live-model convergence and physical BLE remain phone acceptance.
+
+## Alpha.27 regression and live acceptance
+
+- Exercise failed UI checks followed by corrected assertions and activation. An unavailable optional capture must preserve its failed receipt but allow task completion; explicit pixel requirements and non-availability capture errors must still block.
+- Reply conversationally to one tool-blocked task; verify the task ID, original objective and target survive. Status questions must identify the exact outstanding operation. Multiple tasks and authorization/provider/unknown waits must not be implicitly selected.
+- Resume a persisted optional-inspection wait after successful activation; reconcile delivery without another model request or duplicate completion message.
+- Declare a requested UI criterion, prove baseline checks do not satisfy it, and attach it to a passing assertion. Failed simulations and another candidate's evidence must not satisfy it. Device coverage asserts actual filter visibility and its persisted criterion receipt.
+- Supply a UI check ID to activation and verify the response identifies the valid existing pure-check ID without changing the live revision.
+- Install Secure over alpha.26 without clearing data. A fresh app demo comes after installation; live-model quality is separate from controlled regression coverage.

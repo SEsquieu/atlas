@@ -14,6 +14,30 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class)
 class WorkspaceLiveCatalogTest {
+    @Test fun activationReturnsReusablePureCheckIdsAndKeepsDeclaredBehaviorGate() = kotlinx.coroutines.test.runTest {
+        val context=RuntimeEnvironment.getApplication();context.deleteDatabase("atlas.db");val db=AtlasDatabase(context)
+        try {
+            val session=db.createSession("Activate","test");db.updateSessionStatus(session.id,com.grinningfrog.atlas.model.SessionStatus.ACTIVE)
+            val turn=db.createTurn(session.id,"text");val store=com.grinningfrog.atlas.runtime.ExecutionTaskStore(db)
+            val task=store.create(db.loadSession(session.id)!!,"Update filters",turn.id,com.grinningfrog.atlas.runtime.ExecutionBudget())
+            store.claim(task.id,"test")!!
+            val w=db.createComposableWorkspace("App","",realmId=session.workspaceId)
+            val sequence=store.bindWorkspace(turn.id,w.id,"activation")
+            val bundle=WorkspaceApplicationContract.example()
+            val candidate=WorkspacePackageRepository(db).stage(w.id,w.realmId,w.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,turn.id)
+            val pure=WorkspaceCandidateChecks(db) {_,_,_->JSONObject().put("ok",true).put("value",true)}.test(w.id,w.realmId,candidate.getString("candidate_id"))
+            val tool=WorkspaceLiveTools.create(db,context).single {it.definition.name=="workspace_package_activate"}
+            val args=JSONObject().put("workspace_id",w.id).put("candidate_id",candidate.getString("candidate_id")).put("check_id","ui-check-is-not-pure").put("navigation_sequence",sequence)
+            val call=com.grinningfrog.atlas.model.AtlasToolCall("wrong-check",session.id,turn.id,tool.definition.name,args.toString(),com.grinningfrog.atlas.model.ToolCallStatus.PROPOSED,com.grinningfrog.atlas.model.ToolRisk.SESSION_WRITE,false,"wrong-check",createdAtMs=0,updatedAtMs=0)
+            val result=JSONObject(tool.execute(call).resultJson)
+            assertEquals("CHECK_REQUIRED",result.getString("error"));assertEquals("pure_fixtures",result.getString("required_check_kind"))
+            assertEquals(pure.getString("check_id"),result.getJSONArray("valid_check_ids").getString(0))
+            store.bindWorkspace(turn.id,w.id,criteria=org.json.JSONArray(listOf("Filter hides other events")))
+            val gated=JSONObject(tool.execute(call.copy(id="missing-criteria",argumentsJson=args.put("check_id",pure.getString("check_id")).toString())).resultJson)
+            assertEquals("ACCEPTANCE_REQUIRED",gated.getString("error"))
+            assertEquals(w.liveRevisionId,db.loadComposableWorkspace(w.id)!!.liveRevisionId)
+        } finally {db.close()}
+    }
     @Test fun pinnedManifestAndFileIndexReadsCannotCrossWorkspaceRevision() = kotlinx.coroutines.test.runTest {
         val context = RuntimeEnvironment.getApplication(); context.deleteDatabase("atlas.db")
         val db = AtlasDatabase(context)

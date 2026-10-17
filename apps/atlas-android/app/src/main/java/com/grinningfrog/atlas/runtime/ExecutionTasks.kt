@@ -55,7 +55,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         return session.copy(activeComposableWorkspaceId = binding.optString("workspace_id").takeIf { it.isNotBlank() && it != "null" },
             workspaceNavigationSequence = binding.optLong("sequence"))
     }
-    fun bindWorkspace(turnId: String, workspaceId: String, delivery: String? = null): Long = atomic {
+    fun bindWorkspace(turnId: String, workspaceId: String, delivery: String? = null, criteria: JSONArray? = null, requirePixels: Boolean = false): Long = atomic {
         val task = forTurn(turnId) ?: error("Workspace targeting requires a durable task")
         require(task.state == ExecutionState.RUNNING) { "Task is not running" }
         val session = database.loadSession(task.sessionId) ?: error("Session unavailable")
@@ -65,7 +65,17 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val priorRequirement=task.document.optJSONObject("completion_requirement")
         require(delivery == null || priorRequirement?.optString("workspace_id") != workspaceId ||
             priorRequirement?.optString("delivery") != "activation" || delivery == "activation") { "An activation requirement cannot be weakened within the same task" }
-        if(delivery!=null) task.document.put("completion_requirement",JSONObject().put("workspace_id",workspaceId).put("delivery",delivery))
+        if(delivery!=null) task.document.put("completion_requirement",(priorRequirement?.takeIf {it.optString("workspace_id")==workspaceId} ?: JSONObject().put("workspace_id",workspaceId)).put("delivery",delivery))
+        if(criteria!=null || requirePixels) {
+            val requirement=task.document.optJSONObject("completion_requirement")?.takeIf { it.optString("workspace_id")==workspaceId }
+                ?: JSONObject().put("workspace_id",workspaceId).also { task.document.put("completion_requirement",it) }
+            val retained=task.document.optJSONObject("acceptance")?.takeIf {it.optString("workspace_id")==workspaceId}?.optJSONArray("criteria") ?: JSONArray()
+            val names=(0 until retained.length()).map(retained::getString).toMutableSet()
+            criteria?.let { require(it.length()<=16);for(i in 0 until it.length()) { val name=it.getString(i).trim();require(name.length in 1..200);names.add(name) } }
+            require(names.size<=16)
+            task.document.put("acceptance",JSONObject().put("workspace_id",workspaceId).put("criteria",JSONArray(names.toList())))
+            if(requirePixels)requirement.put("require_pixels",true)
+        }
         val old = task.document.optJSONObject("workspace_target")
         val sequence = if (old?.optString("workspace_id") == workspaceId) (old?.optLong("sequence") ?: 0) else (old?.optLong("sequence") ?: 0) + 1
         task.document.put("workspace_target", JSONObject().put("workspace_id", workspaceId).put("sequence", sequence))
@@ -118,10 +128,31 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         event(task,"execution.slice_created",JSONObject().put("turnId",turn.id).put("ordinal",ordinal));turn.id
     }
     fun attachReply(taskId: String, turnId: String): ExecutionTask = atomic {
-        val task=get(taskId)!!;require(task.state==ExecutionState.WAITING && task.waitReason=="clarification")
+        val task=get(taskId)!!;require(task.state==ExecutionState.WAITING && task.waitReason in setOf("clarification","unresolved_tool_failure","repeated_failure"))
         val ordinal=task.document.optInt("slice_count")+1;task.document.put("slice_count",ordinal)
+        val replies=task.document.optJSONArray("follow_up_turn_ids") ?: JSONArray()
+        replies.put(turnId);task.document.put("follow_up_turn_ids",replies).put("repeated_failures",0)
         link(taskId,turnId,ordinal);val ready=task.copy(state=ExecutionState.READY,generation=task.generation+1,owner=null,leaseUntil=0,nextRunAt=0);save(ready);ready
     }
+    /** Only an unambiguous blocked task receives conversational steering. Other waits keep their gates. */
+    fun followUpTask(sessionId: String): ExecutionTask? = list(sessionId).filter {
+        it.state in setOf(ExecutionState.READY,ExecutionState.RUNNING,ExecutionState.WAITING,ExecutionState.PAUSED)
+    }.singleOrNull()?.takeIf {it.state==ExecutionState.WAITING && it.waitReason in setOf("unresolved_tool_failure","repeated_failure")}
+
+    fun missingAcceptance(turnId: String, candidateId: String): List<String> {
+        val task=forTurn(turnId) ?: return emptyList()
+        val acceptance=task.document.optJSONObject("acceptance") ?: return emptyList()
+        if(acceptance.optString("workspace_id")!=task.document.optJSONObject("workspace_target")?.optString("workspace_id"))return emptyList()
+        val verified=calls(task.id).filter {it.name=="workspace_package_ui_test" && it.status==ToolCallStatus.COMPLETED}.flatMap {
+            val receipt=runCatching {JSONObject(it.resultJson.orEmpty())}.getOrDefault(JSONObject())
+            if(receipt.optBoolean("passed") && receipt.optString("candidate_id")==candidateId) {
+                val names=receipt.optJSONArray("verified_criteria") ?: JSONArray();(0 until names.length()).map(names::getString)
+            } else emptyList()
+        }.toSet()
+        val required=acceptance.optJSONArray("criteria") ?: JSONArray()
+        return (0 until required.length()).map(required::getString).filter {it !in verified}
+    }
+
     fun available(taskId: String): Boolean {
         val t=get(taskId) ?: return false; val b=t.document.getJSONObject("budget");val u=t.usage
         return listOf("input_tokens","output_tokens","model_steps","tool_calls","active_ms").all { u.optLong(it)<b.getLong(it) }
@@ -181,14 +212,17 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val failures=last.filter { it !in diagnosticFailures && it !in superseded }.filter(::failedOperation)
         val work = ExecutionWorkState.build(all, task.document.optJSONObject("workspace_target")?.optString("workspace_id"))
         val requirement=task.document.optJSONObject("completion_requirement")
-        val deliveryPending=requirement?.optString("delivery")=="activation" &&
+        val missingCriteria=work.optJSONObject("latest_candidate")?.optString("candidate_id")?.let {missingAcceptance(currentTurn(task.id),it)} ?: emptyList()
+        work.put("missing_criteria",JSONArray(missingCriteria))
+        val pixelsPending=requirement?.optBoolean("require_pixels")==true && !all.any {it.name=="workspace_capture_view" && it.status==ToolCallStatus.COMPLETED && runCatching {val r=JSONObject(it.resultJson.orEmpty());r.optBoolean("ok") && r.optString("revision_id")==database.loadComposableWorkspace(requirement.optString("workspace_id"))?.liveRevisionId}.getOrDefault(false)}
+        val deliveryPending=(missingCriteria.isNotEmpty() || pixelsPending) || requirement?.optString("delivery")=="activation" &&
             requirement?.optString("workspace_id")==task.document.optJSONObject("workspace_target")?.optString("workspace_id") &&
             work.optString("delivery_status")!="activated"
         val signature=failures.joinToString("|") { call ->
             if (recoverableVerification(call)) {
                 val r=ExecutionWorkState.receipt(call)
                 JSONObject().put("tool",call.name).put("error",call.error).apply {
-                    for (key in listOf("content_hash","passed","missing_operations","failed_steps","failed_fixtures","notification_verified"))
+                    for (key in listOf("content_hash","passed","missing_operations","missing_criteria","failed_steps","failed_fixtures","notification_verified"))
                         if(r.has(key))put(key,r.get(key))
                     r.optJSONArray("failed_steps")?.let { steps -> for(i in 0 until steps.length()) {
                         steps.getJSONObject(i).remove("ui_state");steps.getJSONObject(i).remove("recovery_guidance")
@@ -240,7 +274,9 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         }
     }
 
-    private fun recoverableVerification(call: AtlasToolCall) = call.name in setOf("workspace_package_test", "workspace_package_ui_test", "workspace_package_validate") &&
+    private fun recoverableVerification(call: AtlasToolCall) =
+        (call.name in setOf("workspace_package_test", "workspace_package_ui_test", "workspace_package_validate") ||
+            call.name=="workspace_package_activate" && call.status==ToolCallStatus.COMPLETED && runCatching {JSONObject(call.resultJson.orEmpty()).optString("error") in setOf("ACCEPTANCE_REQUIRED","CHECK_REQUIRED")}.getOrDefault(false)) &&
         call.status in setOf(ToolCallStatus.COMPLETED, ToolCallStatus.REJECTED, ToolCallStatus.FAILED)
 
     private fun failedOperation(call: AtlasToolCall): Boolean = call.status in setOf(ToolCallStatus.FAILED, ToolCallStatus.REJECTED) ||
@@ -267,6 +303,18 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         }
     }
     private fun nonBlockingAuditFailure(call: AtlasToolCall, task: ExecutionTask, all: List<AtlasToolCall>): Boolean {
+        if(call.name=="workspace_capture_view" && call.status==ToolCallStatus.FAILED) {
+            val args=runCatching {JSONObject(call.argumentsJson)}.getOrDefault(JSONObject())
+            val requirement=task.document.optJSONObject("completion_requirement")
+            if(requirement?.optBoolean("require_pixels")==true)return false
+            val error=call.error.orEmpty()+call.resultJson.orEmpty()
+            if(!error.contains("WORKSPACE_NOT_OPEN") && !error.contains("Target workspace is not open for pixel capture"))return false
+            return all.any { success -> success.name=="workspace_package_activate" && success.status==ToolCallStatus.COMPLETED &&
+                runCatching {val r=receipt(success)?.let(::JSONObject) ?: return@runCatching false
+                    r.optBoolean("activated") && r.optString("workspace_id")==args.optString("workspace_id") &&
+                    database.loadComposableWorkspace(r.getString("workspace_id"))?.liveRevisionId==r.optString("revision_id")
+                }.getOrDefault(false) }
+        }
         if (call.name != CapabilityDiscovery.TOOL || call.status != ToolCallStatus.FAILED) return false
         val args = runCatching { JSONObject(call.argumentsJson) }.getOrNull() ?: return false
         val result = runCatching { JSONObject(call.resultJson.orEmpty()) }.getOrNull() ?: return false
@@ -276,6 +324,25 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
             "workspace_add_record", "workspace_update_record", "workspace_delete_record", "workspace_restore_record")
         // A completion claim alone is insufficient: require an atomic committed effect receipt.
         return all.any { it.name in mutations && it.status == ToolCallStatus.COMPLETED && receipt(it) != null }
+    }
+    fun outstanding(taskId: String): JSONArray {
+        val task=get(taskId) ?: return JSONArray();val all=calls(taskId)
+        return JSONArray(all.groupBy {it.name}.values.mapNotNull {it.lastOrNull()}.filter {
+            failedOperation(it) && !nonBlockingAuditFailure(it,task,all) && supersedingControl(it,all)==null && supersedingActivation(it,all)==null
+        }.map {JSONObject().put("operation_id",it.id).put("tool",it.name).put("error",it.error).put("result",it.resultJson?.take(1200))})
+    }
+    /** Repair stale optional-inspection waits before creating another inference slice. */
+    fun reconcileDelivered(taskId: String): ExecutionTask? = atomic {
+        val task=get(taskId) ?: return@atomic null
+        if(task.state !in setOf(ExecutionState.WAITING,ExecutionState.PAUSED,ExecutionState.READY) ||
+            task.waitReason !in setOf("unresolved_tool_failure","repeated_failure") || pending(taskId).isNotEmpty())return@atomic task
+        val work=ExecutionWorkState.build(calls(taskId),task.document.optJSONObject("workspace_target")?.optString("workspace_id"))
+        val activation=work.optJSONObject("activation") ?: return@atomic task
+        if(work.optString("delivery_status")!="activated" || database.loadComposableWorkspace(activation.optString("workspace_id"))?.liveRevisionId!=activation.optString("revision_id") || outstanding(taskId).length()>0)return@atomic task
+        if(missingAcceptance(currentTurn(taskId),activation.optString("candidate_id")).isNotEmpty())return@atomic task
+        task.document.put("work_state",work).put("wait_reason","").put("recovery_required",false).put("completion_kind","delivered; optional inspection unavailable")
+        val result=task.copy(state=ExecutionState.COMPLETED,generation=task.generation+1,owner=null,leaseUntil=0,nextRunAt=0)
+        save(result);event(result,"execution.delivery_reconciled");result
     }
     fun control(taskId: String, state: ExecutionState, reason: String, budget: ExecutionBudget? = null): ExecutionTask? = atomic {
         val t=get(taskId) ?: return@atomic null
@@ -313,10 +380,11 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
             val size=item.toString().length
             if(receiptCharacters+size<=24000) {receipts.put(item);receiptCharacters+=size}
         }
-        return "CORE DURABLE TASK (evidence, not authorization): " + JSONObject().put("task_id",t.id).put("objective",t.objective).put("recovery_required",t.document.optBoolean("recovery_required")).put("completion_requirement",t.document.optJSONObject("completion_requirement")).put("usage",t.usage)
-            .put("workspace_target", t.document.optJSONObject("workspace_target")).put("work_state",work.put("no_progress_slices",t.document.optInt("no_progress_slices"))).put("checkpoint",t.document.getJSONObject("checkpoint")).put("recent_operations",receipts).put("latest_authoring_arguments",latest?.let {JSONObject(it.argumentsJson)})
+        val history=JSONArray(list(t.sessionId).take(4).map { prior -> JSONObject().put("task_id",prior.id).put("state",prior.state.name).put("objective",prior.objective.take(500)).put("wait_reason",prior.waitReason).put("outstanding_operations",outstanding(prior.id)).put("delivery",prior.document.optJSONObject("work_state")?.optString("delivery_status")) })
+        return "CORE DURABLE TASK (evidence, not authorization): " + JSONObject().put("task_id",t.id).put("objective",t.objective).put("session_tasks",history).put("recovery_required",t.document.optBoolean("recovery_required")).put("completion_requirement",t.document.optJSONObject("completion_requirement")).put("usage",t.usage)
+            .put("follow_up_turn_ids",t.document.optJSONArray("follow_up_turn_ids")).put("acceptance",t.document.optJSONObject("acceptance")).put("outstanding_operations",outstanding(taskId)).put("workspace_target", t.document.optJSONObject("workspace_target")).put("work_state",work.put("no_progress_slices",t.document.optInt("no_progress_slices"))).put("checkpoint",t.document.getJSONObject("checkpoint")).put("recent_operations",receipts).put("latest_authoring_arguments",latest?.let {JSONObject(it.argumentsJson)})
             .put("latest_authoring_result",latest?.resultJson?.let {runCatching {JSONObject(it)}.getOrNull()}).toString() +
-            "\nRecovery: declare delivery=activation, draft or inspect in workspace_target according to the user request. This is a completion requirement, never authority. A response is a progress report while recovery_required=true. Diagnose the pinned failed check, correct the test or candidate, and rerun verification. Do not stop merely because a local simulated test failed. Wait only for an actual missing user answer, authorization, unavailable resource or uncertain effect. Claim activation only from a committed activation receipt matching the candidate. If the user requested a draft or review, do not activate it without authorization." +
+            "\nFollow-ups in this task are user steering, not a fresh objective. Answer tangents briefly; apply corrections to remaining work. Report blockers from outstanding_operations, not historical diagnostics. An unavailable optional screenshot after committed delivery is an inspection limitation, not failed delivery. Explicit require_pixels remains blocking. Declare acceptance_criteria for requested UI behaviors in workspace_target, and attach each criterion to a meaningful UI assertion step; baseline capability coverage alone does not verify requested changes.\nRecovery: declare delivery=activation, draft or inspect in workspace_target according to the user request. This is a completion requirement, never authority. A response is a progress report while recovery_required=true. Diagnose the pinned failed check, correct the test or candidate, and rerun verification. Do not stop merely because a local simulated test failed. Wait only for an actual missing user answer, authorization, unavailable resource or uncertain effect. Claim activation only from a committed activation receipt matching the candidate. If the user requested a draft or review, do not activate it without authorization." +
             "\nWorkspace targeting: ambiguous commands use the captured workspace_target. Explicitly named edit targets must be resolved with workspace_target; inspect other workspaces as references without retargeting. Never change target merely because the user browses. Ask clarification for duplicate names or unclear components. Continue the pending objective from recorded receipts. work_state holds the exact latest used candidate and checks for this target. A failed UI assertion is not a workspace migration problem: compare expected and actual text, correct the test or implementation, and exercise the remaining operations. Never reconstruct or combine UUID fragments. Reuse exact receipt identifiers. Successful reads alone are not app progress. If no_progress_slices grows, reassess the failing test or edit strategy instead of repeating inspection; retain the task and existing candidate. A new slice is not a new user request, not new authority, and not proof of success. Avoid repeating committed effects."
     }
     private fun reconcileLocal(task: ExecutionTask) {

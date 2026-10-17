@@ -30,7 +30,7 @@ internal object WorkspaceLiveTools {
     }
     private class Activate(db: AtlasDatabase, private val context: Context) : Adapter(db), AtlasReceiptBackedAdapter {
         override val supportsLocalMutation = true
-        override val definition = ToolDefinition("workspace_package_activate", "Activate the exact tested candidate after a host-owned startup check. Requires the passing check_id, task target and navigation_sequence. Preserves records for unchanged data_schema_version; nonempty legacy conversion and permission requests are rejected. Failed startup or stale data leaves the current revision untouched. Retrying the same candidate/check returns the durable activation receipt.",
+        override val definition = ToolDefinition("workspace_package_activate", "Activate the exact tested candidate after a host-owned startup check. check_id must be the passing pure_fixtures check_id from workspace_package_test, never the UI check ID. A separate passing UI check is found automatically for BLE packages. Reuse valid check IDs rather than rerunning unchanged tests. Requires task target and navigation_sequence. Preserves records for unchanged data_schema_version; nonempty legacy conversion and permission requests are rejected. Failed startup or stale data leaves the current revision untouched. Retrying the same candidate/check returns the durable activation receipt.",
             """{"type":"object","properties":{"workspace_id":{"type":"string"},"candidate_id":{"type":"string"},"check_id":{"type":"string"},"navigation_sequence":{"type":"integer"}},"required":["workspace_id","candidate_id","check_id","navigation_sequence"],"additionalProperties":false}""", ToolRisk.SESSION_WRITE, maxCallsPerTurn = 3)
         override suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
             val a = JSONObject(call.argumentsJson); WorkspaceApplicationContract.exactKeys(a, setOf("workspace_id", "candidate_id", "check_id", "navigation_sequence"), setOf("workspace_id", "candidate_id", "check_id", "navigation_sequence"))
@@ -39,8 +39,17 @@ internal object WorkspaceLiveTools {
             val lease = execution.forTurn(call.turnId)?.let { ExecutionLease(it.id, requireNotNull(it.owner), it.generation) }
             fun authorize() { target(call, a); lease?.let(execution::check) }
             authorize()
-            val result = WorkspaceApplicationActivation(db).activate(context, a.getString("workspace_id"), session(call).workspaceId, a.getString("candidate_id"), a.getString("check_id"),
-                authorize = ::authorize, committed = { receipt -> execution.localOperation(call, lease) { ToolExecutionResult(receipt.toString()) } })
+            val missing=execution.missingAcceptance(call.turnId,a.getString("candidate_id"))
+            if(missing.isNotEmpty())return ToolExecutionResult(JSONObject().put("ok",false).put("error","ACCEPTANCE_REQUIRED").put("missing_criteria",org.json.JSONArray(missing)).put("next_step","Run meaningful UI assertions with criterion labels for these declared behaviors; do not replace them with baseline capability checks.").toString())
+            val result = try { WorkspaceApplicationActivation(db).activate(context, a.getString("workspace_id"), session(call).workspaceId, a.getString("candidate_id"), a.getString("check_id"),
+                authorize = ::authorize, committed = { receipt -> execution.localOperation(call, lease) { ToolExecutionResult(receipt.toString()) } }) } catch(error: IllegalArgumentException) {
+                if(error.message!="CHECK_REQUIRED")throw error
+                val ids=org.json.JSONArray()
+                val candidate=WorkspacePackageRepository(db).inspect(a.getString("workspace_id"),session(call).workspaceId,a.getString("candidate_id"))
+                db.readableDatabase.rawQuery("SELECT check_id FROM workspace_application_checks WHERE workspace_id=? AND candidate_id=? AND content_hash=? AND base_revision_id=? AND data_version=? AND kind='pure_fixtures' AND passed=1 ORDER BY created_at DESC LIMIT 4",
+                    arrayOf(a.getString("workspace_id"),a.getString("candidate_id"),candidate.getString("content_hash"),candidate.getString("base_revision_id"),WorkspaceApplicationData(db).version(a.getString("workspace_id")).toString())).use {while(it.moveToNext())ids.put(it.getString(0))}
+                return ToolExecutionResult(JSONObject().put("ok",false).put("error","CHECK_REQUIRED").put("required_check_kind","pure_fixtures").put("supplied_check_id",a.getString("check_id")).put("valid_check_ids",ids).put("next_step",if(ids.length()>0) "Retry activation with an exact valid_check_ids entry; existing pure checks remain valid. UI checks are separate." else "Run workspace_package_test and use its passing check_id; UI checks are separate.").toString())
+            }
             return ToolExecutionResult(result.toString())
         }
     }

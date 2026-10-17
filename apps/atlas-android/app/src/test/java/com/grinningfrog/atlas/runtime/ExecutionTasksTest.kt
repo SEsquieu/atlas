@@ -36,6 +36,89 @@ class ExecutionTasksTest {
     private fun call(task: ExecutionTask, name: String = "local", args: String = "{}") = AtlasToolCall(UUID.randomUUID().toString(),session.id,store.currentTurn(task.id),name,args,ToolCallStatus.PROPOSED,ToolRisk.SESSION_WRITE,false,UUID.randomUUID().toString(),createdAtMs=clock,updatedAtMs=clock)
     private fun executor() = DurableTaskExecutor(store, {clock}, { clock += it })
 
+    private fun delivered(t: ExecutionTask, lease: ExecutionLease, workspaceId: String, revisionId: String) {
+        val c=call(t,"workspace_package_activate",JSONObject().put("workspace_id",workspaceId).put("candidate_id","candidate").toString())
+        db.insertToolCall(c)
+        store.localOperation(c,lease) {ToolExecutionResult(JSONObject().put("workspace_id",workspaceId).put("candidate_id","candidate").put("revision_id",revisionId).put("activated",true).toString())}
+    }
+    @Test fun unavailableOptionalCaptureDoesNotBlockCommittedDeliveryButRequiredCaptureDoes() {
+        for(required in listOf(false,true)) {
+            val w=db.createComposableWorkspace("Capture $required", "")
+            val t=task();val lease=store.claim(t.id,"owner")!!
+            store.bindWorkspace(store.currentTurn(t.id),w.id,"activation",requirePixels=required)
+            delivered(t,lease,w.id,w.liveRevisionId)
+            val capture=call(t,"workspace_capture_view",JSONObject().put("workspace_id",w.id).toString());db.insertToolCall(capture)
+            db.updateToolCall(capture.id,ToolCallStatus.FAILED,error="WORKSPACE_NOT_OPEN: Target workspace is not open for pixel capture")
+            val result=store.finish(lease,SliceOutcome.RESPONDED,1)!!
+            assertEquals(if(required) ExecutionState.WAITING else ExecutionState.COMPLETED,result.state)
+            assertEquals(ToolCallStatus.FAILED,db.loadToolCall(capture.id)!!.status)
+            assertEquals(if(required)1 else 0,store.outstanding(t.id).length())
+            if(required)store.control(t.id,ExecutionState.CANCELLED,"test complete")
+        }
+    }
+    @Test fun captureFailureWithoutDeliveryOrWithOtherErrorRemainsBlocking() {
+        for(error in listOf("WORKSPACE_NOT_OPEN","Workspace changed during screenshot capture; retry")) {
+            val w=db.createComposableWorkspace("Capture", "")
+            val t=task();val lease=store.claim(t.id,"owner")!!
+            store.bindWorkspace(store.currentTurn(t.id),w.id)
+            if(error!="WORKSPACE_NOT_OPEN")delivered(t,lease,w.id,w.liveRevisionId)
+            val capture=call(t,"workspace_capture_view",JSONObject().put("workspace_id",w.id).toString());db.insertToolCall(capture)
+            db.updateToolCall(capture.id,ToolCallStatus.FAILED,error=error)
+            assertEquals(ExecutionState.WAITING,store.finish(lease,SliceOutcome.RESPONDED,1)!!.state)
+            store.control(t.id,ExecutionState.CANCELLED,"test complete")
+        }
+    }
+    @Test fun conversationalFollowUpPreservesOriginalTaskAndRequiredFailure() {
+        val t=task();val lease=store.claim(t.id,"owner")!!
+        val failed=call(t,"workspace_package_activate");db.insertToolCall(failed);db.updateToolCall(failed.id,ToolCallStatus.FAILED,error="STARTUP_FAILED")
+        store.finish(lease,SliceOutcome.RESPONDED,1)
+        assertEquals(t.id,store.followUpTask(session.id)?.id)
+        val reply=db.createTurn(session.id,"text")
+        db.insertMessage(AtlasMessage(sessionId=session.id,turnId=reply.id,role=MessageRole.USER,content="Why is it blocked?",createdAtMs=clock))
+        val attached=store.attachReply(t.id,reply.id)
+        assertEquals(t.id,attached.id);assertEquals("Finish the objective",attached.objective)
+        assertEquals(reply.id,store.currentTurn(t.id));assertEquals(1,store.list(session.id).size)
+        assertTrue(store.context(t.id).contains("STARTUP_FAILED"))
+        assertEquals(ExecutionState.WAITING,store.finish(store.claim(t.id,"followup")!!,SliceOutcome.RESPONDED,1)!!.state)
+        val other=task()
+        assertNull(store.followUpTask(session.id))
+        store.control(other.id,ExecutionState.CANCELLED,"test complete")
+    }
+    @Test fun permissionAndUnknownWaitsDoNotAcceptImplicitFollowUps() {
+        for(outcome in listOf(SliceOutcome.WAITING_PERMISSION,SliceOutcome.WAITING_PROVIDER,SliceOutcome.WAITING_USER)) {
+            val t=task();val lease=store.claim(t.id,"owner")!!;store.finish(lease,outcome,1)
+            assertNull(store.followUpTask(session.id));store.control(t.id,ExecutionState.CANCELLED,"test complete")
+        }
+    }
+    @Test fun acceptanceCriteriaSurviveSlicesAndRequirePassingAssertionsForExactCandidate() {
+        val w=db.createComposableWorkspace("Acceptance", "")
+        val t=task();val lease=store.claim(t.id,"owner")!!
+        store.bindWorkspace(store.currentTurn(t.id),w.id,"activation",org.json.JSONArray(listOf("Errors filter hides success events")))
+        store.bindWorkspace(store.currentTurn(t.id),w.id,"activation",org.json.JSONArray())
+        fun evidence(candidate:String,passed:Boolean) {
+            clock++
+            val c=call(t,"workspace_package_ui_test",JSONObject().put("workspace_id",w.id).put("candidate_id",candidate).toString());db.insertToolCall(c)
+            db.updateToolCall(c.id,ToolCallStatus.COMPLETED,resultJson=JSONObject().put("candidate_id",candidate).put("passed",passed).put("verified_criteria",org.json.JSONArray(listOf("Errors filter hides success events"))).toString())
+        }
+        evidence("other",true);evidence("candidate",false)
+        assertEquals(1,store.missingAcceptance(store.currentTurn(t.id),"candidate").size)
+        store.finish(lease,SliceOutcome.YIELDED,1);val next=store.nextTurn(t.id);store.claim(t.id,"next")!!
+        assertEquals(1,store.missingAcceptance(next,"candidate").size)
+        evidence("candidate",true)
+        assertTrue(store.missingAcceptance(next,"candidate").isEmpty())
+    }
+    @Test fun staleDeliveredWaitIsReconciledWithoutAnotherInferenceSlice() {
+        val w=db.createComposableWorkspace("Delivered", "")
+        val t=task();val lease=store.claim(t.id,"owner")!!;store.bindWorkspace(store.currentTurn(t.id),w.id,"activation")
+        delivered(t,lease,w.id,w.liveRevisionId)
+        store.finish(lease,SliceOutcome.RESPONDED,1)
+        // Simulate an alpha.26 persisted WAITING row with a now-classified optional capture.
+        db.writableDatabase.update("execution_tasks",android.content.ContentValues().apply {put("state","WAITING");put("document_json",store.get(t.id)!!.document.put("wait_reason","unresolved_tool_failure").toString())},"task_id=?",arrayOf(t.id))
+        val before=store.turns(t.id).size
+        assertEquals(ExecutionState.COMPLETED,store.reconcileDelivered(t.id)!!.state)
+        assertEquals(before,store.turns(t.id).size)
+    }
+
     @Test fun writerAndWorkspaceSwitchUseOneLockOrder() {
         val w = db.createComposableWorkspace("Concurrent", "")
         val entered = java.util.concurrent.CountDownLatch(1)

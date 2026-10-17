@@ -368,6 +368,7 @@ class AtlasMobileRuntime(
     fun resumeExecution(taskId: String) {
         val task = executionTasks.get(taskId) ?: return
         require(task.sessionId == requireActiveSession().id)
+        if(executionTasks.reconcileDelivered(taskId)?.state==ExecutionState.COMPLETED) { publish();return }
         require(task.state in setOf(ExecutionState.READY, ExecutionState.PAUSED, ExecutionState.WAITING))
         require(task.waitReason !in setOf("clarification", "authorization", "unknown_operation_outcome")) { "Resolve the recorded blocker first" }
         if (task.waitReason == "provider") require(lateTurnJob?.isActive != true) { "Provider request is still unresolved" }
@@ -477,7 +478,8 @@ class AtlasMobileRuntime(
         }
         val priorTask = pending?.let { executionTasks.forTurn(it.sourceTurnId) }
         return if (priorTask?.state == ExecutionState.WAITING && priorTask.waitReason == "clarification") executionTasks.attachReply(priorTask.id, turn.id).id
-        else executionTasks.create(session, text, turn.id, ExecutionBudget(), toolHarness.atomicLocalTools()).id
+        else executionTasks.followUpTask(session.id)?.let { executionTasks.attachReply(it.id,turn.id).id }
+            ?: executionTasks.create(session, text, turn.id, ExecutionBudget(), toolHarness.atomicLocalTools()).id
     }
 
     private suspend fun runTurnLoopLocked(session: AtlasSession, turnId: String, startingObservation: VisualObservation?, voice: Boolean) {

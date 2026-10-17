@@ -39,8 +39,9 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
         require(steps.length() in 1..32)
         for(i in 0 until steps.length()) {
             val step=steps.getJSONObject(i)
-            WorkspaceApplicationContract.exactKeys(step,setOf("action","selector","value"),setOf("action","selector","value"))
+            WorkspaceApplicationContract.exactKeys(step,setOf("action","selector","value","criterion"),setOf("action","selector","value"))
             require(step.getString("action") in setOf("click","input","select","assert_text","wait_text","assert_value","assert_visible","assert_hidden"))
+            if(step.has("criterion"))require(step.getString("criterion").trim().length in 1..200 && step.getString("action") in setOf("assert_text","wait_text","assert_value","assert_visible","assert_hidden")) { "Criteria require an assertion, not merely a click/input" }
             require(step.getString("selector").length in 1..128 && step.getString("value").length<=500)
         }
         val repository=WorkspacePackageRepository(database)
@@ -96,11 +97,12 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
         }
         val notificationVerified = "subscribe" !in requested || radio.delivered && notificationAsserted
         val passed=reports.length()==steps.length() && (0 until reports.length()).all { reports.getJSONObject(it).getBoolean("passed") } && missing.isEmpty() && notificationVerified
+        val verified=if(passed)(0 until steps.length()).mapNotNull {steps.getJSONObject(it).optString("criterion").trim().takeIf(String::isNotBlank)}.distinct() else emptyList()
         val id=UUID.randomUUID().toString()
         val result=JSONObject().put("check_id",id).put("candidate_id",candidateId).put("content_hash",hash).put("base_revision_id",base).put("data_version",version)
             .put("runtime",runtimeEvidence ?: JSONObject.NULL).put("kind","ui_simulation").put("passed",passed).put("steps",reports).put("operation_counts",JSONObject(radio.calls as Map<*,*>)).put("missing_operations",JSONArray(missing))
             .put("successful_operation_counts",JSONObject(succeeded as Map<*,*>)).put("failed_operations",failed)
-            .put("verification_version",2).put("notification_verified",notificationVerified).put("notification_delivered",radio.delivered)
+            .put("verified_criteria",JSONArray(verified)).put("verification_version",2).put("notification_verified",notificationVerified).put("notification_delivered",radio.delivered)
             .put("evidence_scope","DOM controls and simulated BLE responses only. No physical device, Android/native consent dialog, painted pixels, or saved records were verified.")
         currentCoroutineContext().ensureActive()
         WorkspaceApplicationData(database).atomic {
