@@ -201,3 +201,5 @@ Repeated identical failed checks must eventually enter the existing repeated-fai
 - Declare a requested UI criterion, prove baseline checks do not satisfy it, and attach it to a passing assertion. Failed simulations and another candidate's evidence must not satisfy it. Device coverage asserts actual filter visibility and its persisted criterion receipt.
 - Supply a UI check ID to activation and verify the response identifies the valid existing pure-check ID without changing the live revision.
 - Install Secure over alpha.26 without clearing data. A fresh app demo comes after installation; live-model quality is separate from controlled regression coverage.
+
+Alpha.27 source `05a9160298bd61a6fc808a980a8de97898b2c0f4` passed unit/lint run 39041134658 and all 12 instrumented tests on both API 35 and 36 in run 39041134604. Package `f1741b0a90b122be97f455b06c089105d97e1bba` passed unit/lint/signing run 39041830469; version code 1221 and the existing signing certificate were verified from the downloaded Secure APK. Drive App Builds metadata matched the uploaded filename and 69,975,894-byte size. Live model behavior remains acceptance work.
