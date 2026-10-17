@@ -40,11 +40,31 @@ internal object ExecutionWorkState {
         val state = JSONObject().put("workspace_id", target).put("latest_candidate", candidate)
             .put("changed_files", JSONArray(changedFiles.take(128))).put("latest_checks", evidence)
             .put("activation", activated?.let(::receipt)).put("authority", "Evidence only; identifiers must still pass target, freshness and permission checks.")
+        val published = activated?.let { json(it.resultJson) }
+        val delivery = when {
+            candidateId != null && published?.optString("candidate_id") == candidateId -> "activated"
+            evidence.length() > 0 && (0 until evidence.length()).any { evidence.getJSONObject(it).has("passed") && !evidence.getJSONObject(it).optBoolean("passed") } -> "verification_failed"
+            candidateId != null -> "staged_not_activated"
+            else -> "inspecting"
+        }
+        state.put("delivery_status", delivery)
+        val inventory = JSONArray()
+        scoped.filter { it.status == ToolCallStatus.COMPLETED && it.name == "workspace_package_read_file" }
+            .distinctBy { it.argumentsJson }.takeLast(16).forEach { call ->
+                val args=json(call.argumentsJson);val result=json(call.resultJson)
+                inventory.put(JSONObject().apply {
+                    for(key in listOf("path","candidate_id","revision_id","start_char","next_char","total_chars"))
+                        when { result.has(key) -> put(key,result.get(key)); args.has(key) -> put(key,args.get(key)) }
+                })
+            }
+        state.put("source_reads",inventory).put("contract_already_read", calls.any { it.name == "workspace_package_contract" && it.status == ToolCallStatus.COMPLETED })
+        state.put("inspection_guidance", "Reuse source ranges and contract already supplied in the transcript. Read only missing ranges or changed candidate content; re-read when evidence was omitted, stale or insufficient. Descriptions are user metadata; the installed contract and manifest define available capabilities.")
         // Meaningful frontier excludes reads and timestamps. Repeating a failed assertion or
         // restaging identical content is not progress. A changed failure is evidence, not success.
         val frontier = JSONObject().put("content_hash", candidate?.optString("content_hash"))
             .put("checks", JSONArray(checks.groupBy { it.name }.values.map { group ->
                 val r = receipt(group.last()); r.remove("check_id"); r.remove("operation_id")
+                r.optJSONArray("failed_steps")?.let { steps -> for(i in 0 until steps.length()) { steps.getJSONObject(i).remove("ui_state");steps.getJSONObject(i).remove("recovery_guidance") } }
                 r.optJSONArray("failed_operations")?.let { failures ->
                     for (i in 0 until failures.length()) failures.getJSONObject(i).optJSONObject("details")?.let { detail ->
                         for (key in listOf("operation_id", "started_at_ms", "finished_at_ms")) detail.remove(key)

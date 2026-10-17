@@ -7,15 +7,23 @@ import androidx.lifecycle.LifecycleEventObserver
 internal class WorkspaceConsentStore {
     private data class Key(val realm: String, val workspace: String, val revision: String, val epoch: Long, val contract: String)
     private val entries = linkedMapOf<Key, WorkspaceCapabilityGrants>()
-    fun acquire(principal: WorkspacePrincipal, requested: Map<String, Set<String>>): WorkspaceCapabilityGrants {
+    private val audit = mutableMapOf<Key, (String)->Unit>()
+    fun acquire(principal: WorkspacePrincipal, requested: Map<String, Set<String>>, onExpiry: ((String)->Unit)? = null): WorkspaceCapabilityGrants {
         val contract = requested.toSortedMap().entries.joinToString(";") { (name, operations) -> "$name:${operations.sorted().joinToString(",")}" }
         val key = Key(principal.realmId, principal.workspaceId, principal.revisionId, principal.epoch, contract)
         val obsolete = entries.keys.filter { it.realm == key.realm && it.workspace == key.workspace && it != key }
-        obsolete.forEach { entries.remove(it)?.revoke() }
-        if (key !in entries && entries.size >= 128) entries.remove(entries.keys.first())?.revoke()
+        obsolete.forEach { entries.remove(it)?.revoke(); audit.remove(it)?.invoke("revision_epoch_or_contract_changed") }
+        if (key !in entries && entries.size >= 128) { val oldest=entries.keys.first();entries.remove(oldest)?.revoke();audit.remove(oldest)?.invoke("consent_capacity") }
+        if(onExpiry!=null)audit[key]=onExpiry
         return entries.getOrPut(key) { WorkspaceCapabilityGrants() }
     }
-    fun clear() { entries.values.forEach { it.revoke() } }
+    fun clear() {
+        entries.forEach { (key, grants) ->
+            val hadConsent=grants.hasAnyConsent()
+            grants.revoke()
+            if(hadConsent)audit[key]?.invoke("activity_stopped")
+        }
+    }
 
     companion object {
         private val stores = mutableMapOf<Lifecycle, WorkspaceConsentStore>()

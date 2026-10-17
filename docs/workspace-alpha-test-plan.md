@@ -186,3 +186,9 @@ During an agent task, navigate between workspaces repeatedly and export after an
 - Scan twice, return to the workspace list, then reopen the same revision. Scans reuse workspace consent, but connections and peripheral handles are gone. Revoke/deny, navigate away and return: requests stay blocked until native re-enable.
 - Background Atlas while on the workspace list, return and reopen: scanning requires fresh consent. Repeat after revision/epoch change and OS permission loss. Verify another workspace cannot reuse the grant.
 - Complete a write, disconnect and inspect its receipt: the completed outcome remains unchanged, while use of old handles is denied. Revoke during a pending operation: its delivery is cancelled and no write is automatically retried.
+
+## Alpha.26 iteration acceptance
+
+Retry the staged diagnostic-log candidate in the existing BLE workspace. A disabled Connect test step should expose prerequisite controls; Atlas should select a device, supply valid write input, correct filter interactions and continue verification without another user prompt. An intermediate model failure report must not end recoverable work. Check the task card for staged/not-live, failed-verification and activated status; confirm the workspace live revision prefix changes only after committed activation. Assert actual filter visibility and notification payload delivery, not generic success text.
+
+Repeated identical failed checks must eventually enter the existing repeated-failure wait despite fresh check IDs. Genuine missing-answer/permission waits and uncertain physical outcomes must still stop. Background from the workspace list and verify a consent_expired audit with activity_stopped; navigation alone must continue retaining scan consent. Export after completion or any stall. Live-model convergence and physical BLE remain phone acceptance.

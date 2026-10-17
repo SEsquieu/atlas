@@ -99,6 +99,41 @@ class ExecutionRuntimeTest {
         assertEquals(0,task.document.getJSONObject("checkpoint").getJSONArray("unresolved_operation_ids").length())
     }
 
+    @Test fun productionRunnerContinuesAfterPrematureFailureReportThroughRealActivation() = runTest {
+        val w=db.createComposableWorkspace("Recovery app","",realmId=session.workspaceId)
+        db.activateComposableWorkspace(session.id,w.id);session=db.loadSession(session.id)!!
+        val bundle=com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.example()
+        val candidate=com.grinningfrog.atlas.workspace.application.WorkspacePackageRepository(db).stage(w.id,w.realmId,w.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,db.createTurn(session.id,"setup").id)
+        val id=candidate.getString("candidate_id");var checks=0;var requests=0;var checkId=""
+        val verify=object:AtlasReceiptBackedAdapter {
+            override val supportsLocalDiagnostics=true
+            override val definition=ToolDefinition("workspace_package_test","Test candidate","{}",ToolRisk.READ_ONLY,maxCallsPerTurn=4)
+            override suspend fun execute(call:AtlasToolCall):ToolExecutionResult {
+                val result=com.grinningfrog.atlas.workspace.application.WorkspaceCandidateChecks(db) { _,_,_->JSONObject().put("ok",true).put("value",++checks>1) }.test(w.id,w.realmId,id)
+                checkId=result.getString("check_id");return ToolExecutionResult(result.toString())
+            }
+        }
+        val activate=object:AtlasReceiptBackedAdapter {
+            override val supportsLocalMutation=true
+            override val definition=ToolDefinition("workspace_package_activate","Activate candidate","{}",ToolRisk.SESSION_WRITE)
+            override suspend fun execute(call:AtlasToolCall):ToolExecutionResult = ToolExecutionResult(
+                com.grinningfrog.atlas.workspace.application.WorkspaceApplicationActivation(db).activate(w.id,w.realmId,id,checkId,startup={_,_->true}).toString())
+        }
+        val runtime=runtime(this,listOf(verify,activate)) { request ->
+            val name=when(++requests) {1,3->"workspace_package_test";4->"workspace_package_activate";else->null}
+            if(requests==3) assertTrue(request.systemPrompt.contains("recovery_required\":true"))
+            response(request,name?.let { listOf(ToolCallProposal("recovery-$requests",it,JSONObject().put("workspace_id",w.id).put("candidate_id",id).toString())) }.orEmpty())
+        }
+        runtime.ask("Verify the candidate, repair any failed check and activate it")
+        assertEquals(5,requests);assertEquals(2,checks)
+        val task=ExecutionTaskStore(db).list(session.id).single()
+        assertEquals(ExecutionState.COMPLETED,task.state)
+        assertEquals(2,task.document.getInt("slice_count"))
+        assertNotEquals(w.liveRevisionId,db.loadComposableWorkspace(w.id)!!.liveRevisionId)
+        assertEquals("activated",task.document.getJSONObject("work_state").getString("delivery_status"))
+        assertEquals(1,db.loadMessages(session.id).count { it.role==MessageRole.USER })
+    }
+
     @Test fun productionRunnerAutomaticallyContinuesAfterEightSteps() = runTest {
         var requests=0;var executions=0;val turns=mutableListOf<String>()
         val runtime=runtime(this,listOf(diagnostic {executions++})) { request ->

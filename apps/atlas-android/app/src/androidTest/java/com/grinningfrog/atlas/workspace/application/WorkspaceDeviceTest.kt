@@ -343,6 +343,30 @@ class WorkspaceDeviceTest {
         } finally { scenario.close();db.deleteComposableWorkspace(workspace.id) }
     }
     @androidx.compose.runtime.Composable private fun MaterialThemeForTest(content:@androidx.compose.runtime.Composable ()->Unit) { androidx.compose.material3.MaterialTheme(content=content) }
+    @Test fun uiSimulationReportsPrerequisitesAndVerifiesSelectVisibilityAndChangeEvents() = runBlocking {
+        val db=(context.applicationContext as AtlasApplication).database
+        val session=db.createSession("Form diagnostics","Test UI controls")
+        val turn=db.createTurn(session.id,"test")
+        val w=db.createComposableWorkspace("Form diagnostics", "")
+        try {
+            val bundle=WorkspaceApplicationContract.example()
+            bundle.getJSONObject("files").put("ui/index.html","<!doctype html><html><body><button id=choose>Select item</button><button id=connect disabled>Connect</button><select id=filter><option value=all>All</option><option value=errors>Errors</option></select><input id=field><p id=edited></p><p id=ok>Successful event</p><p id=bad>Error event</p><script type=module src=./app.js></script></body></html>")
+            bundle.getJSONObject("files").put("ui/app.js","""import {host} from '/atlas/host.js';document.querySelector('#choose').onclick=()=>document.querySelector('#connect').disabled=false;document.querySelector('#filter').onchange=e=>document.querySelector('#ok').hidden=e.target.value==='errors';document.querySelector('#field').onchange=e=>document.querySelector('#edited').textContent=e.target.value;await host.ready();""")
+            val c=WorkspacePackageRepository(db).stage(w.id,w.realmId,w.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,turn.id)
+            fun step(action:String,selector:String,value:String="")=JSONObject().put("action",action).put("selector",selector).put("value",value)
+            val bad=WorkspaceUiSimulation(context,db).test(w.id,w.realmId,c.getString("candidate_id"),JSONArray().put(step("click","#connect")))
+            assertFalse(bad.getBoolean("passed"))
+            val failure=bad.getJSONArray("steps").getJSONObject(0)
+            assertEquals("\"disabled\"",failure.getString("outcome"));assertTrue(failure.getJSONObject("ui_state").getJSONArray("controls").toString().contains("choose"))
+            val good=WorkspaceUiSimulation(context,db).test(w.id,w.realmId,c.getString("candidate_id"),JSONArray()
+                .put(step("click","#choose")).put(step("click","#connect"))
+                .put(step("select","#filter","errors")).put(step("assert_value","#filter","errors"))
+                .put(step("assert_hidden","#ok")).put(step("assert_visible","#bad"))
+                .put(step("input","#field","01")).put(step("assert_text","#edited","01")))
+            assertTrue(good.toString(),good.getBoolean("passed"))
+        } finally { db.deleteComposableWorkspace(w.id) }
+    }
+
     @Test fun candidateUiSimulationFindsMissingNotificationsAndVerifiesManagedWatcher() = runBlocking {
         val db=(context.applicationContext as AtlasApplication).database
         val session=db.createSession("UI simulation","test");val turn=db.createTurn(session.id,"user")
@@ -459,6 +483,8 @@ class WorkspaceDeviceTest {
             }
             audit=WorkspaceDeviceAudit(db).snapshot(workspace.id).getJSONArray("events")
             assertEquals(2,(0 until audit.length()).count{audit.getJSONObject(it).getString("kind")=="grant_requested"})
+            withTimeout(5_000){while(!WorkspaceDeviceAudit(db).snapshot(workspace.id).getJSONArray("events").toString().contains("consent_expired"))delay(100)}
+            assertTrue(WorkspaceDeviceAudit(db).snapshot(workspace.id).toString().contains("activity_stopped"))
             assertNotEquals("\"scanned\"",evaluate("document.body.dataset.result"))
 
         }catch(failure:Throwable){

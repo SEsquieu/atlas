@@ -177,10 +177,10 @@ class ExecutionTasksTest {
         assertEquals(ExecutionState.WAITING,result.state)
         assertEquals("unresolved_tool_failure",result.waitReason)
     }
-    @Test fun completedToolWithFailingFixtureIsAnUnresolvedFailure() {
+    @Test fun completedToolWithFailingFixtureContinuesRecovery() {
         val t=task();val lease=store.claim(t.id,"owner")!!;val c=call(t,"workspace_package_test")
         db.insertToolCall(c);db.updateToolCall(c.id,ToolCallStatus.COMPLETED,resultJson="{\"passed\":false}")
-        assertEquals(ExecutionState.WAITING,store.finish(lease,SliceOutcome.RESPONDED,1)!!.state)
+        assertEquals(ExecutionState.READY,store.finish(lease,SliceOutcome.RESPONDED,1)!!.state)
     }
     @Test fun onlyOneOwnerAndStaleLeaseCannotMutateAfterPause() {
         val t=task();val lease=store.claim(t.id,"first")!!
@@ -292,6 +292,24 @@ class ExecutionTasksTest {
         assertEquals(2,store.turns(t.id).size)
         assertTrue(runCatching {store.attachReply(t.id,db.createTurn(session.id,"text").id)}.isFailure)
     }
+    @Test fun repeatedVerificationWithFreshReceiptIdsStillStopsAtTheExistingFailureGuard() = runTest {
+        val t=task();var slices=0
+        executor().run(t.id) {_,_->
+            clock++;slices++
+            val c=call(t,"workspace_package_ui_test");db.insertToolCall(c)
+            db.updateToolCall(c.id,ToolCallStatus.COMPLETED,resultJson=JSONObject().put("check_id",UUID.randomUUID().toString()).put("passed",false)
+                .put("steps",org.json.JSONArray().put(JSONObject().put("index",0).put("passed",false).put("selector","#connect").put("outcome","disabled"))).toString())
+            SliceOutcome.RESPONDED
+        }
+        assertEquals(3,slices);assertEquals("repeated_failure",store.get(t.id)!!.waitReason)
+    }
+    @Test fun verificationRecoveryDoesNotOverrideExplicitUserWaitOrUnknownOutcome() {
+        val t=task();val lease=store.claim(t.id,"owner")!!
+        val c=call(t,"workspace_package_ui_test");db.insertToolCall(c);db.updateToolCall(c.id,ToolCallStatus.COMPLETED,resultJson="""{"passed":false}""")
+        val wait=store.finish(lease,SliceOutcome.WAITING_USER,1)!!
+        assertEquals(ExecutionState.WAITING,wait.state);assertEquals("clarification",wait.waitReason)
+    }
+
     @Test fun repeatedDeterministicFailureWaitsRatherThanLoopingForever() = runTest {
         val t=task();var slices=0
         executor().run(t.id) {_,_->

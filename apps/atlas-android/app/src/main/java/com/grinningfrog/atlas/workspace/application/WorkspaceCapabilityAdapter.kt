@@ -34,6 +34,7 @@ internal interface WorkspaceCapabilityAccess {
 internal class WorkspaceCapabilityGrants {
     var requestsEnabled = true
     private val grants = mutableMapOf<Pair<String,String>,Boolean>()
+    fun hasAnyConsent() = grants.isNotEmpty()
     fun hasAny(capability: String) = grants.keys.any { it.first == capability }
     fun has(capability: String, resource: String) = grants.containsKey(capability to resource)
     fun add(capability: String, resource: String, ephemeral: Boolean) { require(grants.size < 128 || has(capability, resource)) { "QUOTA_EXCEEDED" }; grants[capability to resource] = ephemeral }

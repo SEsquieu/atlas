@@ -455,10 +455,12 @@ private fun AtlasHomePage(
                     InstrumentCard {
                         Text("Task · ${if (task.state == com.grinningfrog.atlas.runtime.ExecutionState.COMPLETED) "response finished" else task.state.name.lowercase()}", style = MaterialTheme.typography.labelLarge)
                         Text(task.objective, maxLines = 3)
+                        AtlasUiPresentation.deliveryLabel(task)?.let { Text(it, style = MaterialTheme.typography.labelLarge) }
+                        if(task.document.optBoolean("recovery_required")) Text("Continuing verification recovery", style = MaterialTheme.typography.bodySmall)
                         Text("${task.document.optInt("slice_count")} slices · ${task.usage.optLong("model_steps")} model steps · ${task.usage.optLong("tool_calls")} tools", style = MaterialTheme.typography.bodySmall)
                         if (task.waitReason.isNotBlank()) Text("Current blocker: ${task.waitReason.replace('_', ' ')} · updated ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(task.document.optLong("updated_at")))}", color = AtlasAmber)
                         val recovered = task.document.optJSONObject("checkpoint")?.optJSONArray("resolved_operations")?.length() ?: 0
-                        if (recovered > 0) Text("$recovered earlier candidate errors superseded by committed activation (history retained).", style = MaterialTheme.typography.bodySmall)
+                        if (recovered > 0) Text("$recovered earlier errors resolved; history retained.", style = MaterialTheme.typography.bodySmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             if (task.state in setOf(com.grinningfrog.atlas.runtime.ExecutionState.PAUSED, com.grinningfrog.atlas.runtime.ExecutionState.WAITING) && task.waitReason !in setOf("clarification", "authorization", "unknown_operation_outcome", "task_allowance")) TextButtonCompact("Resume") { runAction { runtime.resumeExecution(task.id) } }
                             if (task.state !in setOf(com.grinningfrog.atlas.runtime.ExecutionState.COMPLETED, com.grinningfrog.atlas.runtime.ExecutionState.CANCELLED, com.grinningfrog.atlas.runtime.ExecutionState.FAILED)) TextButtonCompact("Cancel task") { runtime.cancelExecution(task.id) }

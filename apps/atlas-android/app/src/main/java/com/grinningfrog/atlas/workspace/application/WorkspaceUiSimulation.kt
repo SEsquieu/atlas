@@ -40,7 +40,7 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
         for(i in 0 until steps.length()) {
             val step=steps.getJSONObject(i)
             WorkspaceApplicationContract.exactKeys(step,setOf("action","selector","value"),setOf("action","selector","value"))
-            require(step.getString("action") in setOf("click","input","assert_text","wait_text"))
+            require(step.getString("action") in setOf("click","input","select","assert_text","wait_text","assert_value","assert_visible","assert_hidden"))
             require(step.getString("selector").length in 1..128 && step.getString("value").length<=500)
         }
         val repository=WorkspacePackageRepository(database)
@@ -68,12 +68,19 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
                 withTimeout(8_000) { ready.await() }
                 for(i in 0 until steps.length()) {
                     val step=steps.getJSONObject(i);val action=step.getString("action");val selector=JSONObject.quote(step.getString("selector"));val value=JSONObject.quote(step.getString("value"))
-                    val script="""(()=>{const e=document.querySelector($selector);if(!e)return 'missing';if(${"\"$action\""}==='click'){if(e.disabled)return 'disabled';e.click();return 'ok';}if(${"\"$action\""}==='input'){e.value=$value;e.dispatchEvent(new Event('input',{bubbles:true}));return 'ok';}return (e.textContent||'').includes($value)?'ok':'mismatch';})()"""
+                    val script="""(()=>{const e=document.querySelector($selector);if(!e)return 'missing';if(${"\"$action\""}==='click'){if(e.disabled)return 'disabled';e.click();return 'ok';}if(${"\"$action\""}==='input'||${"\"$action\""}==='select'){if(e.disabled)return 'disabled';if(${"\"$action\""}==='select'&&e.tagName!=='SELECT')return 'not_select';e.value=$value;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return e.value===$value?'ok':'value_mismatch';}if(${"\"$action\""}==='assert_value')return e.value===$value?'ok':'value_mismatch';if(${"\"$action\""}==='assert_visible'||${"\"$action\""}==='assert_hidden'){const shown=!e.hidden&&e.getClientRects().length>0&&getComputedStyle(e).visibility!=='hidden';return shown===(${"\"$action\""}==='assert_visible')?'ok':'visibility_mismatch';}return (e.textContent||'').includes($value)?'ok':'mismatch';})()"""
                     var outcome=evaluate(script)
                     if(action=="wait_text") { val end=android.os.SystemClock.elapsedRealtime()+3_000;while(outcome!="\"ok\"" && android.os.SystemClock.elapsedRealtime()<end) { delay(100);outcome=evaluate(script) } }
                     val passed=outcome=="\"ok\""
                     reports.put(JSONObject().put("index",i).put("action",action).put("selector",step.getString("selector")).put("passed",passed).put("outcome",outcome.take(100)))
-                    if(!passed) { reports.getJSONObject(reports.length()-1).put("actual_text",evaluate("(()=>document.querySelector($selector)?.textContent?.slice(0,500)||'')()"));break }
+                    if(!passed) {
+                        val report=reports.getJSONObject(reports.length()-1)
+                        report.put("actual_text",evaluate("(()=>document.querySelector($selector)?.textContent?.slice(0,500)||'')()"))
+                        val snapshot=evaluate("""JSON.stringify({controls:Array.from(document.querySelectorAll('button,input,select')).slice(0,32).map(e=>({tag:e.tagName,id:e.id,label:(e.getAttribute('aria-label')||e.textContent||e.getAttribute('placeholder')||'').slice(0,120),disabled:!!e.disabled,value:(e.value||'').slice(0,100),options:e.tagName==='SELECT'?Array.from(e.options).slice(0,8).map(o=>({value:o.value,label:o.text.slice(0,80)})):undefined})),status:(document.querySelector('[role=status]')?.textContent||'').slice(0,300)})""")
+                        runCatching { report.put("ui_state",JSONObject(JSONArray("[$snapshot]").getString(0))) }
+                        report.put("recovery_guidance","Compare the failed action with controls and prerequisite selection/input state. A disabled control is not a radio failure. Correct the test or implementation, then rerun; assert requested behavior, not merely generic success labels.")
+                        break
+                    }
                     // Let asynchronous UI handlers dispatch their host requests before the next assertion/action.
                     delay(300)
                 }

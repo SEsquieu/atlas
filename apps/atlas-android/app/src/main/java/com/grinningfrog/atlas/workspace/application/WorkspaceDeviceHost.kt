@@ -44,7 +44,13 @@ internal fun WorkspaceDeviceHost(principal: WorkspacePrincipal, bundle: JSONObje
                 finally { if (permissionResult === result) permissionResult = null }
             }
         }, scope = scope, changed = { version++ }, audit = { audit.record(it) },
-        grants = consentStore.acquire(principal, requested)) }
+        grants = consentStore.acquire(principal, requested) { reason ->
+            val writer=WorkspaceDeviceAudit.Writer(database,principal.workspaceId)
+            writer.record(JSONObject().put("kind","consent_expired").put("at_ms",System.currentTimeMillis())
+                .put("instance_id",principal.instanceId).put("revision_id",principal.revisionId).put("epoch",principal.epoch)
+                .put("details",JSONObject().put("reason",reason).put("foreground_consent_retained",false)))
+            writer.close()
+        }) }
     DisposableEffect(broker, owner) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) broker.revoke(reason="activity_stopped") }
         owner.lifecycle.addObserver(observer)

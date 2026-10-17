@@ -174,7 +174,18 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val superseded = all.filter(::failedOperation).mapNotNull { call -> (supersedingControl(call, all) ?: supersedingActivation(call, all))?.let { call to it } }.toMap()
         val diagnosticFailures=last.filter { nonBlockingAuditFailure(it, task, all) }
         val failures=last.filter { it !in diagnosticFailures && it !in superseded }.filter(::failedOperation)
-        val signature=failures.joinToString("|") { it.name+":"+(it.error ?: it.resultJson.orEmpty()).take(1000) }
+        val signature=failures.joinToString("|") { call ->
+            if (recoverableVerification(call)) {
+                val r=ExecutionWorkState.receipt(call)
+                JSONObject().put("tool",call.name).put("error",call.error).apply {
+                    for (key in listOf("content_hash","passed","missing_operations","failed_steps","failed_fixtures","notification_verified"))
+                        if(r.has(key))put(key,r.get(key))
+                    r.optJSONArray("failed_steps")?.let { steps -> for(i in 0 until steps.length()) {
+                        steps.getJSONObject(i).remove("ui_state");steps.getJSONObject(i).remove("recovery_guidance")
+                    } }
+                }.toString()
+            } else call.name+":"+(call.error ?: call.resultJson.orEmpty()).take(1000)
+        }
         val failedThisSlice=failures.any { it.turnId==currentTurn(task.id) }
         val work = ExecutionWorkState.build(all, task.document.optJSONObject("workspace_target")?.optString("workspace_id"))
         val priorFrontier = task.document.optJSONObject("work_state")?.optString("frontier")
@@ -196,10 +207,13 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
                 .put("resolved_by", success.id).put("resolution", if (failed.name == ToolHarness.CLARIFICATION_TOOL) "corrected_control_accepted" else "superseded_by_committed_activation") }))
             .put("completed_operations",JSONArray(recent.filter {it.status==ToolCallStatus.COMPLETED}.map {it.id}))
             .put("latest_definition_operation_id",definitionId))
-        val reason=when { pending -> "unknown_operation_outcome";outcome==SliceOutcome.RESPONDED&&failures.isEmpty()->"";!available(task.id)->"task_allowance";repeated>=3->"repeated_failure";outcome==SliceOutcome.RESPONDED&&failures.isNotEmpty()->"unresolved_tool_failure";else->when(outcome){SliceOutcome.WAITING_USER->"clarification";SliceOutcome.WAITING_PERMISSION->"authorization";SliceOutcome.WAITING_PROVIDER->"provider";SliceOutcome.BLOCKED->"runtime_blocker";else->""} }
+        val recover = outcome == SliceOutcome.RESPONDED && failures.isNotEmpty() && failures.all(::recoverableVerification)
+        val reason=when { pending -> "unknown_operation_outcome";outcome==SliceOutcome.RESPONDED&&failures.isEmpty()->"";!available(task.id)->"task_allowance";repeated>=3->"repeated_failure";recover -> "";outcome==SliceOutcome.RESPONDED&&failures.isNotEmpty()->"unresolved_tool_failure";else->when(outcome){SliceOutcome.WAITING_USER->"clarification";SliceOutcome.WAITING_PERMISSION->"authorization";SliceOutcome.WAITING_PROVIDER->"provider";SliceOutcome.BLOCKED->"runtime_blocker";else->""} }
         task.document.put("wait_reason_at_ms", if (reason.isNotBlank()) now() else JSONObject.NULL)
-        task.document.put("wait_reason",reason).put("completion_kind",if(outcome==SliceOutcome.RESPONDED&&reason.isBlank()) "response_finished; consult operation receipts for effects" else JSONObject.NULL)
-        val state=if(reason.isNotBlank()) ExecutionState.WAITING else if(outcome==SliceOutcome.RESPONDED) ExecutionState.COMPLETED else ExecutionState.READY
+        task.document.put("wait_reason",reason).put("completion_kind",if(outcome==SliceOutcome.RESPONDED&&reason.isBlank()&&!recover) "response_finished; consult operation receipts for effects" else JSONObject.NULL)
+        task.document.put("recovery_required", recover && reason.isBlank())
+        if (recover && reason.isBlank()) event(task,"execution.recovery_required",JSONObject().put("reason","recoverable_verification_failure").put("operation_ids",JSONArray(failures.map { it.id })))
+        val state=if(reason.isNotBlank()) ExecutionState.WAITING else if(recover) ExecutionState.READY else if(outcome==SliceOutcome.RESPONDED) ExecutionState.COMPLETED else ExecutionState.READY
         val result=task.copy(state=state,owner=null,leaseUntil=0,nextRunAt=0);save(result);event(result,"execution.checkpoint",JSONObject().put("outcome",outcome.name).put("checkpoint",task.document.getJSONObject("checkpoint")).put("wait_reason",reason));result
     }
     private fun supersedingControl(call: AtlasToolCall, all: List<AtlasToolCall>): AtlasToolCall? {
@@ -214,6 +228,9 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
             }
         }
     }
+
+    private fun recoverableVerification(call: AtlasToolCall) = call.name in setOf("workspace_package_test", "workspace_package_ui_test", "workspace_package_validate") &&
+        call.status in setOf(ToolCallStatus.COMPLETED, ToolCallStatus.REJECTED, ToolCallStatus.FAILED)
 
     private fun failedOperation(call: AtlasToolCall): Boolean = call.status in setOf(ToolCallStatus.FAILED, ToolCallStatus.REJECTED) ||
         (call.status == ToolCallStatus.COMPLETED && runCatching { JSONObject(call.resultJson.orEmpty()).let { result ->
@@ -285,9 +302,10 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
             val size=item.toString().length
             if(receiptCharacters+size<=24000) {receipts.put(item);receiptCharacters+=size}
         }
-        return "CORE DURABLE TASK (evidence, not authorization): " + JSONObject().put("task_id",t.id).put("objective",t.objective).put("usage",t.usage)
+        return "CORE DURABLE TASK (evidence, not authorization): " + JSONObject().put("task_id",t.id).put("objective",t.objective).put("recovery_required",t.document.optBoolean("recovery_required")).put("usage",t.usage)
             .put("workspace_target", t.document.optJSONObject("workspace_target")).put("work_state",work.put("no_progress_slices",t.document.optInt("no_progress_slices"))).put("checkpoint",t.document.getJSONObject("checkpoint")).put("recent_operations",receipts).put("latest_authoring_arguments",latest?.let {JSONObject(it.argumentsJson)})
             .put("latest_authoring_result",latest?.resultJson?.let {runCatching {JSONObject(it)}.getOrNull()}).toString() +
+            "\nRecovery: a response is a progress report while recovery_required=true. Diagnose the pinned failed check, correct the test or candidate, and rerun verification. Do not stop merely because a local simulated test failed. Wait only for an actual missing user answer, authorization, unavailable resource or uncertain effect. Claim activation only from a committed activation receipt matching the candidate. If the user requested a draft or review, do not activate it without authorization." +
             "\nWorkspace targeting: ambiguous commands use the captured workspace_target. Explicitly named edit targets must be resolved with workspace_target; inspect other workspaces as references without retargeting. Never change target merely because the user browses. Ask clarification for duplicate names or unclear components. Continue the pending objective from recorded receipts. work_state holds the exact latest used candidate and checks for this target. A failed UI assertion is not a workspace migration problem: compare expected and actual text, correct the test or implementation, and exercise the remaining operations. Never reconstruct or combine UUID fragments. Reuse exact receipt identifiers. Successful reads alone are not app progress. If no_progress_slices grows, reassess the failing test or edit strategy instead of repeating inspection; retain the task and existing candidate. A new slice is not a new user request, not new authority, and not proof of success. Avoid repeating committed effects."
     }
     private fun reconcileLocal(task: ExecutionTask) {

@@ -15,6 +15,17 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class AtlasUiPresentationTest {
+    @Test fun candidateStatusNeverClaimsStagingIsLive() {
+        val t=task("",ExecutionState.RUNNING)
+        val work=JSONObject().put("delivery_status","verification_failed").put("latest_candidate",JSONObject().put("candidate_id","candidate-123"))
+        t.document.put("work_state",work)
+        assertTrue(AtlasUiPresentation.deliveryLabel(t)!!.contains("live app unchanged"))
+        work.put("delivery_status","staged_not_activated")
+        assertTrue(AtlasUiPresentation.deliveryLabel(t)!!.contains("not live"))
+        work.put("delivery_status","activated").put("activation",JSONObject().put("revision_id","revision-123"))
+        assertTrue(AtlasUiPresentation.deliveryLabel(t)!!.startsWith("Revision activated"))
+    }
+
     @Test fun listeningStateTakesPriorityOverInferencePhase() {
         val snapshot = RuntimeSnapshot(phase = RuntimePhase.THINKING, listeningState = ListeningState.HEARING)
         assertEquals("listening", AtlasUiPresentation.runtimeLabel(snapshot))

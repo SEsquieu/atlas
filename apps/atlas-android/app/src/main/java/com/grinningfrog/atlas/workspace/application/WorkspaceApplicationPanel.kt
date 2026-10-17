@@ -32,6 +32,8 @@ internal fun WorkspaceApplicationPanel(workspace: ComposableWorkspace, revision:
         }
         return
     }
+    Column(modifier) {
+        Text("Live revision · ${revision.id.take(8)}", modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
     key(workspace.id, revision.id, epoch) {
         var ready by remember { mutableStateOf(false) }
         fun failed(message: String) {
@@ -40,7 +42,7 @@ internal fun WorkspaceApplicationPanel(workspace: ComposableWorkspace, revision:
         }
         val principal = remember { WorkspacePrincipal(workspace.realmId, workspace.id, revision.id, UUID.randomUUID().toString(), epoch, WorkspaceInstanceMode.FOREGROUND) }
         val bundle = remember(revision.id) { JSONObject(revision.definitionJson) }
-        WorkspaceDeviceHost(principal, bundle, current = { runCatching { data.fence(principal); true }.getOrDefault(false) }, modifier = modifier, database = database, adapterFactory = deviceFactory) { devices, viewportModifier ->
+        WorkspaceDeviceHost(principal, bundle, current = { runCatching { data.fence(principal); true }.getOrDefault(false) }, modifier = Modifier.fillMaxWidth().weight(1f), database = database, adapterFactory = deviceFactory) { devices, viewportModifier ->
             val presentation = remember {
                 runCatching {
                     WorkspaceWebPresentation(context, JSONObject(revision.definitionJson), principal,
@@ -73,5 +75,6 @@ internal fun WorkspaceApplicationPanel(workspace: ComposableWorkspace, revision:
                 }, modifier = viewportModifier)
             }
         }
+    }
     }
 }
