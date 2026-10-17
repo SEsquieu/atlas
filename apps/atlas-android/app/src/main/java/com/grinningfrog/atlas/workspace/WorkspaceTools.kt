@@ -133,8 +133,8 @@ private class ValidateDefinition(database: AtlasDatabase) : WorkspaceAdapter(dat
 
 private class TargetWorkspace(database: AtlasDatabase) : LocalWorkspaceMutation(database) {
     override val definition = ToolDefinition(
-        "workspace_target", "Resolve an explicitly requested workspace by exact name or an inspected workspace ID and bind it as this task's edit target without navigating the UI. Use only for user-requested edit targets; reference inspection does not change the edit target. Duplicate names return candidates and require clarification. Subsequent ambiguous commands in this task refer to this target.",
-        """{"type":"object","properties":{"name":{"type":"string"},"workspace_id":{"type":"string"}},"additionalProperties":false}""",
+        "workspace_target", "Resolve an explicitly requested workspace by exact name or an inspected workspace ID and bind it as this task's edit target without navigating the UI. Use only for user-requested edit targets; reference inspection does not change the edit target. Duplicate names return candidates and require clarification. Subsequent ambiguous commands in this task refer to this target. For app work declare delivery: activation when the user requests a working/live update, draft for staging without activation, inspect for review only. Activation requirements cannot be weakened within the task; this field never grants permission.",
+        """{"type":"object","properties":{"name":{"type":"string"},"workspace_id":{"type":"string"},"delivery":{"type":"string","enum":["activation","draft","inspect"]}},"additionalProperties":false}""",
         ToolRisk.SESSION_WRITE, maxCallsPerTurn = 6,
     )
     override fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision {
@@ -153,7 +153,7 @@ private class TargetWorkspace(database: AtlasDatabase) : LocalWorkspaceMutation(
         if (matches.size != 1) return ToolExecutionResult(JSONObject().put("ok", false).put("reason", if (matches.isEmpty()) "workspace_not_found" else "ambiguous_workspace_name")
             .put("candidates", JSONArray(matches.map { JSONObject().put("workspace_id", it.id).put("name", it.name) })).put("requires_clarification", true).toString())
         val target = matches.single()
-        val sequence = com.grinningfrog.atlas.runtime.ExecutionTaskStore(database).bindWorkspace(call.turnId, target.id)
+        val sequence = com.grinningfrog.atlas.runtime.ExecutionTaskStore(database).bindWorkspace(call.turnId, target.id, args.optString("delivery").takeIf { it.isNotBlank() })
         return ToolExecutionResult(JSONObject().put("ok", true).put("workspace_id", target.id).put("name", target.name).put("navigation_sequence", sequence).put("ui_navigation_changed", false).toString())
     }
 }

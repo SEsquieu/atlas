@@ -119,16 +119,16 @@ class ExecutionRuntimeTest {
             override suspend fun execute(call:AtlasToolCall):ToolExecutionResult = ToolExecutionResult(
                 com.grinningfrog.atlas.workspace.application.WorkspaceApplicationActivation(db).activate(w.id,w.realmId,id,checkId,startup={_,_->true}).toString())
         }
-        val runtime=runtime(this,listOf(verify,activate)) { request ->
-            val name=when(++requests) {1,3->"workspace_package_test";4->"workspace_package_activate";else->null}
-            if(requests==3) assertTrue(request.systemPrompt.contains("recovery_required\":true"))
-            response(request,name?.let { listOf(ToolCallProposal("recovery-$requests",it,JSONObject().put("workspace_id",w.id).put("candidate_id",id).toString())) }.orEmpty())
+        val runtime=runtime(this,WorkspaceTools.create(db)+listOf(verify,activate)) { request ->
+            val name=when(++requests) {1->"workspace_target";2,4->"workspace_package_test";6->"workspace_package_activate";else->null}
+            if(requests==4 || requests==6) assertTrue(request.systemPrompt.contains("recovery_required\":true"))
+            response(request,name?.let { listOf(ToolCallProposal("recovery-$requests",it,JSONObject().put("workspace_id",w.id).apply { if(it=="workspace_target")put("delivery","activation") else put("candidate_id",id) }.toString())) }.orEmpty())
         }
         runtime.ask("Verify the candidate, repair any failed check and activate it")
-        assertEquals(5,requests);assertEquals(2,checks)
+        assertEquals(7,requests);assertEquals(2,checks)
         val task=ExecutionTaskStore(db).list(session.id).single()
         assertEquals(ExecutionState.COMPLETED,task.state)
-        assertEquals(2,task.document.getInt("slice_count"))
+        assertEquals(3,task.document.getInt("slice_count"))
         assertNotEquals(w.liveRevisionId,db.loadComposableWorkspace(w.id)!!.liveRevisionId)
         assertEquals("activated",task.document.getJSONObject("work_state").getString("delivery_status"))
         assertEquals(1,db.loadMessages(session.id).count { it.role==MessageRole.USER })

@@ -292,6 +292,18 @@ class ExecutionTasksTest {
         assertEquals(2,store.turns(t.id).size)
         assertTrue(runCatching {store.attachReply(t.id,db.createTurn(session.id,"text").id)}.isFailure)
     }
+    @Test fun activationRequirementContinuesWithoutActivationWhileDraftCanFinish() {
+        for(delivery in listOf("activation","draft","inspect")) {
+            val w=db.createComposableWorkspace("Delivery $delivery", "")
+            val t=task();val lease=store.claim(t.id,"owner")!!
+            store.bindWorkspace(store.currentTurn(t.id),w.id,delivery)
+            if(delivery=="activation") assertTrue(runCatching {store.bindWorkspace(store.currentTurn(t.id),w.id,"draft")}.isFailure)
+            val result=store.finish(lease,SliceOutcome.RESPONDED,1)!!
+            assertEquals(if(delivery=="activation") ExecutionState.READY else ExecutionState.COMPLETED,result.state)
+            if(delivery=="activation") store.control(t.id,ExecutionState.CANCELLED,"test complete")
+        }
+    }
+
     @Test fun repeatedVerificationWithFreshReceiptIdsStillStopsAtTheExistingFailureGuard() = runTest {
         val t=task();var slices=0
         executor().run(t.id) {_,_->

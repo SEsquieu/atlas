@@ -236,6 +236,8 @@ The single Secure APK is `atlas-alpha25-64a5309-secure.apk`, 69,926,742 bytes, S
 
 ## Alpha.26: verification recovery and delivery clarity
 
+Workspace targeting can declare a completion requirement: activation, draft or inspect. An activation requirement keeps the task runnable until a matching candidate activation receipt exists; passing checks alone are insufficient. It cannot be weakened within the same task and grants no permission. Draft/review tasks can finish without activation. Older callers that omit delivery retain compatibility.
+
 A model response following a failed local candidate test is treated as a progress report: the execution remains READY and continues on the same task. This is limited to package pure/UI/validation checks; actual permission/clarification waits, unknown operation outcomes, other tool failures and task allowances still stop execution. Existing repeated-failure protection remains, with verification signatures excluding fresh check IDs and diagnostic UI snapshots so unchanged retries cannot appear to progress merely through new receipts. This does not infer permission to activate drafts or promise live-model convergence.
 
 Derived work state now includes a bounded inventory of source ranges already read, whether the package contract was fetched, and delivery status. Reinspection is still available when evidence was omitted or changed. Descriptions remain user metadata; installed contracts and manifests define runtime capabilities. Task cards distinguish staged candidates, failed verification and committed activation. The workspace itself displays its live revision prefix outside the authored page.

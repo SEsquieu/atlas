@@ -14,7 +14,7 @@ object AtlasUiPresentation {
             "activated" -> "Revision activated · ${work.optJSONObject("activation")?.optString("revision_id").orEmpty().take(8)}"
             "verification_failed" -> "Candidate $id · verification failed · live app unchanged"
             "staged_not_activated" -> "Candidate $id · staged, not live"
-            else -> null
+            else -> if(task.document.optJSONObject("completion_requirement")?.optString("delivery")=="activation") "Live update requested · not activated yet" else null
         }
     }
 
