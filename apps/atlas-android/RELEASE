@@ -1,2 +1,2 @@
-0.1.0-alpha.26
-Continue recoverable verification, track requested delivery and clarify staged versus live app state.
+0.1.0-alpha.27
+Close delivered tasks cleanly, preserve conversational verification handoff and track requested UI behavior checks.
