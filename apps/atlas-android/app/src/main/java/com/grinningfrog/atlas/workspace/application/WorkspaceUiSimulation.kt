@@ -107,7 +107,7 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
                     reports.put(JSONObject().put("index",i).put("action",action).put("selector",step.getString("selector")).put("passed",passed).put("outcome",outcome.take(100)))
                     if(!passed) {
                         val report=reports.getJSONObject(reports.length()-1)
-                        report.put("actual_text",evaluate("(()=>document.querySelector($selector)?.textContent?.slice(0,500)||'')()"))
+                        report.put("actual_text",evaluate("(()=>{if(!$selector)return 'No matching isolated record';return document.querySelector($selector)?.textContent?.slice(0,500)||'';})()"))
                         val snapshot=evaluate("""JSON.stringify({controls:Array.from(document.querySelectorAll('button,input,select')).slice(0,32).map(e=>({tag:e.tagName,id:e.id,label:(e.getAttribute('aria-label')||e.textContent||e.getAttribute('placeholder')||'').slice(0,120),disabled:!!e.disabled,value:(e.value||'').slice(0,100),options:e.tagName==='SELECT'?Array.from(e.options).slice(0,8).map(o=>({value:o.value,label:o.text.slice(0,80)})):undefined})),status:(document.querySelector('[role=status]')?.textContent||'').slice(0,300)})""")
                         runCatching { report.put("ui_state",JSONObject(JSONArray("[$snapshot]").getString(0))) }
                         report.put("recovery_guidance","Compare the failed action with controls and prerequisite selection/input state. A disabled control is not a radio failure. Correct the test or implementation, then rerun; assert requested behavior, not merely generic success labels.")

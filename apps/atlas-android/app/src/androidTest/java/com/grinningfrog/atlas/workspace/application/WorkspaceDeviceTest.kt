@@ -372,6 +372,7 @@ class WorkspaceDeviceTest {
             // A new simulation receives a fresh dataset rather than a retained previous test's data.
             val fresh=WorkspaceUiSimulation(context,db).test(w.id,w.realmId,good.getString("candidate_id"),JSONArray().put(step("assert_record",value="""{"collection":"notes","data":{"text":"Saved across reload"}}""")),verifyStorage=true)
             assertFalse(fresh.getBoolean("passed"));assertFalse(fresh.getBoolean("storage_verified"))
+            assertEquals(0,fresh.getJSONObject("runtime").getJSONArray("console").length())
         } finally {db.deleteComposableWorkspace(w.id)}
     }
 
