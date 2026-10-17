@@ -84,6 +84,28 @@ class ExecutionTasksTest {
         assertNull(store.followUpTask(session.id))
         store.control(other.id,ExecutionState.CANCELLED,"test complete")
     }
+    @Test fun userVisualHandoffIsDurableWithoutWaivingExecutionFailures() {
+        val w=db.createComposableWorkspace("Handoff", "")
+        val t=task();val lease=store.claim(t.id,"owner")!!
+        store.bindWorkspace(store.currentTurn(t.id),w.id,"activation",requirePixels=true)
+        delivered(t,lease,w.id,w.liveRevisionId)
+        val capture=call(t,"workspace_capture_view",JSONObject().put("workspace_id",w.id).toString());db.insertToolCall(capture);db.updateToolCall(capture.id,ToolCallStatus.FAILED,error="WORKSPACE_NOT_OPEN")
+        store.finish(lease,SliceOutcome.RESPONDED,1)
+        val turn=db.createTurn(session.id,"text");val quote="I can verify it myself no need to worry about pixel capture"
+        db.insertMessage(AtlasMessage(sessionId=session.id,turnId=turn.id,role=MessageRole.USER,content=quote,createdAtMs=clock))
+        store.attachReply(t.id,turn.id);val next=store.claim(t.id,"reply")!!
+        val handoff=call(t,"atlas_task_handoff_pixels");db.insertToolCall(handoff)
+        assertTrue(runCatching {store.handOffPixels(handoff,"Fabricated instruction")}.isFailure)
+        val receipt=store.localOperation(handoff,next) {ToolExecutionResult(store.handOffPixels(handoff,quote).toString())}
+        assertFalse(JSONObject(receipt.resultJson).getBoolean("pixels_verified"))
+        val failedCheck=call(t,"workspace_package_test");db.insertToolCall(failedCheck);db.updateToolCall(failedCheck.id,ToolCallStatus.COMPLETED,resultJson="""{"passed":false,"candidate_id":"candidate"}""")
+        assertEquals(ExecutionState.READY,store.finish(next,SliceOutcome.RESPONDED,1)!!.state)
+        store.nextTurn(t.id);val corrected=store.claim(t.id,"corrected")!!
+        val passedCheck=call(t,"workspace_package_test");db.insertToolCall(passedCheck);db.updateToolCall(passedCheck.id,ToolCallStatus.COMPLETED,resultJson="""{"passed":true,"candidate_id":"candidate"}""")
+        assertEquals(ExecutionState.COMPLETED,store.finish(corrected,SliceOutcome.RESPONDED,1)!!.state)
+        assertEquals("user",store.get(t.id)!!.document.getJSONObject("completion_requirement").getString("pixels_owner"))
+        assertEquals(ToolCallStatus.FAILED,db.loadToolCall(capture.id)!!.status)
+    }
     @Test fun permissionAndUnknownWaitsDoNotAcceptImplicitFollowUps() {
         for(outcome in listOf(SliceOutcome.WAITING_PERMISSION,SliceOutcome.WAITING_PROVIDER,SliceOutcome.WAITING_USER)) {
             val t=task();val lease=store.claim(t.id,"owner")!!;store.finish(lease,outcome,1)

@@ -68,6 +68,12 @@ class ToolHarness(
     private val discovery = CapabilityDiscovery(database)
     private val builtInDefinitions: List<ToolDefinition> = listOf(
         ToolDefinition(
+            name = "atlas_task_handoff_pixels",
+            description = "Record the user's explicit instruction to take workspace visual verification over themselves. Supply an exact 8..500 character quote from the latest user message in this task. Use only when the user requests this handoff, never to bypass a check for convenience. Marks pixels unverified and user-owned; cannot waive pure/UI execution checks, activation, permissions, unknown effects or other required behaviors.",
+            parametersJson = """{"type":"object","properties":{"user_quote":{"type":"string","minLength":8,"maxLength":500}},"required":["user_quote"],"additionalProperties":false}""",
+            risk = ToolRisk.SESSION_WRITE, maxCallsPerTurn = 1,
+        ),
+        ToolDefinition(
             name = "capture_current_view",
             description = "Capture a current camera observation when existing physical context is absent, stale, or lacks needed detail.",
             parametersJson = """{"type":"object","properties":{"reason":{"type":"string"},"detail":{"type":"boolean"}},"required":["reason"],"additionalProperties":false}""",
@@ -98,7 +104,7 @@ class ToolHarness(
     )
     val definitions: List<ToolDefinition> = builtInDefinitions + clarificationDefinition + CapabilityDiscovery.definition + additionalTools.map { it.definition }
 
-    fun atomicLocalTools() = additionalTools.filter { it is AtlasLocalMutationAdapter || it is AtlasReceiptBackedAdapter }.map { it.definition.name } + "atlas_remember"
+    fun atomicLocalTools() = additionalTools.filter { it is AtlasLocalMutationAdapter || it is AtlasReceiptBackedAdapter }.map { it.definition.name } + listOf("atlas_remember","atlas_task_handoff_pixels")
 
     fun definition(name: String) = definitions.firstOrNull { it.name == name }
 
@@ -124,6 +130,7 @@ class ToolHarness(
             return decision
         }
         return when (proposal.name) {
+            "atlas_task_handoff_pixels" -> ToolPolicyDecision(true,false,ToolRisk.SESSION_WRITE,"Task-local visual verification handoff; execution and consent gates unchanged")
             CLARIFICATION_TOOL -> ToolPolicyDecision(true, false, ToolRisk.SESSION_WRITE, "Core-owned conversational control")
             "capture_current_view" -> ToolPolicyDecision(
                 allowed = session.permissions.observe && session.permissions.captureImage != com.grinningfrog.atlas.model.PermissionPolicy.NEVER,
@@ -200,6 +207,11 @@ class ToolHarness(
                     put("thermal_status", health.thermalStatus); put("network", health.network); put("motion", health.motion.name.lowercase())
                     put("observed_at_ms", now())
                 }.toString())
+            }
+            "atlas_task_handoff_pixels" -> {
+                require(arguments.keys().asSequence().toSet()==setOf("user_quote"))
+                val store=ExecutionTaskStore(database)
+                store.localOperation(call,executionLease()) {ToolExecutionResult(store.handOffPixels(call,arguments.getString("user_quote")).toString())}
             }
             "atlas_remember" -> ExecutionTaskStore(database).localOperation(call, executionLease()) { executeMemory(call, arguments) }
             else -> additionalTools.firstOrNull { it.definition.name == call.name }?.let { adapter ->
