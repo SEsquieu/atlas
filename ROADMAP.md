@@ -2,7 +2,7 @@
 
 Status: working roadmap for the public Android alpha and a signed v0.1 developer release.
 
-Current source baseline: **0.1.0-alpha.28**. See [current implementation status](./docs/current-status.md) for shipped alpha behavior and evidence. The milestones below describe broader release goals; a delivered signed alpha APK does not complete the production-release gates.
+Current source baseline: **0.1.0-alpha.29** (release preparation). See [current implementation status](./docs/current-status.md) for shipped alpha behavior and evidence. The milestones below describe broader release goals; a delivered signed alpha APK does not complete the production-release gates.
 
 ## Current position
 
@@ -37,7 +37,7 @@ The [alpha.28 live assessment](./docs/alpha28-live-assessment.md) is the baselin
 4. Keep camera evidence distinct from workspace screenshots.
 5. Strengthen acceptance assertions and verify saved-record preservation through follow-up edits.
 
-These fixes are planned, not implemented in this baseline.
+The alpha.29 PRs implement the bounded changes; automated qualification and the next phone cycle determine their verification status. The capture-open mismatch and broader semantic acceptance remain subjects for live evidence.
 
 ## Milestone A: closed-alpha release candidate
 

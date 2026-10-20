@@ -1,2 +1,2 @@
-0.1.0-alpha.28
-Exercise isolated save/reload storage, recover authoring drafts, and expose actionable host failures.
+0.1.0-alpha.29
+Reduce authoring churn, support candidate-scoped manual acceptance, and verify pointer gestures.

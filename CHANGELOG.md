@@ -2,7 +2,15 @@
 
 Notable user-visible changes will be recorded here. Atlas follows semantic versioning beginning with its first tagged alpha.
 
-## Unreleased
+## 0.1.0-alpha.29 — release preparation
+
+- Recover misplaced source fields and bound identical deterministic retries.
+- Complete delivered tasks despite unavailable optional inspection; distinguish camera and UI evidence.
+- Add native-confirmed candidate acceptance for manual testing, with uncertainty retained.
+- Exercise SVG dragging/cancellation and exact attribute/text acceptance evidence.
+- Device and live qualification tracked separately in [release notes](./docs/releases/v0.1.0-alpha.29.md).
+
+## Earlier consolidation
 
 - Consolidate the active alpha.28 harness into main and refresh public documentation. Runtime churn fixes remain planned; see [live assessment](./docs/alpha28-live-assessment.md).
 
