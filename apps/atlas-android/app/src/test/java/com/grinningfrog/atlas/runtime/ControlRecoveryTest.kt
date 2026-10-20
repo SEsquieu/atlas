@@ -28,4 +28,15 @@ class ControlRecoveryTest {
         assertTrue(ToolRetryPolicy.repeatedRejections(listOf(rejected, rejected, call("edit", ToolCallStatus.COMPLETED, null))).isEmpty())
         assertTrue(ToolRetryPolicy.repeatedRejections(listOf(call("search", ToolCallStatus.FAILED), call("search", ToolCallStatus.FAILED))).isEmpty())
     }
+    @Test fun deterministicRetryHistoryIgnoresSliceAndIdButAllowsCorrectionsAndTransientRetry() {
+        val first=call("atlas_task_handoff_pixels",ToolCallStatus.FAILED,"user_quote must quote the latest user instruction in this task")
+        val second=first.copy(id="second",turnId="next-slice")
+        val next=first.copy(id="next",turnId="third-slice")
+        assertTrue(ToolRetryPolicy.identicalDeterministicFailure(next,listOf(first,second)))
+        assertFalse(ToolRetryPolicy.identicalDeterministicFailure(next.copy(argumentsJson="{\"user_quote\":\"actual user instruction\"}"),listOf(first,second)))
+        val transient=first.copy(name="workspace_package_stage",error="temporary database unavailable")
+        assertFalse(ToolRetryPolicy.identicalDeterministicFailure(transient.copy(id="next"),listOf(transient,transient.copy(id="second"))))
+        assertTrue(ToolRetryPolicy.sameArguments("{\"a\":1,\"b\":2}","{ \"b\":2, \"a\":1 }"))
+    }
+
 }
