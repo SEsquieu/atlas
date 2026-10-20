@@ -4,6 +4,23 @@ Notable user-visible changes will be recorded here. Atlas follows semantic versi
 
 ## Unreleased
 
+- Consolidate the active alpha.28 harness into main and refresh public documentation. Runtime churn fixes remain planned; see [live assessment](./docs/alpha28-live-assessment.md).
+
+## 0.1.0-alpha.28 — delivered alpha baseline
+
+- Durable execution tasks with automatic slice continuation, checkpoints, receipts, recovery, and resource ceilings.
+- Contained workspace applications with scoped storage, immutable candidates, host-mediated BLE, and controlled activation.
+- Session/workspace export and copy-based import with authority reset.
+- Isolated storage verification using commit, reload, and exact record assertions; caught host failures invalidate checks.
+- Session-owned draft reuse, unchanged-candidate reuse, improved staging feedback, and authoring request handling.
+- Signed Secure alpha delivery; source and verification provenance are in [current status](./docs/current-status.md).
+
+Known issues: malformed authoring retries, optional screenshot/handoff failures blocking task completion, camera/viewport confusion, and incomplete semantic acceptance coverage. Live activation and isolated persistence passed; favorites editing, process-restart endurance, and clean task completion remain unverified.
+
+## Earlier public-source preparation
+
+The entries below preserve the original preparation checklist, not the current release status.
+
 ### Added
 
 - Apache-2.0 open-source licensing and contribution governance
@@ -16,6 +33,6 @@ Notable user-visible changes will be recorded here. Atlas follows semantic versi
 - Replaced the OpenClaw-era roadmap with the native Android v0.1 roadmap
 - Defined the Android app as the primary reference experience and OpenClaw packages as legacy proof adapters
 
-## 0.1.0-alpha.1
+## Original alpha.1 placeholder
 
-Not released. The first alpha entry will include its source commit, APK checksum, database migration notes, known issues, and inference compatibility statement.
+Historical planning placeholder; superseded by the delivered alpha baseline and provenance linked above.

@@ -26,7 +26,7 @@ The implementation chronology records these alpha.28 checks:
 
 Final application source: `43dfbed2b5fe1ea4e79f9027c6119cfc45dec71d`. Package commit: `4dc97f952576fc3f4d68a311af20d23fb70e9c94`. These are recorded qualification results, not new checks performed by this documentation update.
 
-Controlled tests do not establish live-model convergence, hours-long phone endurance, every process-restart path, or physical BLE connection/notification behavior. Fresh live demo acceptance remains outstanding in the recorded delivery notes. Generated apps can still require correction.
+Controlled tests do not establish live-model convergence, hours-long phone endurance, every process-restart path, or physical BLE connection/notification behavior. The October 19 live Lunchbox Lottery test activated one app and passed isolated save/reload verification, but the task remained waiting after failed optional visual handoffs. Full acceptance is therefore incomplete. Generated apps can still require correction. See the [alpha.28 live assessment and next work](./alpha28-live-assessment.md).
 
 ## Distribution and repository use
 

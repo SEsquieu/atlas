@@ -1,5 +1,7 @@
 # Composable Workspaces
 
+**Historical design / legacy format reference:** this document retains earlier workspace contracts and checkpoints. New apps use the contained web application host. Start with [current status](./current-status.md) and the [application-host chronology](./workspace-application-host.md) for the current authoring surface.
+
 Status: proposed architecture and implementation specification, October 2026. Nothing in this document should be described as shipping until the corresponding acceptance gates pass on a real Android device.
 
 ## 1. Objective

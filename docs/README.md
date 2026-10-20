@@ -4,6 +4,8 @@ Atlas is easiest to understand by following ownership from the persistent runtim
 
 ## Current implementation
 
+- [Alpha.28 live assessment](./alpha28-live-assessment.md) — observed delivery, persistence, authoring churn, completion failures, and next implementation priorities.
+
 - [Current status](./current-status.md) — alpha.28 capabilities, verification evidence, limits, and distribution.
 - [Durable execution](../apps/atlas-android/DURABLE_EXECUTION.md) — slice continuation, task ownership, receipts, recovery, and allowances.
 - [Workspace application host](./workspace-application-host.md) — implementation chronology and qualification evidence.

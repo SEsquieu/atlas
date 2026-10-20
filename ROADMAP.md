@@ -27,6 +27,18 @@ Atlas has crossed the line from adapter experiment to a native physical-agent ru
 
 The primary risk is now product reliability and comprehensibility, not missing architectural concepts.
 
+## Immediate harness priorities
+
+The [alpha.28 live assessment](./docs/alpha28-live-assessment.md) is the baseline for the next code changes:
+
+1. Reduce malformed package staging and repeated whole-source generation.
+2. Finish committed delivery when optional inspection is unavailable, while preserving required checks and consent.
+3. Suppress repeated deterministic failures across slices and measure useful progress.
+4. Keep camera evidence distinct from workspace screenshots.
+5. Strengthen acceptance assertions and verify saved-record preservation through follow-up edits.
+
+These fixes are planned, not implemented in this baseline.
+
 ## Milestone A: closed-alpha release candidate
 
 Goal: invited users can run real physical loops without uncontrolled privacy, cost, or lifecycle failure.

@@ -1,5 +1,7 @@
 # Installed workspace capability catalog
 
+**Historical design / legacy format reference:** this document retains earlier workspace contracts and checkpoints. New apps use the contained web application host. Start with [current status](./current-status.md) and the [application-host chronology](./workspace-application-host.md) for the current authoring surface.
+
 `workspace_capabilities` is a read-only local diagnostic available without an active workspace, including during capability discovery. Its versioned response describes the installed runtime, format membership, supported V2 actions and expressions, and optional component properties and examples. Component membership and V2 property contracts use the validator's own tables.
 
 Inspect both formats before declaring a capability missing. V1 includes a basic freehand canvas with explicit Save drawing and Clear controls; saved strokes persist locally. V2 supports show/hide sections through boolean state, a toggle action, and a visibility expression. These are compositions, not a native accordion. Workspace theme overrides remain unsupported. The catalog does not add renderer features or authorize external capabilities.

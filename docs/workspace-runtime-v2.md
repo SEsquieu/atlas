@@ -1,5 +1,7 @@
 # Workspace Runtime V2
 
+**Historical design / legacy format reference:** this document retains earlier workspace contracts and checkpoints. New apps use the contained web application host. Start with [current status](./current-status.md) and the [application-host chronology](./workspace-application-host.md) for the current authoring surface.
+
 Status: alpha vertical slice, October 2026
 
 Workspace Runtime V2 is a deterministic application language interpreted by Atlas Core. It expands composable workspaces beyond static dashboards while keeping generated definitions non-executable and subordinate to the ToolHarness.

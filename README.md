@@ -47,6 +47,8 @@ Changing from an on-device model to a LAN server or cloud API changes a capabili
 
 The current Android source baseline is **0.1.0-alpha.28**. Atlas can author contained HTML/CSS/JavaScript workspace apps during a session, retain their data, and continue durable tasks across bounded execution slices. This remains an experimental alpha: automated checks do not guarantee that a generated app satisfies a live user request.
 
+Live testing has demonstrated app activation and isolated save/reload verification. Repeated authoring errors and optional visual-inspection failures can still waste inference and leave delivered tasks waiting; see the [alpha.28 live assessment](./docs/alpha28-live-assessment.md).
+
 See the [current implementation and verification status](./docs/current-status.md) for supported behavior, evidence, limitations, and distribution details.
 
 ## Start here

@@ -1,5 +1,7 @@
 # Editing collection records
 
+**Historical design / legacy format reference:** this document retains earlier workspace contracts and checkpoints. New apps use the contained web application host. Start with [current status](./current-status.md) and the [application-host chronology](./workspace-application-host.md) for the current authoring surface.
+
 V2 workspaces support updates to existing records from conversation and interactive lists.
 Database record IDs remain separate from collection data. Inspection returns `{id,collection,data}`;
 the interpreter receives reserved `_id` metadata, which cannot be declared or patched as a user field.
