@@ -16,7 +16,7 @@ The app supports Android 9+, but isolated workspace JavaScript execution require
 
 ## Alpha.29 changes
 
-See [release notes and phone acceptance](./releases/v0.1.0-alpha.29.md) and [manual acceptance](./manual-acceptance.md). Churn, completion, candidate acceptance and pointer/assertion changes are implemented for automated qualification; live convergence and data-preserving follow-up edits remain unverified until the next phone cycle.
+See [release notes and phone acceptance](./releases/v0.1.0-alpha.29.md) and [manual acceptance](./manual-acceptance.md). Churn, completion, candidate acceptance and pointer/assertion changes are implemented for automated qualification; pointer tests explicitly use synthetic DOM events with test-only capture, not native or physical touch; live convergence and data-preserving follow-up edits remain unverified until the next phone cycle.
 
 ## Alpha.28 verification baseline
 
