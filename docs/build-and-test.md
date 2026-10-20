@@ -62,7 +62,7 @@ Only `atlas-android-installable` is intended for phone installs. Android unit te
 without signing secrets, including on PRs. A separate manual-dispatch-only `closed-alpha` job uses the
 persistent alpha key; it fails explicitly rather than distributing APKs with a fresh runner key.
 Configure the four signing secrets listed in `closed-alpha-release-runbook.md`. Keep the key backed
-up outside git. CI uses versionCode `1000 + Android workflow run_number`; the alpha.28 local default is 29.
+up outside git. CI uses versionCode `1000 + Android workflow run_number`; the alpha.29 local default is 30.
 A signed release replacing a CI install must explicitly set `ATLAS_ANDROID_VERSION_CODE` higher
 than the installed build. LAN and Secure have different application IDs: update the same flavor.
 

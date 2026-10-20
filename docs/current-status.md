@@ -1,6 +1,6 @@
 # Current Atlas implementation status
 
-Source baseline: **0.1.0-alpha.28**, Android database version 18. This page summarizes current behavior; design documents and release chronology retain earlier decisions.
+Source baseline: **0.1.0-alpha.29** (release preparation; last delivered phone baseline alpha.28), Android database version 18. This page summarizes current behavior; design documents and release chronology retain earlier decisions.
 
 ## Available in the Android alpha
 
@@ -14,7 +14,11 @@ Source baseline: **0.1.0-alpha.28**, Android database version 18. This page summ
 
 The app supports Android 9+, but isolated workspace JavaScript execution requires Android 10+. Secure is the standard delivery variant; LAN and DEV builds are targeted opt-ins.
 
-## Verification baseline
+## Alpha.29 changes
+
+See [release notes and phone acceptance](./releases/v0.1.0-alpha.29.md) and [manual acceptance](./manual-acceptance.md). Churn, completion, candidate acceptance and pointer/assertion changes are implemented for automated qualification; live convergence and data-preserving follow-up edits remain unverified until the next phone cycle.
+
+## Alpha.28 verification baseline
 
 The implementation chronology records these alpha.28 checks:
 
