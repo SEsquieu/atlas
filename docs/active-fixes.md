@@ -59,7 +59,7 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 - Starting points: WorkspaceUiSimulation.kt; ExecutionTasks.kt under the Android application source tree; inspect current code before editing.
 - Acceptance: Tests distinguish presence from labeling and static geometry from interaction; unproven semantics remain explicit rather than claimed passed.
 - Constraints / validation: Define a bounded implementable approach before marking ready; preserve candidate-specific evidence. Include filter boundary and selected directions cases.
-- Resolution: pointer/assertion PR; native gesture, cancellation and exact marker assertions under device validation. Live evidence: outstanding.
+- Resolution: pointer/assertion PR; synthetic DOM pointer gesture, cancellation and exact marker assertions under device validation. Live evidence: outstanding.
 
 ## AF-006: Accept unverified behavior for an exact candidate
 
@@ -77,4 +77,4 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 - Starting points: WorkspaceUiSimulation.kt; WorkspaceDeviceTest.kt under the Android application source tree; inspect current code before editing.
 - Acceptance: Realistic pointer sequence verifies coordinate change; unsupported action, failed assertion and application error are distinct; pointer cancellation and touch coordinates are covered.
 - Constraints / validation: Choose event and coordinate contract before implementation; use API 35/36 instrumented tests. Synthetic events do not prove every physical touch behavior.
-- Resolution: pointer/assertion PR; native gesture, cancellation and exact marker assertions under device validation. Live evidence: outstanding.
+- Resolution: pointer/assertion PR; synthetic DOM pointer gesture, cancellation and exact marker assertions under device validation. Live evidence: outstanding.
