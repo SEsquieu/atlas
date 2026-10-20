@@ -63,12 +63,12 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 
 ## AF-006: Accept unverified behavior for an exact candidate
 
-- Status: proposed. Related work: None (coordination, not a hard dependency).
+- Status: in progress. Related work: None (coordination, not a hard dependency).
 - Evidence: User requested activation for manual testing, but pixel handoff could not clear behavioral acceptance.
 - Starting points: ExecutionTasks.kt; WorkspaceLiveTools.kt; WorkspaceApplicationActivation.kt under the Android application source tree; inspect current code before editing.
 - Acceptance: Explicit user acceptance records candidate/hash, criterion IDs, source message and remaining uncertainty; activation can use accepted-unverified criteria without recording a test pass; changed bytes invalidate acceptance.
 - Constraints / validation: Design conversational and native confirmation path first. Preserve permission, schema, revision, migration, startup and unknown-effect gates. Test stale candidate, restart, replay and fabricated approval.
-- Resolution: none. Live evidence: outstanding.
+- Resolution: candidate acceptance PR; native confirmation and candidate-bound receipts implemented, automated/live validation pending. Live evidence: outstanding.
 
 ## AF-007: Support pointer dragging and classify test limitations
 
