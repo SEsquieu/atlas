@@ -376,6 +376,34 @@ class WorkspaceDeviceTest {
         } finally {db.deleteComposableWorkspace(w.id)}
     }
 
+    @Test fun svgPointerDragAndCancellationHaveIndependentBehaviorAssertions() = runBlocking {
+        val db=(context.applicationContext as AtlasApplication).database
+        val session=db.createSession("Pointer simulation","Verify graph interaction")
+        val turn=db.createTurn(session.id,"test")
+        val w=db.createComposableWorkspace("Pointer simulation", "")
+        try {
+            val bundle=WorkspaceApplicationContract.example()
+            bundle.getJSONObject("files").put("ui/index.html","""<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0"><svg width="600" height="300" style="touch-action:none"><circle id="point" data-example="true" cx="100" cy="100" r="25" fill="green"/></svg><p id="status">idle</p><script type="module" src="./app.js"></script></body></html>""")
+            bundle.getJSONObject("files").put("ui/app.js","""import {host} from '/atlas/host.js';const p=document.querySelector('#point'),s=document.querySelector('#status');let active=false,start=100;p.addEventListener('pointerdown',e=>{active=true;start=Number(p.getAttribute('cx'));p.setPointerCapture(e.pointerId);});p.addEventListener('pointermove',e=>{if(active)p.setAttribute('cx',String(Math.round(e.clientX)));});p.addEventListener('pointerup',()=>{active=false;s.textContent='moved:'+p.getAttribute('cx');});p.addEventListener('pointercancel',()=>{active=false;p.setAttribute('cx',String(start));s.textContent='cancelled';});p.addEventListener('click',()=>p.setAttribute('data-clicked','true'));await host.ready();""")
+            val candidate=WorkspacePackageRepository(db).stage(w.id,w.realmId,w.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,turn.id).getString("candidate_id")
+            fun step(action:String,selector:String,value:String="")=JSONObject().put("action",action).put("selector",selector).put("value",value)
+            val result=WorkspaceUiSimulation(context,db).test(w.id,w.realmId,candidate,JSONArray()
+                .put(step("click","#point"))
+                .put(step("assert_attribute","#point","""{"name":"data-clicked","equals":"true"}"""))
+                .put(step("assert_attribute","#point","""{"name":"data-example","equals":"true"}""").put("criterion","The point is individually marked as an example"))
+                .put(step("drag","#point","""{"dx":80,"dy":0}"""))
+                .put(step("assert_text_exact","#status","moved:180").put("criterion","Drag updates the point coordinate"))
+                .put(step("drag_cancel","#point","""{"dx":60,"dy":0}"""))
+                .put(step("assert_text_exact","#status","cancelled"))
+                .put(step("assert_attribute","#point","""{"name":"cx","equals":"180"}""")))
+            assertTrue(result.toString(),result.getBoolean("passed"))
+            assertEquals(2,result.getJSONArray("criterion_evidence").length())
+            assertFalse(result.getBoolean("semantic_correctness_verified"))
+            val wrong=WorkspaceUiSimulation(context,db).test(w.id,w.realmId,candidate,JSONArray().put(step("assert_attribute","#point","""{"name":"data-example","equals":"false"}""")))
+            assertFalse(wrong.getBoolean("passed"));assertEquals(0,wrong.getJSONArray("verified_criteria").length())
+        } finally {db.deleteComposableWorkspace(w.id)}
+    }
+
     @Test fun uiSimulationReportsPrerequisitesAndVerifiesSelectVisibilityAndChangeEvents() = runBlocking {
         val db=(context.applicationContext as AtlasApplication).database
         val session=db.createSession("Form diagnostics","Test UI controls")
