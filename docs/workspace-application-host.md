@@ -1,4 +1,6 @@
-# Workspace application host: implementation status and decisions
+# Workspace application host: implementation chronology
+
+**Reading guide:** this document preserves successive implementation checkpoints. Early statements such as “not enabled” and “gates still open” describe their historical checkpoint, not the current alpha. Read [current status](./current-status.md) first; the alpha.28 qualification and delivery sections below record the latest evidence.
 
 Baseline: alpha.17, public commit `8219fd9b8121186c2dc0707b7c33cbff0fc48e0e`.
 This document supersedes the permanent-format-coexistence assumption in the original design. It does not assert that executable applications already ship.

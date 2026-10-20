@@ -2,6 +2,8 @@
 
 Status: working roadmap for the public Android alpha and a signed v0.1 developer release.
 
+Current source baseline: **0.1.0-alpha.28**. See [current implementation status](./docs/current-status.md) for shipped alpha behavior and evidence. The milestones below describe broader release goals; a delivered signed alpha APK does not complete the production-release gates.
+
 ## Current position
 
 Atlas has crossed the line from adapter experiment to a native physical-agent runtime baseline:
@@ -12,7 +14,9 @@ Atlas has crossed the line from adapter experiment to a native physical-agent ru
 - resized and budgeted image derivatives;
 - freshness and suitability decisions;
 - push-to-talk, streaming sentence TTS, and interruption tracking;
-- bounded tool loops with confirmation and recovery;
+- durable execution across bounded slices with checkpoints, confirmation, receipts, and recovery;
+- contained workspace apps, scoped storage, controlled activation, and host-mediated BLE;
+- session/workspace exports and copy-based recovery imports;
 - manual and Live Context modes;
 - capability-oriented provider routing;
 - ChatGPT-plan OAuth and Responses inference, hosted web search, and local usage/failure visibility;

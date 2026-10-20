@@ -4,7 +4,8 @@
 
 - Node.js 22 or newer and npm
 - JDK 17
-- Android SDK 35 with accepted licenses
+- Android SDK 35 with accepted licenses, NDK 27.0.12077973, and CMake 3.22.1
+- A host C/C++ toolchain and CMake for desktop JNI unit tests; network access to the pinned QuickJS-NG source
 - Network access to npm, Google Maven, Maven Central, and the Gradle distribution host for a clean first build
 
 ## Provider-independent packages
@@ -23,6 +24,8 @@ npm run check:public
 
 ```bash
 cd apps/atlas-android
+cmake -S app/src/main/cpp -B app/build/workspace-native-host -DCMAKE_BUILD_TYPE=Release
+cmake --build app/build/workspace-native-host --target atlas_workspace_js -j2
 ./gradlew testSecureDebugUnitTest
 ./gradlew lintSecureDebug
 ./gradlew assembleSecureDebug
@@ -30,7 +33,7 @@ cd apps/atlas-android
 
 Routine delivery is the Secure standard APK only. The Android workflow supports manual opt-in `lan` and `developer` inputs for targeted validation and signed builds; see [developer build policy](./developer-build.md). Increment the alpha version for each user-facing runtime release; record the commit and CI version code.
 
-The secure flavor rejects cleartext transport. The visibly separate LAN flavor permits cleartext for trusted private-network endpoints and has an application ID suffix. Debug APKs are development artifacts, not signed releases.
+The secure flavor rejects cleartext transport. The visibly separate LAN flavor permits cleartext for trusted private-network endpoints and has an application ID suffix. CI installable debug APKs use the persistent alpha signing identity; they remain development builds, not production release builds.
 
 For a release build, provide signing values only through the environment variables documented in [`closed-alpha-release-runbook.md`](./closed-alpha-release-runbook.md). Never commit a keystore or passwords. Record the source commit, build variant, checksum, and certificate fingerprint.
 
@@ -59,7 +62,7 @@ Only `atlas-android-installable` is intended for phone installs. Android unit te
 without signing secrets, including on PRs. A separate push-only `closed-alpha` job uses the
 persistent alpha key; it fails explicitly rather than distributing APKs with a fresh runner key.
 Configure the four signing secrets listed in `closed-alpha-release-runbook.md`. Keep the key backed
-up outside git. CI uses versionCode `1000 + Android workflow run_number`; local default is 8.
+up outside git. CI uses versionCode `1000 + Android workflow run_number`; the alpha.28 local default is 29.
 A signed release replacing a CI install must explicitly set `ATLAS_ANDROID_VERSION_CODE` higher
 than the installed build. LAN and Secure have different application IDs: update the same flavor.
 

@@ -1,4 +1,4 @@
-# Atlas Android POC
+# Atlas Android alpha
 
 This app runs Atlas Core on an Android phone. It is a reference experience for the complete physical loop, not a thin node controlled by another agent runtime.
 
@@ -17,7 +17,9 @@ The reference app is Apache-2.0 and works with user-configured inference without
 
 The default APK leaves Atlas Cloud disabled. A gateway deployment can enable account sign-up, subscription checkout, credit-block purchase, balance display, and managed inference by supplying the three Gradle properties documented below. BYOI never requires those values.
 
-Android database version 10 creates a personal workspace automatically and durably stores clarification state, persistent intent, and provider evidence alongside sessions, turns, observations, events, and memory. The same persistence boundary supports optional site, station, actor, task-run, policy, and scoped-memory identities without placing enterprise administration in the consumer UI.
+Android database version 18 retains personal workspace ownership and durably stores clarification state, persistent intent, and provider evidence alongside sessions, turns, observations, events, and memory. The same persistence boundary supports optional site, station, actor, task-run, policy, and scoped-memory identities without placing enterprise administration in the consumer UI.
+
+Current source version: **0.1.0-alpha.28**. See [current status](../../docs/current-status.md) for workspace applications, durable execution, verification, and known limits. Android 9 can run the app, but the isolated workspace JavaScript worker requires Android 10 or newer.
 
 ## First run
 
