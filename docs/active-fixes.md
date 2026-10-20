@@ -8,13 +8,13 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 
 | ID | Outcome | Status | Tracking issue / claim |
 | --- | --- | --- | --- |
-| AF-001 | Reduce malformed package staging | ready | Unassigned; no issue yet |
-| AF-002 | Complete delivery despite unavailable optional inspection | ready | Unassigned; no issue yet |
-| AF-003 | Bound identical deterministic retries across slices | ready | Unassigned; no issue yet |
-| AF-004 | Separate camera evidence from workspace viewport evidence | ready | Unassigned; no issue yet |
-| AF-005 | Make acceptance assertions prove requested behavior | proposed | Unassigned; no issue yet |
-| AF-006 | Accept unverified behavior for an exact candidate | proposed | Unassigned; no issue yet |
-| AF-007 | Support pointer dragging and classify test limitations | proposed | Unassigned; no issue yet |
+| AF-001 | Reduce malformed package staging | in progress | [#38](https://github.com/SEsquieu/atlas/issues/38); [PR #35](https://github.com/SEsquieu/atlas/pull/35) |
+| AF-002 | Complete delivery despite unavailable optional inspection | in progress | [#39](https://github.com/SEsquieu/atlas/issues/39); [PR #35](https://github.com/SEsquieu/atlas/pull/35) |
+| AF-003 | Bound identical deterministic retries across slices | in progress | [#40](https://github.com/SEsquieu/atlas/issues/40); [PR #35](https://github.com/SEsquieu/atlas/pull/35) |
+| AF-004 | Separate camera evidence from workspace viewport evidence | in progress | [#41](https://github.com/SEsquieu/atlas/issues/41); [PR #35](https://github.com/SEsquieu/atlas/pull/35) |
+| AF-005 | Make acceptance assertions prove requested behavior | in progress | [#42](https://github.com/SEsquieu/atlas/issues/42); [PR #37](https://github.com/SEsquieu/atlas/pull/37) |
+| AF-006 | Accept unverified behavior for an exact candidate | in progress | [#43](https://github.com/SEsquieu/atlas/issues/43); [PR #36](https://github.com/SEsquieu/atlas/pull/36) |
+| AF-007 | Support pointer dragging and classify test limitations | in progress | [#44](https://github.com/SEsquieu/atlas/issues/44); [PR #37](https://github.com/SEsquieu/atlas/pull/37) |
 
 ## AF-001: Reduce malformed package staging
 
@@ -54,12 +54,12 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 
 ## AF-005: Make acceptance assertions prove requested behavior
 
-- Status: proposed. Related work: None (coordination, not a hard dependency).
+- Status: in progress. Related work: None (coordination, not a hard dependency).
 - Evidence: Example names passed checks although individual examples were not labeled; circle count was proposed as drag evidence.
 - Starting points: WorkspaceUiSimulation.kt; ExecutionTasks.kt under the Android application source tree; inspect current code before editing.
 - Acceptance: Tests distinguish presence from labeling and static geometry from interaction; unproven semantics remain explicit rather than claimed passed.
 - Constraints / validation: Define a bounded implementable approach before marking ready; preserve candidate-specific evidence. Include filter boundary and selected directions cases.
-- Resolution: none. Live evidence: outstanding.
+- Resolution: pointer/assertion PR; synthetic DOM pointer gesture, cancellation and exact marker assertions under device validation. Live evidence: outstanding.
 
 ## AF-006: Accept unverified behavior for an exact candidate
 
@@ -72,9 +72,9 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 
 ## AF-007: Support pointer dragging and classify test limitations
 
-- Status: proposed. Related work: None (coordination, not a hard dependency).
+- Status: in progress. Related work: None (coordination, not a hard dependency).
 - Evidence: UI click failed on an SVG circle; drag behavior was never exercised.
 - Starting points: WorkspaceUiSimulation.kt; WorkspaceDeviceTest.kt under the Android application source tree; inspect current code before editing.
 - Acceptance: Realistic pointer sequence verifies coordinate change; unsupported action, failed assertion and application error are distinct; pointer cancellation and touch coordinates are covered.
 - Constraints / validation: Choose event and coordinate contract before implementation; use API 35/36 instrumented tests. Synthetic events do not prove every physical touch behavior.
-- Resolution: none. Live evidence: outstanding.
+- Resolution: pointer/assertion PR; synthetic DOM pointer gesture, cancellation and exact marker assertions under device validation. Live evidence: outstanding.

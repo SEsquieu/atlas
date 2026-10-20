@@ -1,6 +1,10 @@
 name: Workspace device verification
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "apps/atlas-android/**"
+      - ".github/workflows/workspace-device.yml"
   push:
     paths:
       - "apps/atlas-android/**"

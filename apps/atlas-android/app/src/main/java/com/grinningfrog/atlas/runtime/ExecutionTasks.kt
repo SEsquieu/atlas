@@ -298,8 +298,8 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         work.put("no_progress_slices", stagnant)
         task.document.put("work_state", work)
         event(task, "execution.progress", JSONObject().put("frontier_changed", madeProgress).put("no_progress_slices", stagnant))
-        val repeatedCalls=failures.maxOfOrNull { failed -> all.count { prior ->
-            prior.name==failed.name && prior.argumentsJson==failed.argumentsJson && failedOperation(prior)
+        val repeatedCalls=failures.filter(ToolRetryPolicy::deterministicFailure).maxOfOrNull { failed -> all.count { prior ->
+            prior.name==failed.name && ToolRetryPolicy.sameArguments(prior.argumentsJson,failed.argumentsJson) && ToolRetryPolicy.deterministicFailure(prior)
         } } ?: 0
         val repeated=maxOf(repeatedCalls, if(effectiveSignature.isNotBlank() && (failedThisSlice || !madeProgress) && effectiveSignature==task.document.optString("failure_signature")) task.document.optInt("repeated_failures")+1 else if(failedThisSlice || deliveryPending) 1 else 0)
         task.document.put("failure_signature",effectiveSignature).put("repeated_failures",repeated)
