@@ -47,6 +47,7 @@ private class BraveWebSearchTool(
     private val settings: SecureSettings,
     private val client: OkHttpClient = OkHttpClient(),
 ) : AtlasToolAdapter {
+    override val supportsCapabilityDiscovery = true
     override val definition = ToolDefinition(
         name = "web_search",
         description = "Search the public web for current or externally verifiable information. Use a narrow query and return evidence from the bounded results; this does not grant permission to browse arbitrary pages or perform actions.",

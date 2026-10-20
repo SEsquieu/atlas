@@ -31,3 +31,11 @@ This alpha tests whether Atlas feels like a present, persistent partner during a
 Include app version/build variant, phone model, Android version, inference implementation, whether earbuds were used, exact reproduction steps, and the event types around the failure. Do not send an export unless requested through the private support channel and you have reviewed its contents.
 
 Immediately stop testing and report privately if you see data from another user/workspace, a secret in UI/logs, a tool execute without confirmation, Live Context continue after pause/end, deletion leave accessible data, or uncontrolled repeated inference/action.
+
+## Shared controls (alpha.17)
+
+Session and Workspaces use one anchored dock above bottom navigation: Observe, central PTT, text entry, Pause/Resume and End. The dock remains in place while the transcript or workspace scrolls; text drafts persist between those two tabs. System keeps its settings layout. Model replies and streaming text remain in Session chat, not a sticky workspace footer.
+
+A slow amber PTT glow and separate accessible warning icon indicate a pending clarification, approval, or stopped task requiring a decision. The PTT action stays voice input. Tap the warning icon to read/respond to pending actions from either tab; closing the panel does not clear the blocker. Provider failures/retries alone do not trigger the user-action glow. The indicator clears when Core reports the blocker resolved.
+
+Phone QA: check long transcripts, long workspaces, keyboard open/close, large font sizes, landscape, draft preservation across tabs, clarification answers by voice/text, approval/decline, paused sessions, and glow clearing after resolution.

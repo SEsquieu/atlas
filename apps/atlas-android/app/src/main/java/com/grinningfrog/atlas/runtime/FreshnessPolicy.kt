@@ -54,6 +54,7 @@ object FreshnessPolicy {
     }
 
     fun assess(text: String, observation: VisualObservation?, nowMs: Long, expectedRefreshMs: Long = 4_000): FreshnessAssessment {
+        if (observation?.media?.purpose == MediaPurpose.WORKSPACE_UI) return assess(text, null, nowMs, expectedRefreshMs)
         val useCase = classify(text)
         if (useCase == VisualUseCase.NONE) return FreshnessAssessment(useCase, FreshnessDecision.NOT_REQUIRED, null, 0, null, "request does not require visual context")
         if (observation == null) return FreshnessAssessment(useCase, FreshnessDecision.REFRESH_REQUIRED, null, staleWindow(MotionState.UNKNOWN, useCase), null, "no visual observation is available")

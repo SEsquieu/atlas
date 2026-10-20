@@ -8,6 +8,7 @@ import com.grinningfrog.atlas.model.MediaPurpose
 import com.grinningfrog.atlas.model.MemoryItem
 import com.grinningfrog.atlas.model.MemoryKind
 import com.grinningfrog.atlas.model.MemoryStatus
+import com.grinningfrog.atlas.model.MemoryScope
 import com.grinningfrog.atlas.model.ToolCallProposal
 import com.grinningfrog.atlas.model.ToolDefinition
 import com.grinningfrog.atlas.model.ToolRisk
@@ -30,6 +31,12 @@ data class ToolPolicyDecision(
 /** Stable extension point for future phone, wearable, LAN, and account-scoped capabilities. */
 interface AtlasToolAdapter {
     val definition: ToolDefinition
+    /** Opt in only for installed public, read-only research executors. */
+    val supportsCapabilityDiscovery: Boolean get() = false
+    /** Installed, scoped, read-only local diagnostics; never grants access to a discovered capability. */
+    val supportsLocalDiagnostics: Boolean get() = false
+    /** Core-approved installed local mutations only; never external access or permission acquisition. */
+    val supportsLocalMutation: Boolean get() = false
     fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision = ToolPolicyDecision(
         allowed = true,
         requiresConfirmation = definition.requiresConfirmation ||
@@ -39,6 +46,13 @@ interface AtlasToolAdapter {
     )
     suspend fun execute(call: AtlasToolCall): ToolExecutionResult
 }
+/** Only synchronous SQLite effects may opt in; no network, files, or suspension inside the transaction. */
+interface AtlasLocalMutationAdapter : AtlasToolAdapter {
+    fun executeLocal(call: AtlasToolCall): ToolExecutionResult
+    override suspend fun execute(call: AtlasToolCall) = executeLocal(call)
+}
+/** Async local adapter whose durable effect and Core operation receipt share one transaction. */
+interface AtlasReceiptBackedAdapter : AtlasToolAdapter
 /**
  * Core-owned tool boundary. Providers can only propose calls; this harness validates policy,
  * performs the device operation, and returns an auditable result.
@@ -49,8 +63,16 @@ class ToolHarness(
     private val deviceHealth: () -> DeviceHealth,
     private val now: () -> Long = System::currentTimeMillis,
     private val additionalTools: List<AtlasToolAdapter> = emptyList(),
+    private val executionLease: () -> ExecutionLease? = { null },
 ) {
+    private val discovery = CapabilityDiscovery(database)
     private val builtInDefinitions: List<ToolDefinition> = listOf(
+        ToolDefinition(
+            name = "atlas_task_handoff_pixels",
+            description = "Record the user's explicit instruction to take workspace visual verification over themselves. Supply an exact 8..500 character quote from the latest user message in this task. Use only when the user requests this handoff, never to bypass a check for convenience. Marks pixels unverified and user-owned; cannot waive pure/UI execution checks, activation, permissions, unknown effects or other required behaviors.",
+            parametersJson = """{"type":"object","properties":{"user_quote":{"type":"string","minLength":8,"maxLength":500}},"required":["user_quote"],"additionalProperties":false}""",
+            risk = ToolRisk.SESSION_WRITE, maxCallsPerTurn = 1,
+        ),
         ToolDefinition(
             name = "capture_current_view",
             description = "Capture a current camera observation when existing physical context is absent, stale, or lacks needed detail.",
@@ -80,20 +102,35 @@ class ToolHarness(
         risk = ToolRisk.SESSION_WRITE,
         maxCallsPerTurn = 2,
     )
-    val definitions: List<ToolDefinition> = builtInDefinitions + clarificationDefinition + additionalTools.map { it.definition }
+    val definitions: List<ToolDefinition> = builtInDefinitions + clarificationDefinition + CapabilityDiscovery.definition + additionalTools.map { it.definition }
+
+    fun atomicLocalTools() = additionalTools.filter { it is AtlasLocalMutationAdapter || it is AtlasReceiptBackedAdapter }.map { it.definition.name } + listOf("atlas_remember","atlas_task_handoff_pixels")
 
     fun definition(name: String) = definitions.firstOrNull { it.name == name }
 
     fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision {
         val definition = definition(proposal.name)
             ?: return ToolPolicyDecision(false, false, ToolRisk.EXTERNAL_EFFECT, "Tool is not registered on this device")
-        if (proposal.argumentsJson.toByteArray().size > 16_384) {
+        if (proposal.argumentsJson.toByteArray(Charsets.UTF_8).size > definition.maxArgumentBytes.coerceIn(16_384, 1_100_000)) {
             return ToolPolicyDecision(false, false, definition.risk, "Tool arguments exceed the Atlas limit")
         }
         val arguments = runCatching { JSONObject(proposal.argumentsJson) }.getOrNull()
             ?: return ToolPolicyDecision(false, false, definition.risk, "Tool arguments are not valid JSON")
-        additionalTools.firstOrNull { it.definition.name == proposal.name }?.let { return it.evaluate(session, proposal) }
+        val turnId = executionLease()?.let { ExecutionTaskStore(database).currentTurn(it.taskId) } ?: database.loadActiveTurn(session.id)?.id
+        if (turnId != null && discovery.active(turnId) && !discoveryAllowed(proposal.name, turnId))
+            return ToolPolicyDecision(false, false, definition.risk, "Capability discovery is read-only; a separate explicit authorization path is required")
+        if (proposal.name == CapabilityDiscovery.TOOL) {
+            val error = runCatching { CapabilityDiscovery.validate(arguments) }.exceptionOrNull()
+            return ToolPolicyDecision(error == null, false, ToolRisk.SESSION_WRITE, error?.message ?: "Audit-only capability discovery control; no external access granted")
+        }
+        additionalTools.firstOrNull { it.definition.name == proposal.name }?.let {
+            val decision = it.evaluate(if (it.definition.name.startsWith("workspace_")) ExecutionTaskStore(database).workspaceSession(session, turnId) else session, proposal)
+            if (turnId != null && discovery.active(turnId) && (decision.requiresConfirmation || (decision.risk != ToolRisk.READ_ONLY && !(discovery.localWorkResumed(turnId) && it.supportsLocalMutation && decision.risk == ToolRisk.SESSION_WRITE))))
+                return ToolPolicyDecision(false, false, decision.risk, "Discovery cannot authorize additional research permissions")
+            return decision
+        }
         return when (proposal.name) {
+            "atlas_task_handoff_pixels" -> ToolPolicyDecision(true,false,ToolRisk.SESSION_WRITE,"Task-local visual verification handoff; execution and consent gates unchanged")
             CLARIFICATION_TOOL -> ToolPolicyDecision(true, false, ToolRisk.SESSION_WRITE, "Core-owned conversational control")
             "capture_current_view" -> ToolPolicyDecision(
                 allowed = session.permissions.observe && session.permissions.captureImage != com.grinningfrog.atlas.model.PermissionPolicy.NEVER,
@@ -117,8 +154,41 @@ class ToolHarness(
         }
     }
 
+    private fun discoveryAllowed(name: String, turnId: String): Boolean = name in setOf(CapabilityDiscovery.TOOL, CLARIFICATION_TOOL) ||
+        additionalTools.any { it.definition.name == name && (it.supportsCapabilityDiscovery || it.supportsLocalDiagnostics) && it.definition.risk == ToolRisk.READ_ONLY } ||
+        (discovery.localWorkResumed(turnId) && additionalTools.any { it.definition.name == name && it.supportsLocalMutation && it.definition.risk == ToolRisk.SESSION_WRITE })
+
     suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
         val arguments = JSONObject(call.argumentsJson)
+        val researching = discovery.active(call.turnId)
+        // Recheck at execution: a preceding call in this same batch may have declared a blocker.
+        if (researching && !discoveryAllowed(call.name, call.turnId)) {
+            database.appendEvent(call.sessionId, "capability.discovery_denied", JSONObject().put("turnId", call.turnId).put("tool", call.name).put("reason", "Discovery is read-only; no acquisition or invocation authorized"))
+            error("Capability discovery is read-only; a separate explicit authorization path is required")
+        }
+        if (call.name == CapabilityDiscovery.TOOL) return discovery.record(call, arguments)
+        val adapter = additionalTools.firstOrNull { it.definition.name == call.name }
+        if (researching && adapter?.supportsLocalMutation == true && adapter.definition.risk == ToolRisk.SESSION_WRITE) {
+            val session = requireNotNull(database.loadSession(call.sessionId)) { "Session is unavailable" }
+            val policy = adapter.evaluate(if (call.name.startsWith("workspace_")) ExecutionTaskStore(database).workspaceSession(session, call.turnId) else session, ToolCallProposal(call.id, call.name, call.argumentsJson))
+            require(policy.allowed && policy.risk == ToolRisk.SESSION_WRITE && !policy.requiresConfirmation) { "Local mutation is unavailable under its current policy" }
+        }
+        val trustedResearch = adapter?.supportsCapabilityDiscovery == true && adapter.definition.risk == ToolRisk.READ_ONLY
+        if (trustedResearch) {
+            val researchAdapter = requireNotNull(adapter)
+            val session = requireNotNull(database.loadSession(call.sessionId)) { "Session is unavailable" }
+            val policy = researchAdapter.evaluate(session, ToolCallProposal(call.id, call.name, call.argumentsJson))
+            require(policy.allowed && policy.risk == ToolRisk.READ_ONLY && !policy.requiresConfirmation) { "Discovery research is unavailable under the current permissions" }
+            discovery.searchAttempt(call)
+            try {
+                val result = researchAdapter.execute(call)
+                discovery.searchResult(call, result.resultJson)
+                return result
+            } catch (error: Exception) {
+                discovery.searchResult(call, null, error.message?.take(500) ?: error.javaClass.simpleName)
+                throw error
+            }
+        }
         return when (call.name) {
             CLARIFICATION_TOOL -> error("Clarification controls must be reconciled by Atlas Core")
             "capture_current_view" -> {
@@ -138,8 +208,15 @@ class ToolHarness(
                     put("observed_at_ms", now())
                 }.toString())
             }
-            "atlas_remember" -> executeMemory(call, arguments)
-            else -> additionalTools.firstOrNull { it.definition.name == call.name }?.execute(call)
+            "atlas_task_handoff_pixels" -> {
+                require(arguments.keys().asSequence().toSet()==setOf("user_quote"))
+                val store=ExecutionTaskStore(database)
+                store.localOperation(call,executionLease()) {ToolExecutionResult(store.handOffPixels(call,arguments.getString("user_quote")).toString())}
+            }
+            "atlas_remember" -> ExecutionTaskStore(database).localOperation(call, executionLease()) { executeMemory(call, arguments) }
+            else -> additionalTools.firstOrNull { it.definition.name == call.name }?.let { adapter ->
+                if (adapter is AtlasLocalMutationAdapter) ExecutionTaskStore(database).localOperation(call, executionLease()) { adapter.executeLocal(call) } else adapter.execute(call)
+            }
                 ?: error("Tool ${call.name} is not registered")
         }
     }
@@ -168,6 +245,20 @@ class ToolHarness(
                 val expiresAt = if (kind == MemoryKind.ENVIRONMENT) {
                     timestamp + arguments.optLong("ttl_seconds", 300L).coerceIn(30L, 86_400L) * 1_000L
                 } else null
+                val scope = when (kind) {
+                    MemoryKind.WORKING -> MemoryScope.SESSION
+                    MemoryKind.TASK -> if (call.sessionId.let { database.loadSession(it)?.taskRunId } != null) MemoryScope.TASK else MemoryScope.SESSION
+                    MemoryKind.ENVIRONMENT -> MemoryScope.ENVIRONMENT
+                    MemoryKind.DURABLE -> MemoryScope.WORKSPACE
+                }
+                val session = database.loadSession(call.sessionId) ?: error("Session is unavailable")
+                val scopeId = when (scope) {
+                    MemoryScope.SESSION -> session.id
+                    MemoryScope.TASK -> session.taskRunId ?: session.id
+                    MemoryScope.PRINCIPAL -> session.actorId ?: session.workspaceId
+                    MemoryScope.WORKSPACE -> session.workspaceId
+                    MemoryScope.ENVIRONMENT -> session.stationId ?: session.siteId ?: session.id
+                }
                 val item = MemoryItem(
                     id = requestedId ?: UUID.randomUUID().toString(),
                     sessionId = call.sessionId,
@@ -180,6 +271,9 @@ class ToolHarness(
                     createdAtMs = timestamp,
                     updatedAtMs = timestamp,
                     expiresAtMs = expiresAt,
+                    workspaceId = session.workspaceId,
+                    scope = scope,
+                    scopeId = scopeId,
                 )
                 database.saveMemory(item)
                 ToolExecutionResult(JSONObject().put("ok", true).put("memory_id", item.id).put("kind", item.kind.name.lowercase()).toString())

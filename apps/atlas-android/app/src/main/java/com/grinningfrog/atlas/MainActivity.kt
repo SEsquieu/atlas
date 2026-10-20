@@ -11,10 +11,18 @@ import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import com.grinningfrog.atlas.ui.SystemSectionTabs
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,6 +35,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -42,11 +52,13 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DashboardCustomize
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Stop
@@ -82,10 +94,14 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -131,6 +147,7 @@ import java.io.File
 import java.text.DateFormat
 import java.util.Date
 import java.util.UUID
+import com.grinningfrog.atlas.workspace.WorkspacePage
 
 class MainActivity : ComponentActivity() {
     private var service by mutableStateOf<AtlasSessionService?>(null)
@@ -213,7 +230,7 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
     }.toTypedArray()
 }
-private enum class AppPage { ATLAS, SESSION, SYSTEM }
+private enum class AppPage { SESSION, WORKSPACE, SYSTEM }
 
 @Composable
 private fun AtlasApp(
@@ -230,7 +247,7 @@ private fun AtlasApp(
     onRequestPermissions: () -> Unit,
     onOpenSystemSettings: () -> Unit,
 ) {
-    var page by remember { mutableStateOf(AppPage.ATLAS) }
+    var page by remember { mutableStateOf(AppPage.SESSION) }
     val sessionActionScope = rememberCoroutineScope()
     var providerRevision by remember { mutableIntStateOf(0) }
     val chatGptState by chatGptAuth.state.collectAsState()
@@ -247,11 +264,14 @@ private fun AtlasApp(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            Column {
+            Column(if (page != AppPage.SYSTEM) Modifier.imePadding() else Modifier) {
+                if (permissionsGranted && runtime != null && page != AppPage.SYSTEM) {
+                    AtlasControls(runtime, snapshot, providers.isNotEmpty(), sessionActionScope)
+                }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .7f))
                 NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
-                    NavigationBarItem(page == AppPage.ATLAS, { page = AppPage.ATLAS }, { Icon(Icons.Default.GraphicEq, null) }, label = { Text("Atlas") }, colors = atlasNavigationColors())
-                    NavigationBarItem(page == AppPage.SESSION, { page = AppPage.SESSION }, { Icon(Icons.Default.History, null) }, label = { Text("Session") }, colors = atlasNavigationColors())
+                    NavigationBarItem(page == AppPage.SESSION, { page = AppPage.SESSION }, { Icon(Icons.Default.GraphicEq, null) }, label = { Text("Session") }, colors = atlasNavigationColors())
+                    NavigationBarItem(page == AppPage.WORKSPACE, { page = AppPage.WORKSPACE }, { Icon(Icons.Default.DashboardCustomize, null) }, label = { Text("Workspace") }, colors = atlasNavigationColors())
                     NavigationBarItem(page == AppPage.SYSTEM, { page = AppPage.SYSTEM }, { Icon(Icons.Default.Settings, null) }, label = { Text("System") }, colors = atlasNavigationColors())
                 }
             }
@@ -260,8 +280,8 @@ private fun AtlasApp(
         when {
             !permissionsGranted -> PermissionGate(Modifier.padding(padding), onRequestPermissions, onOpenSystemSettings)
             runtime == null -> LoadingRuntime(Modifier.padding(padding))
-            page == AppPage.ATLAS -> AtlasHomePage(runtime, snapshot, providers.isNotEmpty(), mediaRepository, sessionActionScope, Modifier.padding(padding), onOpenSession = { page = AppPage.SESSION }, onOpenSystem = { page = AppPage.SYSTEM })
-            page == AppPage.SESSION -> SessionPage(runtime, snapshot, providers.isNotEmpty(), mediaRepository, sessionActionScope, Modifier.padding(padding), onConfigureInference = { page = AppPage.SYSTEM })
+            page == AppPage.SESSION -> AtlasHomePage(runtime, snapshot, providers.isNotEmpty(), mediaRepository, sessionActionScope, Modifier.padding(padding), onOpenSystem = { page = AppPage.SYSTEM })
+            page == AppPage.WORKSPACE -> WorkspacePage(runtime, snapshot, database, sessionActionScope, Modifier.padding(padding))
             page == AppPage.SYSTEM -> SystemPage(runtime, snapshot, settings, providers, managedAccount, chatGptAuth, database, sessionArchive, Modifier.padding(padding)) { providerRevision++ }
         }
     }
@@ -352,13 +372,10 @@ private fun AtlasHomePage(
     mediaRepository: MediaRepository,
     actionScope: kotlinx.coroutines.CoroutineScope,
     modifier: Modifier,
-    onOpenSession: () -> Unit,
     onOpenSystem: () -> Unit,
 ) {
     var name by remember { mutableStateOf("Everyday Atlas") }
     var goal by remember { mutableStateOf("Help me understand and act safely in my current surroundings.") }
-    var prompt by remember { mutableStateOf("") }
-    var showText by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
     val session = snapshot.session
     val active = session?.status == SessionStatus.ACTIVE
@@ -409,6 +426,19 @@ private fun AtlasHomePage(
                 }
             }
 
+            item {
+                val live = session.contextMode == ContextMode.LIVE
+                InstrumentCard(accent = if (live) MaterialTheme.colorScheme.primary else null) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Live Context", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(if (live) "Atlas is maintaining rolling physical context." else "Atlas observes only when you ask or tap Observe.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked = live, onCheckedChange = { enabled -> runAction { runtime.setLiveContextEnabled(enabled) } }, enabled = active)
+                    }
+                }
+            }
+
             snapshot.pendingClarification?.let { clarification ->
                 item {
                     InstrumentCard(accent = AtlasAmber) {
@@ -419,6 +449,27 @@ private fun AtlasHomePage(
                     }
                 }
             }
+
+            (snapshot.executionTasks.firstOrNull { it.state !in setOf(com.grinningfrog.atlas.runtime.ExecutionState.COMPLETED, com.grinningfrog.atlas.runtime.ExecutionState.CANCELLED, com.grinningfrog.atlas.runtime.ExecutionState.FAILED) } ?: snapshot.executionTasks.firstOrNull())?.let { task ->
+                item {
+                    InstrumentCard {
+                        Text("Task · ${if (task.state == com.grinningfrog.atlas.runtime.ExecutionState.COMPLETED) "response finished" else task.state.name.lowercase()}", style = MaterialTheme.typography.labelLarge)
+                        Text(task.objective, maxLines = 3)
+                        AtlasUiPresentation.deliveryLabel(task)?.let { Text(it, style = MaterialTheme.typography.labelLarge) }
+                        if(task.document.optBoolean("recovery_required")) Text("Continuing verification recovery", style = MaterialTheme.typography.bodySmall)
+                        Text("${task.document.optInt("slice_count")} slices · ${task.usage.optLong("model_steps")} model steps · ${task.usage.optLong("tool_calls")} tools", style = MaterialTheme.typography.bodySmall)
+                        if (task.waitReason.isNotBlank()) Text("Current blocker: ${task.waitReason.replace('_', ' ')} · updated ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(task.document.optLong("updated_at")))}", color = AtlasAmber)
+                        val recovered = task.document.optJSONObject("checkpoint")?.optJSONArray("resolved_operations")?.length() ?: 0
+                        if (recovered > 0) Text("$recovered earlier errors resolved; history retained.", style = MaterialTheme.typography.bodySmall)
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            if (task.state in setOf(com.grinningfrog.atlas.runtime.ExecutionState.PAUSED, com.grinningfrog.atlas.runtime.ExecutionState.WAITING) && task.waitReason !in setOf("clarification", "authorization", "unknown_operation_outcome", "task_allowance")) TextButtonCompact("Resume") { runAction { runtime.resumeExecution(task.id) } }
+                            if (task.state !in setOf(com.grinningfrog.atlas.runtime.ExecutionState.COMPLETED, com.grinningfrog.atlas.runtime.ExecutionState.CANCELLED, com.grinningfrog.atlas.runtime.ExecutionState.FAILED)) TextButtonCompact("Cancel task") { runtime.cancelExecution(task.id) }
+                        }
+                    }
+                }
+            }
+
+            snapshot.turnDiagnostics.firstOrNull()?.let { report -> item { TurnDiagnosticsCard(report) } }
 
             snapshot.activeTurn?.let { turn ->
                 item {
@@ -454,53 +505,37 @@ private fun AtlasHomePage(
                 ObservationSurface(snapshot, mediaRepository)
             }
 
-            val latestAtlas = snapshot.messages.lastOrNull { it.kind == MessageKind.DIALOGUE && it.role == MessageRole.ASSISTANT && it.content.isNotBlank() }
-            if (latestAtlas != null && snapshot.phase != RuntimePhase.SPEAKING) item {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Atlas", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Text(latestAtlas.content, style = MaterialTheme.typography.bodyLarge)
-                    TextButtonCompact("Open session") { onOpenSession() }
+            val dialogue = snapshot.messages.filter { it.kind == MessageKind.DIALOGUE && it.content.isNotBlank() }.takeLast(24)
+            if (dialogue.isNotEmpty()) {
+                item { Text("Conversation", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+                items(dialogue, key = { "home-${it.id}" }) { message ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.role == MessageRole.USER) Arrangement.End else Arrangement.Start) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(.9f),
+                            colors = CardDefaults.cardColors(containerColor = if (message.role == MessageRole.USER) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer),
+                        ) {
+                            Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(if (message.role == MessageRole.USER) "You" else "Atlas", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                                AutoLinkedText(message.content)
+                            }
+                        }
+                    }
                 }
+            }
+
+            if (snapshot.streamingResponse?.isNotBlank() == true) item {
+                InstrumentCard { AutoLinkedText(snapshot.streamingResponse.orEmpty()) }
             }
 
             if (snapshot.pendingToolCalls.any { it.status == ToolCallStatus.UNKNOWN }) item {
                 NoticeCard("Action outcome unknown", "Atlas restarted while a tool was running. It will not repeat the action automatically.")
             }
             if (actionError != null || snapshot.latestError != null) item {
-                NoticeCard("Atlas needs attention", actionError ?: snapshot.latestError.orEmpty())
+                NoticeCard(if (actionError != null || snapshot.phase == RuntimePhase.ERROR) "Atlas needs attention" else "Runtime notice · check current task status", actionError ?: snapshot.latestError.orEmpty())
             }
 
-            item {
-                VoiceDock(
-                    snapshot = snapshot,
-                    active = active,
-                    canTalk = active && (turnAvailable || snapshot.phase == RuntimePhase.SPEAKING),
-                    onTalk = { runAction { runtime.listenAndAsk() } },
-                    onObserve = { runAction { runtime.captureNow() } },
-                    onToggleText = { showText = !showText },
-                )
-            }
+            item { Text("${dialogue.size} recent messages", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
 
-            if (showText) item {
-                OutlinedTextField(
-                    value = prompt,
-                    onValueChange = { prompt = it },
-                    label = { Text("Message Atlas") },
-                    enabled = active && turnAvailable,
-                    modifier = Modifier.fillMaxWidth(),
-                    trailingIcon = { IconButton(enabled = active && turnAvailable && prompt.isNotBlank(), onClick = { val text = prompt; prompt = ""; runAction { runtime.ask(text) } }) { Icon(Icons.AutoMirrored.Filled.Send, "Send") } },
-                    keyboardActions = KeyboardActions(onSend = { if (prompt.isNotBlank()) { val text = prompt; prompt = ""; runAction { runtime.ask(text) } } }),
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Send),
-                )
-            }
-
-            item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    TextButtonCompact("Session details") { onOpenSession() }
-                    if (active) TextButtonCompact("Pause") { runAction { runtime.pauseSession() } }
-                    else if (session.status == SessionStatus.PAUSED) TextButtonCompact("Resume") { runAction { runtime.resumeSession() } }
-                }
-            }
         }
     }
 }
@@ -558,20 +593,89 @@ private fun ObservationSurface(snapshot: RuntimeSnapshot, mediaRepository: Media
 }
 
 @Composable
-private fun VoiceDock(snapshot: RuntimeSnapshot, active: Boolean, canTalk: Boolean, onTalk: () -> Unit, onObserve: () -> Unit, onToggleText: () -> Unit) {
+private fun AtlasControls(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, hasProvider: Boolean, actionScope: kotlinx.coroutines.CoroutineScope) {
+    val session = snapshot.session ?: return
+    if (session.status == SessionStatus.DONE) return
+    var prompt by rememberSaveable(session.id) { mutableStateOf("") }
+    var showText by rememberSaveable(session.id) { mutableStateOf(false) }
+    var showBlocker by remember(session.id) { mutableStateOf(false) }
+    var actionError by remember(session.id) { mutableStateOf<String?>(null) }
+    val active = session.status == SessionStatus.ACTIVE
+    val needsUser = AtlasUiPresentation.needsUserAction(snapshot)
+    val available = snapshot.activeTurn == null || snapshot.pendingClarification != null ||
+        snapshot.activeTurn?.status == com.grinningfrog.atlas.model.TurnStatus.SOFT_TIMED_OUT
+    val canSend = active && hasProvider && available
+    fun runAction(block: suspend () -> Unit) {
+        actionScope.launch { runCatching { block() }.onFailure { actionError = it.message ?: "Action failed" } }
+    }
+    fun send() { if (canSend && prompt.isNotBlank()) { val text = prompt; prompt = ""; runAction { runtime.ask(text) } } }
+    LaunchedEffect(needsUser) { if (!needsUser) showBlocker = false }
+    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(horizontal = 16.dp, vertical = 4.dp)) {
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { runAction { if (active) runtime.pauseSession() else runtime.resumeSession() } }) {
+                Icon(if (active) Icons.Default.Pause else Icons.Default.PlayArrow, if (active) "Pause session" else "Resume session")
+            }
+            Text(AtlasUiPresentation.runtimeLabel(snapshot), style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f), maxLines = 1)
+            if (needsUser) IconButton(onClick = { showBlocker = true }) { Icon(Icons.Default.Warning, "Atlas needs your input. Open pending action", tint = AtlasAmber) }
+            TextButton(onClick = { runAction { runtime.endSession() } }) { Text("End", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+        VoiceDock(snapshot, active, active && hasProvider && (available || snapshot.phase == RuntimePhase.SPEAKING),
+            { runAction { runtime.listenAndAsk() } }, { runAction { runtime.captureNow() } }, { showText = !showText }, needsUser)
+        if (showText) OutlinedTextField(prompt, { prompt = it }, label = { Text("Message Atlas") }, enabled = canSend, modifier = Modifier.fillMaxWidth(), maxLines = 3,
+            trailingIcon = { IconButton(enabled = canSend && prompt.isNotBlank(), onClick = { send() }) { Icon(Icons.AutoMirrored.Filled.Send, "Send") } },
+            keyboardActions = KeyboardActions(onSend = { send() }), keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Send))
+        actionError?.let { error -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(error, color = MaterialTheme.colorScheme.error, maxLines = 2, modifier = Modifier.weight(1f))
+            TextButton(onClick = { actionError = null }) { Text("Dismiss") }
+        } }
+    }
+    if (showBlocker && needsUser) AlertDialog(
+        onDismissRequest = { showBlocker = false }, title = { Text("Atlas needs your input") },
+        text = { Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            snapshot.pendingClarification?.takeIf { it.blocking }?.let { question ->
+                Text(question.question, style = MaterialTheme.typography.titleMedium)
+                if (question.options.isNotEmpty()) Text(question.options.joinToString(" · "))
+                Text("Reply by voice or text.")
+                TextButton(onClick = { showBlocker = false; showText = true }) { Text("Type an answer") }
+            }
+            snapshot.pendingToolCalls.filter { it.status == ToolCallStatus.WAITING_FOR_CONFIRMATION }.forEach { call ->
+                Text(toolDisplayName(call.name), style = MaterialTheme.typography.titleMedium)
+                call.reason?.let { Text(it) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { runAction { runtime.resolveToolCall(call.id, true) } }, enabled = active) { Text("Allow") }
+                    OutlinedButton(onClick = { runAction { runtime.resolveToolCall(call.id, false) } }, enabled = active) { Text("Decline") }
+                }
+            }
+            AtlasUiPresentation.attentionTasks(snapshot).forEach { task ->
+                Text(task.objective, maxLines = 3)
+                Text("Waiting: ${task.waitReason.replace('_', ' ')}")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (task.waitReason !in setOf("clarification", "authorization", "unknown_operation_outcome", "task_allowance"))
+                        TextButton(onClick = { runAction { runtime.resumeExecution(task.id) } }, enabled = active) { Text("Resume task") }
+                    TextButton(onClick = { runtime.cancelExecution(task.id) }) { Text("Cancel task") }
+                }
+            }
+            if (!active) Text("Resume the session to respond or approve an action.")
+        } }, confirmButton = { TextButton(onClick = { showBlocker = false }) { Text("Close") } },
+    )
+}
+
+@Composable
+private fun VoiceDock(snapshot: RuntimeSnapshot, active: Boolean, canTalk: Boolean, onTalk: () -> Unit, onObserve: () -> Unit, onToggleText: () -> Unit, needsUser: Boolean = false) {
+    val glow = if (needsUser) {
+        val transition = rememberInfiniteTransition(label = "User action alert")
+        val pulse by transition.animateFloat(.25f, .7f, infiniteRepeatable(tween(1800), RepeatMode.Reverse), label = "Amber glow")
+        pulse
+    } else 0f
+    val working = snapshot.phase in setOf(RuntimePhase.THINKING, RuntimePhase.CAPTURING) || snapshot.executionTasks.any { it.state == com.grinningfrog.atlas.runtime.ExecutionState.RUNNING }
     val liveVoice = snapshot.listeningState != ListeningState.INACTIVE || snapshot.phase == RuntimePhase.SPEAKING
     Column(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (snapshot.partialTranscript?.isNotBlank() == true) Text(snapshot.partialTranscript.orEmpty(), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (snapshot.streamingResponse?.isNotBlank() == true) Text(snapshot.streamingResponse.orEmpty().takeLast(260), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-            repeat(7) { index ->
-                Box(Modifier.width(2.dp).height(if (liveVoice) (8 + (index % 4) * 4).dp else 3.dp).background(if (liveVoice) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, CircleShape))
-            }
-        }
+        if (snapshot.partialTranscript?.isNotBlank() == true) Text(snapshot.partialTranscript.orEmpty(), maxLines = 2, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(AtlasUiPresentation.voiceLabel(snapshot, active), style = MaterialTheme.typography.labelLarge, color = if (liveVoice) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onObserve, enabled = active && snapshot.activeTurn == null, modifier = Modifier.size(52.dp).border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)) { Icon(Icons.Default.CameraAlt, "Observe now") }
-            IconButton(onClick = onTalk, enabled = canTalk, modifier = Modifier.size(72.dp).border(1.dp, if (liveVoice) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, CircleShape).background(if (liveVoice) MaterialTheme.colorScheme.primary.copy(alpha = .1f) else Color.Transparent, CircleShape)) {
+            IconButton(onClick = onTalk, enabled = canTalk, modifier = Modifier.size(72.dp).semantics { stateDescription = if (needsUser) "Atlas needs your input" else AtlasUiPresentation.voiceLabel(snapshot, active) }.shadow(if (needsUser) (4 + glow * 12).dp else 0.dp, CircleShape, ambientColor = AtlasAmber, spotColor = AtlasAmber).border(if (needsUser) 2.dp else 1.dp, if (needsUser) AtlasAmber.copy(alpha = glow) else if (liveVoice || working) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, CircleShape).background(if (liveVoice || working) MaterialTheme.colorScheme.primary.copy(alpha = .1f) else Color.Transparent, CircleShape)) {
                 Icon(if (snapshot.phase == RuntimePhase.SPEAKING) Icons.Default.GraphicEq else Icons.Default.Mic, if (snapshot.phase == RuntimePhase.SPEAKING) "Interrupt and talk" else "Talk to Atlas", Modifier.size(30.dp), tint = if (canTalk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
             }
             IconButton(onClick = onToggleText, enabled = active, modifier = Modifier.size(52.dp).border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)) { Icon(Icons.AutoMirrored.Filled.Send, "Type a message") }
@@ -619,18 +723,13 @@ private fun SystemPage(
     var section by remember { mutableStateOf("Inference") }
     val idleStatus by runtime.idleStatus?.collectAsState() ?: remember { mutableStateOf(IdleRuntimeStatus()) }
     Column(modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (section == "Inference") Button({ section = "Inference" }, Modifier.weight(1f)) { Text("Inference") }
-            else OutlinedButton({ section = "Inference" }, Modifier.weight(1f)) { Text("Inference") }
-            if (section == "Data") Button({ section = "Data" }, Modifier.weight(1f)) { Text("Data & logs") }
-            else OutlinedButton({ section = "Data" }, Modifier.weight(1f)) { Text("Data & logs") }
-            if (section == "Intent") Button({ section = "Intent" }, Modifier.weight(1f)) { Text("Intent") }
-            else OutlinedButton({ section = "Intent" }, Modifier.weight(1f)) { Text("Intent") }
-            if (section == "Tools") Button({ section = "Tools" }, Modifier.weight(1f)) { Text("Tools") }
-            else OutlinedButton({ section = "Tools" }, Modifier.weight(1f)) { Text("Tools") }
+        if (com.grinningfrog.atlas.dev.DevelopmentPanel.available) {
+            TextButton(onClick = { section = "Developer" }) { Text("DEV · Diagnostics") }
         }
+        SystemSectionTabs(section, { section = it })
         Box(Modifier.weight(1f)) {
             when (section) {
+                "Developer" -> com.grinningfrog.atlas.dev.DevelopmentPanel.Content(snapshot.session?.id)
                 "Inference" -> ProviderPage(settings, providers, managedAccount, chatGptAuth, database, Modifier.fillMaxSize(), onProvidersChanged)
                 "Intent" -> IntentRuntimePage(runtime, idleStatus, snapshot, Modifier.fillMaxSize())
                 "Tools" -> CapabilityToolsPage(settings, Modifier.fillMaxSize())
@@ -867,6 +966,10 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
             }
         }
 
+        snapshot.turnDiagnostics.forEach { report ->
+            item(key = "diagnostics-${report.turn.id}") { TurnDiagnosticsCard(report) }
+        }
+
         if (session != null && session.status != SessionStatus.DONE) item {
             val live = session.contextMode == ContextMode.LIVE
             Card(colors = CardDefaults.cardColors(containerColor = if (live) MaterialTheme.colorScheme.primaryContainer.copy(alpha = .55f) else MaterialTheme.colorScheme.surface)) {
@@ -1075,7 +1178,7 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
         }
 
         if (actionError != null || snapshot.latestError != null) item {
-            NoticeCard("Runtime needs attention", actionError ?: snapshot.latestError.orEmpty())
+            NoticeCard(if (actionError != null || snapshot.phase == RuntimePhase.ERROR) "Runtime needs attention" else "Runtime notice · check current task status", actionError ?: snapshot.latestError.orEmpty())
         }
 
         item {
@@ -1541,7 +1644,8 @@ private fun EventsPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, s
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     Text("Session controls", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("Exports contain a readable transcript and the complete machine-readable Atlas state bundle. Provider credentials are never included.", style = MaterialTheme.typography.bodySmall)
+                    Text("Exports contain the transcript, session state and related live workspaces. Images, audio, revision history and credentials are excluded.", style = MaterialTheme.typography.bodySmall)
+                    com.grinningfrog.atlas.ui.ArchiveImportControl(archive.database, "session") { result -> runtime.openImportedSession(result.id) }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(enabled = snapshot.session != null, onClick = {
                             snapshot.session?.let { runCatching { archive.share(it.id) }.onFailure { error -> actionMessage = error.message } }
@@ -1672,4 +1776,26 @@ private val AtlasTypography = Typography(
 @Composable
 private fun AtlasTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = AtlasColors, typography = AtlasTypography, shapes = AtlasShapes, content = content)
+}
+
+@Composable
+private fun TurnDiagnosticsCard(report: com.grinningfrog.atlas.runtime.TurnDiagnostics) {
+    var nowMs by remember(report.turn.id) { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(report.turn.id, report.terminal) {
+        while (!report.terminal) { kotlinx.coroutines.delay(1000); nowMs = System.currentTimeMillis() }
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(report.headline, fontWeight = FontWeight.Bold)
+            Text("${if (report.terminal) "Historical slice" else "Current slice"} ${report.turn.id.take(8)} · started ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.MEDIUM).format(java.util.Date(report.turn.createdAtMs))}", style = MaterialTheme.typography.labelSmall)
+            if (report.terminal) Text("Ended ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(report.turn.updatedAtMs))}. This card reports this slice only; current blockers appear on the task card.", style = MaterialTheme.typography.bodySmall)
+            Text("Elapsed: ${"%.1f".format(java.util.Locale.US, report.elapsedMs(nowMs) / 1000.0)} s · inference: ${"%.1f".format(java.util.Locale.US, report.inferenceMs / 1000.0)} s${if (report.inferencePending) " + generating" else ""}", style = MaterialTheme.typography.bodySmall)
+            Text("Steps: ${report.turn.stepCount}/${com.grinningfrog.atlas.runtime.AgentLoopPolicy.MAX_STEPS} · tool calls: ${report.toolCalls}/${com.grinningfrog.atlas.runtime.AgentLoopPolicy.MAX_TOOL_CALLS}", style = MaterialTheme.typography.bodySmall)
+            report.runningTool?.let { Text("Running: $it", style = MaterialTheme.typography.bodySmall) }
+            Text("Schema: ${report.schema} · migration: ${report.migration}", style = MaterialTheme.typography.bodySmall)
+            Text("Tests: ${report.tests}", style = MaterialTheme.typography.bodySmall)
+            Text(if (report.revisionIds.isEmpty()) "Apply revision: NOT COMMITTED" else "Apply revision: COMMITTED (${report.revisionIds.last().take(8)})", style = MaterialTheme.typography.bodySmall)
+            report.turn.error?.let { Text("Reason: $it", style = MaterialTheme.typography.bodySmall) }
+        }
+    }
 }

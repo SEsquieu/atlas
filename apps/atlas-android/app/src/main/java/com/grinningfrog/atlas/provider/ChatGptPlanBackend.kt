@@ -39,6 +39,9 @@ class ChatGptPlanBackend(
     private val auth: ChatGptTokenProvider,
     private val baseClient: OkHttpClient = OkHttpClient(),
     private val responsesUrl: String = "https://api.openai.com/v1/responses",
+    private val allowHostedSearch: Boolean = true,
+    private val omitEmptyOptionalFields: Boolean = false,
+    private val diagnosticSink: (InferenceRequest, JSONObject) -> Unit = { _, _ -> },
 ) : InferenceBackend {
     private val hostedSearchUnsupportedModels = ConcurrentHashMap.newKeySet<String>()
 
@@ -51,11 +54,14 @@ class ChatGptPlanBackend(
     override fun stream(endpoint: ProviderEndpoint, apiKey: String?, request: InferenceRequest): Flow<InferenceStreamEvent> = flow {
         val started = System.nanoTime()
         var refreshed = false
-        var hostedSearch = endpoint.model !in hostedSearchUnsupportedModels
+        var hostedSearch = allowHostedSearch && endpoint.model !in hostedSearchUnsupportedModels
         var hostedSearchUnavailable = false
         while (true) {
             val token = auth.accessToken(forceRefresh = refreshed)
-            val call = client(endpoint).newCall(httpRequest(endpoint, token, request, hostedSearch))
+            val json = requestJson(endpoint, request, hostedSearch)
+            fun diagnostic(data: JSONObject) { runCatching { diagnosticSink(request, data.put("request_id", request.requestId).put("elapsed_ms", elapsedMs(started))) } }
+            diagnostic(ProviderHttpDiagnostics.request(json).put("phase", "request"))
+            val call = client(endpoint).newCall(httpRequest(endpoint, token, request, json))
             val invalidation = auth.onSessionInvalidated(call::cancel)
             val response = try { call.await() } catch (cancelled: CancellationException) {
                 invalidation.close()
@@ -65,6 +71,7 @@ class ChatGptPlanBackend(
                 val definitelyNotAccepted = error is ConnectException || error is UnknownHostException
                 throw InferenceUnavailableException("ChatGPT request failed: ${error.message ?: error.javaClass.simpleName}", error, !definitelyNotAccepted)
             }
+            diagnostic(ProviderHttpDiagnostics.response(response).put("phase", "headers"))
             if (response.code == 401 && !refreshed) {
                 invalidation.close()
                 response.close()
@@ -72,7 +79,8 @@ class ChatGptPlanBackend(
                 continue
             }
             if (!response.isSuccessful) {
-                val body = response.body?.string().orEmpty()
+                val body = response.peekBody(8192).string()
+                diagnostic(ProviderHttpDiagnostics.response(response, body).put("phase", "http_failure"))
                 val error = providerError(response.code, body, response.header("x-request-id") ?: response.header("openai-request-id"))
                 invalidation.close()
                 response.close()
@@ -97,7 +105,7 @@ class ChatGptPlanBackend(
                 var completed = false
                 val citations = linkedMapOf<String, ProviderCitation>()
                 val providerToolUses = mutableListOf<ProviderToolUse>()
-                if (hostedSearchUnavailable) providerToolUses += ProviderToolUse("web_search", status = "unsupported")
+                if (hostedSearchUnavailable) providerToolUses += ProviderToolUse("web_search", status = "unsupported", readOnlyResearch = true)
                 try {
                     while (true) {
                         val line = source.readUtf8Line() ?: break
@@ -184,7 +192,7 @@ class ChatGptPlanBackend(
                 emit(InferenceStreamEvent.Completed(InferenceResponse(request.requestId, endpoint.id, finalText, elapsedMs(started),
                     selectedModel = model ?: endpoint.model, toolCalls = proposals, finishReason = "completed", providerContinuationId = responseId,
                     firstTokenLatencyMs = firstTokenMs, promptTokens = inputTokens, completionTokens = outputTokens, totalTokens = totalTokens,
-                    citations = citations.values.toList(), providerToolUses = providerToolUses.distinct())))
+                    citations = citations.values.toList(), providerToolUses = coalesceResearchUses(providerToolUses))))
             } } finally { invalidation.close() }
             return@flow
         }
@@ -194,9 +202,10 @@ class ChatGptPlanBackend(
         put("model", endpoint.model)
         put("store", false)
         put("stream", true)
-        put("instructions", request.systemPrompt)
+        if (!omitEmptyOptionalFields || request.systemPrompt.isNotBlank()) put("instructions", request.systemPrompt)
         put("input", input(request))
-        put("tools", JSONArray().apply {
+        if (includeHostedSearch) put("include", JSONArray().put("web_search_call.action.sources"))
+        if (!omitEmptyOptionalFields || includeHostedSearch || request.tools.isNotEmpty()) put("tools", JSONArray().apply {
             if (includeHostedSearch) put(JSONObject().put("type", "web_search"))
             if (request.tools.isNotEmpty()) put(JSONObject().apply {
                 put("type", "namespace")
@@ -247,9 +256,28 @@ class ChatGptPlanBackend(
                 for (index in 0 until values.length()) values.optString(index)
                     .takeIf { it.startsWith("https://") || it.startsWith("http://") }?.let(::add)
             }
+            action?.optJSONArray("sources")?.let { sources ->
+                for (index in 0 until sources.length()) sources.optJSONObject(index)?.optString("url")
+                    ?.takeIf { it.startsWith("https://") || it.startsWith("http://") }?.let(::add)
+            }
         }
         return ProviderToolUse("web_search", action?.optString("type")?.takeIf(String::isNotBlank),
-            item.optString("status").takeIf(String::isNotBlank), queries.distinct(), urls.distinct())
+            item.optString("status").takeIf(String::isNotBlank), queries.distinct(), urls.distinct(),
+            readOnlyResearch = true, id = item.optString("id").takeIf(String::isNotBlank))
+    }
+
+    private fun coalesceResearchUses(uses: List<ProviderToolUse>): List<ProviderToolUse> {
+        val result = mutableListOf<ProviderToolUse>()
+        uses.forEach { use ->
+            val index = use.id?.let { id -> result.indexOfFirst { it.id == id } } ?: -1
+            if (index < 0) { if (use !in result) result += use }
+            else {
+                val prior = result[index]
+                result[index] = use.copy(status = use.status ?: prior.status,
+                    queries = (prior.queries + use.queries).distinct(), urls = (prior.urls + use.urls).distinct())
+            }
+        }
+        return result
     }
 
     private fun appendSources(text: String, citations: List<ProviderCitation>): String {
@@ -296,16 +324,21 @@ class ChatGptPlanBackend(
 
     private companion object { const val TOOL_NAMESPACE = "atlas" }
 
-    private fun httpRequest(endpoint: ProviderEndpoint, token: String, request: InferenceRequest, includeHostedSearch: Boolean) = Request.Builder().url(responsesUrl)
+    private fun httpRequest(endpoint: ProviderEndpoint, token: String, request: InferenceRequest, json: JSONObject) = Request.Builder().url(responsesUrl)
         .header("Authorization", "Bearer $token").header("Content-Type", "application/json").header("Accept", "text/event-stream")
         .header("X-Atlas-Request-Id", request.requestId)
-        .post(requestJson(endpoint, request, includeHostedSearch).toString().toRequestBody("application/json".toMediaType())).build()
+        .post(json.toString().toRequestBody("application/json".toMediaType())).build()
 
     private fun client(endpoint: ProviderEndpoint) = baseClient.newBuilder().connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(endpoint.timeoutMs, TimeUnit.MILLISECONDS).writeTimeout(30, TimeUnit.SECONDS).callTimeout(endpoint.timeoutMs, TimeUnit.MILLISECONDS).build()
 
     private fun providerError(status: Int, raw: String, requestId: String?): InferenceUnavailableException {
-        val code = runCatching { JSONObject(raw).optJSONObject("error")?.optString("code")?.ifBlank { null } ?: JSONObject(raw).optString("detail") }.getOrNull()
+        val root = runCatching { JSONObject(raw) }.getOrNull()
+        val provider = root?.optJSONObject("error")
+        val code = provider.stringOrNull("code")
+        val type = provider.stringOrNull("type")
+        val param = provider.stringOrNull("param")
+        val detail = provider.stringOrNull("message") ?: root.stringOrNull("detail")
         code?.takeIf(String::isNotBlank)?.let(auth::onProviderFailure)
         val message = when (code) {
             "subscription_sharing_user_not_eligible" -> "This ChatGPT account or workspace is not eligible for plan inference."
@@ -314,16 +347,22 @@ class ChatGptPlanBackend(
             "subscription_sharing_unsupported_capability" -> "The selected ChatGPT model does not support part of this request."
             "subscription_sharing_route_not_supported" -> "ChatGPT plan inference rejected this API route."
             "subscription_sharing_invalid_user", "chatpass_v2_scope_not_authorized", "chatpass_v2_invalid_authorization_context" -> "ChatGPT authorization is no longer valid. Sign in again."
-            else -> "ChatGPT returned HTTP $status${code?.takeIf(String::isNotBlank)?.let { ": $it" }.orEmpty()}"
+            else -> buildString {
+                append("ChatGPT returned HTTP ").append(status)
+                val explanation = detail?.let(ChatGptOAuth::redact)?.take(300)
+                    ?: code ?: type
+                explanation?.takeIf(String::isNotBlank)?.let { append(": ").append(it) }
+                if (param != null) append(" (parameter ").append(param.take(100)).append(')')
+            }
         } + requestId?.let { " (request $it)" }.orEmpty()
-        return InferenceUnavailableException(message, outcomeAmbiguous = status !in setOf(400, 401, 403, 429, 503), providerCode = code)
+        return InferenceUnavailableException(message, outcomeAmbiguous = status !in setOf(400, 401, 403, 429, 503), providerCode = code ?: type)
     }
 
     private fun responseFailure(response: JSONObject?): InferenceUnavailableException {
-        val error = response?.optJSONObject("error")
-        val code = error?.optString("code")
-        return providerError(400, JSONObject().put("error", JSONObject().put("code", code)).toString(), null)
+        return providerError(400, response?.toString().orEmpty(), null)
     }
+    private fun JSONObject?.stringOrNull(key: String): String? = this?.takeIf { it.has(key) && !it.isNull(key) }
+        ?.optString(key)?.takeUnless { it.isBlank() || it == "null" }
     private fun safeProviderMessage(event: JSONObject) = "ChatGPT stream error: " + event.optString("code", "unknown_error").take(100)
     private fun elapsedMs(started: Long) = (System.nanoTime() - started) / 1_000_000
     private data class MutableCall(var itemId: String? = null, var callId: String? = null, var name: String? = null, val arguments: StringBuilder = StringBuilder())

@@ -14,13 +14,13 @@ enum class InferencePurpose { USER_RESPONSE, HEARTBEAT_SCENE_REVIEW, MEMORY_COMP
 enum class ContextStability { STABLE, TRANSITIONING, UNKNOWN }
 enum class MotionState { STATIONARY, HANDHELD_STABLE, TURNING, WALKING, VEHICLE, UNKNOWN }
 enum class PermissionPolicy { NEVER, USER_REQUEST, ACTIVE_SESSION }
-enum class MediaPurpose { HEARTBEAT, STANDARD_VISION, DETAIL_VISION }
+enum class MediaPurpose { HEARTBEAT, STANDARD_VISION, DETAIL_VISION, WORKSPACE_UI }
 enum class MessageRole { USER, ASSISTANT, TOOL }
 enum class MessageKind { DIALOGUE, TOOL_RESULT, INTERNAL }
 enum class TurnStatus {
     CREATED, ASSEMBLING_CONTEXT, WAITING_FOR_MODEL, WAITING_FOR_CONFIRMATION,
     WAITING_FOR_USER_CLARIFICATION, EXECUTING_TOOL, SOFT_TIMED_OUT, COMPLETED_LATE,
-    HARD_CANCELLED, COMPLETED, FAILED, CANCELLED, INTERRUPTED,
+    HARD_CANCELLED, COMPLETED, FAILED, CANCELLED, INTERRUPTED, YIELDED,
 }
 enum class ToolCallStatus { PROPOSED, WAITING_FOR_CONFIRMATION, APPROVED, RUNNING, COMPLETED, REJECTED, FAILED, UNKNOWN }
 enum class ToolRisk { READ_ONLY, SESSION_WRITE, PERSONAL_DATA, EXTERNAL_EFFECT }
@@ -81,6 +81,8 @@ data class AtlasSession(
     val taskRunId: String? = null,
     val policyId: String? = null,
     val policyRevision: Int? = null,
+    val activeComposableWorkspaceId: String? = null,
+    val workspaceNavigationSequence: Long = 0,
 )
 
 data class ObservationTiming(
@@ -170,6 +172,7 @@ data class ToolDefinition(
     val risk: ToolRisk,
     val requiresConfirmation: Boolean = false,
     val maxCallsPerTurn: Int = 2,
+    val maxArgumentBytes: Int = 16_384,
 )
 
 data class ToolCallProposal(
@@ -190,6 +193,9 @@ data class ProviderToolUse(
     val status: String? = null,
     val queries: List<String> = emptyList(),
     val urls: List<String> = emptyList(),
+    /** Set only by a trusted backend normalizer for an executed read-only research mechanism. */
+    val readOnlyResearch: Boolean = false,
+    val id: String? = null,
 )
 
 data class AtlasToolCall(
@@ -393,6 +399,8 @@ data class RuntimeSnapshot(
     val recentEvents: List<AtlasEvent> = emptyList(),
     val messages: List<AtlasMessage> = emptyList(),
     val activeTurn: AgentTurn? = null,
+    val turnDiagnostics: List<com.grinningfrog.atlas.runtime.TurnDiagnostics> = emptyList(),
+    val executionTasks: List<com.grinningfrog.atlas.runtime.ExecutionTask> = emptyList(),
     val pendingToolCalls: List<AtlasToolCall> = emptyList(),
     val memories: List<MemoryItem> = emptyList(),
     val sessionSummary: SessionSummary? = null,

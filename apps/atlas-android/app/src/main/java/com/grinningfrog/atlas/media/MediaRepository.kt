@@ -21,7 +21,7 @@ data class ImageBudget(val longestEdge: Int, val initialQuality: Int, val maxByt
         fun forPurpose(purpose: MediaPurpose) = when (purpose) {
             MediaPurpose.HEARTBEAT -> ImageBudget(640, 70, 150_000)
             MediaPurpose.STANDARD_VISION -> ImageBudget(1024, 78, 350_000)
-            MediaPurpose.DETAIL_VISION -> ImageBudget(1600, 82, 750_000)
+            MediaPurpose.DETAIL_VISION, MediaPurpose.WORKSPACE_UI -> ImageBudget(1600, 82, 750_000)
         }
     }
 }
@@ -66,6 +66,23 @@ class MediaRepository(private val context: Context) {
         } finally {
             rawFile.delete()
         }
+    }
+
+    /** Owns and recycles a captured UI bitmap; it never enters the camera ingestion path. */
+    suspend fun ingestWorkspaceBitmap(bitmap: Bitmap, sessionId: String): MediaRef = withContext(Dispatchers.Default) {
+        val started = System.nanoTime()
+        val rawBytes = bitmap.allocationByteCount.toLong()
+        val scaled = scale(bitmap, ImageBudget.forPurpose(MediaPurpose.WORKSPACE_UI).longestEdge)
+        val encoded = try { encodeWithinBudget(scaled, ImageBudget.forPurpose(MediaPurpose.WORKSPACE_UI)) }
+            finally { if (scaled !== bitmap) scaled.recycle(); bitmap.recycle() }
+        val id = UUID.randomUUID().toString()
+        val key = "$sessionId/$id.jpg"
+        val output = resolveStorageKey(key)
+        output.parentFile?.mkdirs()
+        val temporary = File(output.parentFile, ".${output.name}.tmp")
+        temporary.writeBytes(encoded.bytes)
+        check(temporary.renameTo(output)) { "Could not commit workspace screenshot" }
+        MediaRef(id, key, "image/jpeg", encoded.width, encoded.height, encoded.bytes.size.toLong(), encoded.bytes.sha256(), MediaPurpose.WORKSPACE_UI, rawBytes, elapsedMs(started))
     }
 
     suspend fun inferenceImage(media: MediaRef): InferenceImage = withContext(Dispatchers.IO) {

@@ -10,6 +10,7 @@ import com.grinningfrog.atlas.device.ListeningCallbacks
 import com.grinningfrog.atlas.device.SpeechCallbacks
 import com.grinningfrog.atlas.model.AtlasSession
 import com.grinningfrog.atlas.model.AtlasMessage
+import com.grinningfrog.atlas.model.ToolRisk
 import com.grinningfrog.atlas.model.AtlasToolCall
 import com.grinningfrog.atlas.model.ContextMode
 import com.grinningfrog.atlas.model.ClarificationAmbiguity
@@ -43,6 +44,7 @@ import com.grinningfrog.atlas.intent.AndroidIdleRuntime
 import com.grinningfrog.atlas.intent.IdleRuntimeStatus
 import com.grinningfrog.atlas.intent.IntentAutonomyMode
 import com.grinningfrog.atlas.intent.IntentState
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -80,6 +82,7 @@ class AtlasMobileRuntime(
     private val onLiveContextChanged: (Boolean) -> Unit = {},
 ) {
     private val operations = Mutex()
+    private val taskRunner = Mutex()
     private val generation = AtomicLong(0)
     private val mutableState = MutableStateFlow(RuntimeSnapshot())
     val state: StateFlow<RuntimeSnapshot> = mutableState.asStateFlow()
@@ -92,18 +95,28 @@ class AtlasMobileRuntime(
     private var lateTurnId: String? = null
     private var devicesStarted = false
     private val contextAssembler = ContextAssembler()
+    private val capabilityDiscovery = CapabilityDiscovery(database)
+    private val executionTasks = ExecutionTaskStore(database)
+    private var activeExecutionLease: ExecutionLease? = null
+    private var activeExecutionTaskId: String? = null
     private val toolHarness by lazy {
         ToolHarness(
             database = database,
             capture = { reason, purpose -> captureLocked(requireActiveSession(), reason, purpose) },
             deviceHealth = health::snapshot,
             additionalTools = additionalTools,
+            executionLease = { activeExecutionLease },
         )
     }
 
     suspend fun initialize() {
         val session = database.loadLatestSession()
-        session?.let { database.recoverInterruptedRuntime(it.id) }
+        session?.let {
+            database.recoverInterruptedRuntime(it.id); executionTasks.recover(it.id)
+            if (it.status == SessionStatus.ACTIVE) executionTasks.list(it.id).filter { task -> task.state == ExecutionState.PAUSED && task.waitReason == "runner interrupted" }.forEach { task ->
+                executionTasks.control(task.id, ExecutionState.READY, "runtime restarted")?.takeIf { resumed -> resumed.state == ExecutionState.READY }?.let { resumed -> executionTasks.nextTurn(resumed.id) }
+            }
+        }
         session?.let { database.expirePendingClarification(it.id) }
         val observation = session?.let { database.loadLatestObservation(it.id) }
         val latestResponse = session?.let { database.loadMessages(it.id, limit = 80).lastOrNull { message -> message.role == MessageRole.ASSISTANT && message.content.isNotBlank() }?.content }
@@ -113,6 +126,7 @@ class AtlasMobileRuntime(
         onLiveContextChanged(live)
         if (live) startHeartbeat()
         idleRuntime?.start()
+        if (session?.status == SessionStatus.ACTIVE) resumeReadyExecution(session.id)
     }
 
     suspend fun createAndStartSession(name: String, goal: String): AtlasSession = operations.withLock {
@@ -126,14 +140,40 @@ class AtlasMobileRuntime(
         active
     }
 
+    suspend fun activateComposableWorkspace(workspaceId: String?) = operations.withLock {
+        val session = requireSession()
+        val sequence = withContext(kotlinx.coroutines.Dispatchers.IO) { database.activateComposableWorkspace(session.id, workspaceId) }
+        publish(session = session.copy(activeComposableWorkspaceId = workspaceId, workspaceNavigationSequence = sequence))
+    }
+
+    suspend fun openImportedSession(sessionId: String) {
+        cancelActiveTurn("opening imported session")
+        compactionJob?.cancel(); compactionJob = null
+        operations.withLock {
+            heartbeatJob?.cancel(); heartbeatJob = null
+            onLiveContextChanged(false); speech.stopSpeaking(); stopDevices()
+            mutableState.value.session?.takeIf { it.status != SessionStatus.DONE }?.let {
+                database.updateSessionStatus(it.id, SessionStatus.PAUSED)
+            }
+            val imported = requireNotNull(database.loadSession(sessionId)) { "Imported session is unavailable" }
+            database.updateSessionStatus(sessionId, SessionStatus.PAUSED)
+            publish(session = imported.copy(status = SessionStatus.PAUSED), observation = null, response = null,
+                error = null, phase = RuntimePhase.STOPPED, nextHeartbeatAt = null,
+                listeningState = ListeningState.INACTIVE, partialTranscript = null, streamingResponse = null)
+        }
+    }
+
     suspend fun resumeSession() = operations.withLock {
         val session = requireSession()
         if (session.status == SessionStatus.DONE) throw IllegalStateException("Completed sessions cannot be resumed")
         publish(phase = RuntimePhase.STARTING)
         startDevices()
         database.updateSessionStatus(session.id, SessionStatus.ACTIVE)
+        database.appendEvent(session.id, "session.resumed", JSONObject())
         publish(session = session.copy(status = SessionStatus.ACTIVE), phase = RuntimePhase.READY)
         if (session.contextMode == ContextMode.LIVE) startHeartbeat() else onLiveContextChanged(false)
+        executionTasks.list(session.id).filter { it.state == ExecutionState.PAUSED && it.waitReason == "session paused" }.forEach { executionTasks.control(it.id, ExecutionState.READY, "session resumed")?.takeIf { resumed -> resumed.state == ExecutionState.READY }?.let { resumed -> executionTasks.nextTurn(resumed.id) } }
+        resumeReadyExecution(session.id)
     }
 
     suspend fun pauseSession() {
@@ -241,6 +281,13 @@ class AtlasMobileRuntime(
     }
 
     suspend fun ask(text: String, voice: Boolean = false) {
+        require(text.isNotBlank()) { "Ask Atlas something first" }
+        if (activeTurnJob?.isActive == true || lateTurnJob?.isActive == true) cancelActiveTurn("superseded by a new user turn")
+        // Activity cancellation only stops waiting; the service owns execution until explicit cancellation.
+        scope.async { taskRunner.withLock { askOwned(text, voice) } }.await()
+    }
+
+    private suspend fun askOwned(text: String, voice: Boolean) {
         idleRuntime?.onUserInteraction()
         require(text.isNotBlank()) { "Ask Atlas something first" }
         idleRuntime?.observeUserText(text)
@@ -249,28 +296,29 @@ class AtlasMobileRuntime(
         val job = currentCoroutineContext()[Job]
         activeTurnJob = job
         try {
-            operations.withLock { startUserTurnLocked(text.trim(), voice) }
+            val taskId = operations.withLock { startUserTurnLocked(text.trim(), voice) }
+            taskId?.let { runExecution(it, voice) }
         } catch (cancelled: CancellationException) {
             withContext(NonCancellable) {
-                activeTurnId?.let { turnId -> runCatching { database.updateTurn(turnId, TurnStatus.CANCELLED, error = "Cancelled") } }
+                if (activeTurnJob === job) activeTurnId?.let { turnId -> runCatching { database.updateTurn(turnId, TurnStatus.CANCELLED, error = "Cancelled") } }
                 publish(phase = if (mutableState.value.session?.status == SessionStatus.ACTIVE) RuntimePhase.READY else RuntimePhase.STOPPED)
             }
             throw cancelled
         } catch (error: Exception) {
-            activeTurnId?.let { turnId -> runCatching { database.updateTurn(turnId, TurnStatus.FAILED, error = error.safeMessage()) } }
+            if (activeTurnJob === job) activeTurnId?.let { turnId -> runCatching { database.updateTurn(turnId, TurnStatus.FAILED, error = error.safeMessage()) } }
             mutableState.value.session?.let { session ->
                 database.appendEvent(session.id, "runtime.turn_failed", JSONObject().put("turnId", activeTurnId).put("error", error.safeMessage()))
             }
             fail(error)
         } finally {
-            if (activeTurnJob === job) activeTurnJob = null
-            activeTurnId = null
+            if (activeTurnJob === job) { activeTurnJob = null; activeTurnId = null; activeExecutionTaskId = null; activeExecutionLease = null; mutableState.value.session?.takeIf { it.status == SessionStatus.ACTIVE }?.let { resumeReadyExecution(it.id) } }
         }
     }
 
     fun cancelActiveTurn(reason: String = "user cancelled") {
         idleRuntime?.onUserInteraction()
         generation.incrementAndGet()
+        activeExecutionTaskId?.let { taskId -> executionTasks.pending(taskId).filter { it.status == ToolCallStatus.RUNNING }.forEach { database.updateToolCall(it.id, ToolCallStatus.UNKNOWN, error = "Execution interrupted: $reason") }; executionTasks.control(taskId, if (reason == "session paused" || reason == "superseded by a new user turn" || reason == "user started speaking") ExecutionState.PAUSED else ExecutionState.CANCELLED, reason) }
         speech.stopSpeaking()
         (activeTurnId ?: mutableState.value.activeTurn?.id)?.let { turnId -> runCatching {
             database.markRunningToolsUnknown(turnId, "Execution interrupted: $reason")
@@ -298,41 +346,101 @@ class AtlasMobileRuntime(
 
     suspend fun resolveToolCall(toolCallId: String, approved: Boolean) {
         idleRuntime?.onUserInteraction()
-        val job = currentCoroutineContext()[Job]
-        activeTurnJob = job
-        try {
-            operations.withLock {
-                val session = requireActiveSession()
-                val call = database.loadToolCall(toolCallId) ?: error("Tool proposal no longer exists")
-                activeTurnId = call.turnId
-                require(call.sessionId == session.id) { "Tool proposal belongs to another session" }
-                require(call.status == ToolCallStatus.WAITING_FOR_CONFIRMATION) { "Tool proposal is not awaiting confirmation" }
-                if (approved) {
-                    database.updateToolCall(call.id, ToolCallStatus.APPROVED)
-                    executeToolLocked(call.copy(status = ToolCallStatus.APPROVED))
-                } else {
-                    database.updateToolCall(call.id, ToolCallStatus.REJECTED, error = "User declined")
-                    recordToolResult(call, JSONObject().put("ok", false).put("error", "User declined this tool call").toString())
-                }
-                val remaining = database.loadTurnToolCalls(call.turnId).filter { it.status == ToolCallStatus.WAITING_FOR_CONFIRMATION }
-                if (remaining.isNotEmpty()) {
-                    database.updateTurn(call.turnId, TurnStatus.WAITING_FOR_CONFIRMATION)
-                    publish(phase = RuntimePhase.READY)
-                    return@withLock
-                }
-                runTurnLoopLocked(session, call.turnId, database.loadLatestObservation(session.id), voice = false)
-            }
-        } catch (cancelled: CancellationException) {
-            withContext(NonCancellable) { activeTurnId?.let { runCatching { database.updateTurn(it, TurnStatus.CANCELLED, error = "Cancelled") } } }
-            throw cancelled
-        } catch (error: Exception) {
-            activeTurnId?.let { runCatching { database.updateTurn(it, TurnStatus.FAILED, error = error.safeMessage()) } }
-            fail(error)
-        } finally {
-            if (activeTurnJob === job) activeTurnJob = null
-            activeTurnId = null
-            publish()
+        val taskId = operations.withLock {
+            val session = requireActiveSession()
+            val call = database.loadToolCall(toolCallId) ?: error("Tool proposal no longer exists")
+            require(call.sessionId == session.id && call.status == ToolCallStatus.WAITING_FOR_CONFIRMATION)
+            database.updateToolCall(call.id, if (approved) ToolCallStatus.APPROVED else ToolCallStatus.REJECTED, error = if (approved) null else "User declined")
+            if (!approved) recordToolResult(call, JSONObject().put("ok", false).put("error", "User declined this tool call").toString())
+            val task = executionTasks.forTurn(call.turnId)
+            if (task == null) {
+                // Imported/legacy proposals do not acquire executable task authority.
+                if (approved) database.updateToolCall(call.id, ToolCallStatus.REJECTED, error = "Legacy proposal requires a new user request")
+                null
+            } else if (executionTasks.pending(task.id).any { it.status == ToolCallStatus.WAITING_FOR_CONFIRMATION }) null
+            else executionTasks.control(task.id, ExecutionState.READY, "User resolved tool authorization")?.takeIf { it.state == ExecutionState.READY }?.let { executionTasks.nextTurn(it.id); it.id }
         }
+        publish()
+        taskId?.let { resumeExecution(it) }
+    }
+
+    /** Explicit resume retains cumulative usage and never reconciles an unknown effect by retrying it. */
+    suspend fun resumeExecution(taskId: String) = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        operations.withLock {
+        val task = executionTasks.get(taskId) ?: return@withContext
+        require(task.sessionId == requireActiveSession().id)
+        if(executionTasks.reconcileDelivered(taskId)?.state==ExecutionState.COMPLETED) { publish();return@withContext }
+        require(task.state in setOf(ExecutionState.READY, ExecutionState.PAUSED, ExecutionState.WAITING))
+        require(task.waitReason !in setOf("clarification", "authorization", "unknown_operation_outcome")) { "Resolve the recorded blocker first" }
+        if (task.waitReason == "provider") require(lateTurnJob?.isActive != true) { "Provider request is still unresolved" }
+        if (!executionTasks.available(taskId)) { publish(error = "Task allowance exhausted; remaining usage is preserved"); return@withContext }
+        if (task.state != ExecutionState.READY) {
+            val resumed=executionTasks.control(taskId, ExecutionState.READY, "User resumed")
+            require(resumed?.state == ExecutionState.READY) { "Operation outcome requires reconciliation before resuming" }
+            executionTasks.nextTurn(taskId)
+        }
+        resumeReadyExecution(task.sessionId)
+        }
+    }
+
+    fun cancelExecution(taskId: String) {
+        require(executionTasks.get(taskId)?.sessionId == requireSession().id)
+        if (activeExecutionTaskId == taskId) cancelActiveTurn() else executionTasks.control(taskId, ExecutionState.CANCELLED, "user cancelled")
+        publish()
+    }
+
+    private fun resumeReadyExecution(sessionId: String) {
+        scope.launch { taskRunner.withLock {
+            if (mutableState.value.session?.id != sessionId || mutableState.value.session?.status != SessionStatus.ACTIVE || activeTurnJob?.isActive == true) return@withLock
+            val task = executionTasks.list(sessionId).firstOrNull { it.state == ExecutionState.READY } ?: return@withLock
+            val job = currentCoroutineContext()[Job]
+            activeTurnJob = job
+            try { runExecution(task.id, false) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { fail(error) }
+            finally { if (activeTurnJob === job) { activeTurnJob = null; activeTurnId = null; activeExecutionTaskId = null; activeExecutionLease = null; mutableState.value.session?.takeIf { it.status == SessionStatus.ACTIVE }?.let { resumeReadyExecution(it.id) } }; publish() }
+        } }
+    }
+
+    private suspend fun runExecution(taskId: String, voice: Boolean) {
+        activeExecutionTaskId = taskId
+        DurableTaskExecutor(executionTasks).run(taskId) { lease, turnId ->
+            operations.withLock {
+                executionTasks.check(lease)
+                activeExecutionLease = lease
+                activeTurnId = turnId
+                val session = requireActiveSession()
+                require(session.id == executionTasks.get(taskId)?.sessionId)
+                try {
+                    runTurnLoopLocked(session, turnId, usableLatestObservation(session.id), voice)
+                    when (database.loadTurn(turnId)?.status) {
+                        TurnStatus.YIELDED -> SliceOutcome.YIELDED
+                        TurnStatus.COMPLETED -> SliceOutcome.RESPONDED
+                        TurnStatus.WAITING_FOR_USER_CLARIFICATION -> SliceOutcome.WAITING_USER
+                        TurnStatus.WAITING_FOR_CONFIRMATION -> SliceOutcome.WAITING_PERMISSION
+                        TurnStatus.SOFT_TIMED_OUT, TurnStatus.COMPLETED_LATE -> SliceOutcome.WAITING_PROVIDER
+                        else -> SliceOutcome.BLOCKED
+                    }
+                } catch (error: Exception) {
+                    if (error !is CancellationException) database.updateTurn(turnId, TurnStatus.FAILED, error = error.safeMessage())
+                    throw error
+                } finally { activeExecutionLease = null }
+            }
+        }
+        val waiting = executionTasks.get(taskId)
+        if (waiting?.state == ExecutionState.WAITING && waiting.waitReason == "provider") {
+            val lateJob = lateTurnJob
+            scope.launch {
+                lateJob?.join()
+                val current = executionTasks.get(taskId)
+                if (current?.state == ExecutionState.WAITING && current.waitReason == "provider" && database.loadTurn(executionTasks.currentTurn(taskId))?.status == TurnStatus.COMPLETED_LATE) {
+                    executionTasks.control(taskId, ExecutionState.READY, "Provider diagnostic result recorded")
+                    executionTasks.nextTurn(taskId)
+                    resumeReadyExecution(current.sessionId)
+                }
+            }
+        }
+        publish(phase = RuntimePhase.READY)
     }
 
     fun forgetMemory(memoryId: String) {
@@ -340,12 +448,13 @@ class AtlasMobileRuntime(
         publish()
     }
 
-    private suspend fun startUserTurnLocked(text: String, voice: Boolean) {
+    private suspend fun startUserTurnLocked(text: String, voice: Boolean): String? {
         val session = requireActiveSession()
         database.expirePendingClarification(session.id)
         val pending = database.loadPendingClarification(session.id)
         val turn = database.createTurn(session.id, if (voice) "voice" else "text")
         activeTurnId = turn.id
+        publish(error = null)
         database.insertMessage(AtlasMessage(sessionId = session.id, turnId = turn.id, role = MessageRole.USER, content = text, createdAtMs = System.currentTimeMillis()))
         pending?.let { database.appendEvent(session.id, "clarification.reply_candidate", JSONObject().put("turnId", turn.id).put("clarificationId", it.id)) }
 
@@ -365,49 +474,98 @@ class AtlasMobileRuntime(
                     database.updateTurn(turn.id, TurnStatus.FAILED, error = error.safeMessage())
                     publish(response = refusal, error = error.safeMessage(), phase = RuntimePhase.DEGRADED)
                     if (voice || session.permissions.speakResponses) speakLocked(session, refusal)
-                    return
+                    return null
                 }
             }
         }
-        runTurnLoopLocked(session, turn.id, observation, voice)
+        val priorTask = pending?.let { executionTasks.forTurn(it.sourceTurnId) }
+        return if (priorTask?.state == ExecutionState.WAITING && priorTask.waitReason == "clarification") executionTasks.attachReply(priorTask.id, turn.id).id
+        else executionTasks.followUpTask(session.id)?.let { executionTasks.attachReply(it.id,turn.id).id }
+            ?: executionTasks.create(session, text, turn.id, ExecutionBudget(), toolHarness.atomicLocalTools()).id
     }
 
     private suspend fun runTurnLoopLocked(session: AtlasSession, turnId: String, startingObservation: VisualObservation?, voice: Boolean) {
         val startedAt = System.currentTimeMillis()
         var observation = startingObservation
+        var uiObservation: VisualObservation? = null
         var step = database.loadTurn(turnId)?.stepCount ?: 0
+        val lease = activeExecutionLease ?: error("Missing execution lease")
+        var sliceTools = 0
+        val sliceToolsByName = mutableMapOf<String, Int>()
+        suspend fun drainPending(): Boolean {
+            val pending = executionTasks.pending(lease.taskId)
+            if (pending.any { it.status == ToolCallStatus.WAITING_FOR_CONFIRMATION }) { database.updateTurn(turnId, TurnStatus.WAITING_FOR_CONFIRMATION); return false }
+            for (call in pending.filter { it.status in setOf(ToolCallStatus.PROPOSED, ToolCallStatus.APPROVED) }) {
+                if (sliceTools >= AgentLoopPolicy.MAX_TOOL_CALLS || System.currentTimeMillis() - startedAt >= AgentLoopPolicy.MAX_WALL_TIME_MS) { database.updateTurn(turnId, TurnStatus.YIELDED); return false }
+                executionTasks.check(lease)
+                val policy = toolHarness.evaluate(requireActiveSession(), ToolCallProposal(call.id, call.name, call.argumentsJson))
+                if (policy.requiresConfirmation && call.status != ToolCallStatus.APPROVED) { database.updateToolCall(call.id, ToolCallStatus.WAITING_FOR_CONFIRMATION); database.updateTurn(turnId, TurnStatus.WAITING_FOR_CONFIRMATION); return false }
+                if (!policy.allowed) { database.updateToolCall(call.id, ToolCallStatus.REJECTED, error = policy.reason); recordToolResult(call, JSONObject().put("ok", false).put("error", policy.reason).toString()); continue }
+                val toolLimit = toolHarness.definition(call.name)?.maxCallsPerTurn ?: 0
+                require(toolLimit > 0) { "Installed tool has no execution allowance: ${call.name}" }
+                if (sliceToolsByName.getOrDefault(call.name, 0) >= toolLimit) {
+                    database.updateTurn(turnId, TurnStatus.YIELDED, error = "Per-tool slice allowance reached: ${call.name}")
+                    database.appendEvent(session.id, "execution.slice_yielded", JSONObject().put("turnId", turnId).put("execution_task_id", lease.taskId).put("reason", "per_tool_allowance").put("tool", call.name).put("limit", toolLimit))
+                    return false
+                }
+                if (!executionTasks.reserveTool(lease, turnId, call.id)) { executionTasks.control(lease.taskId, ExecutionState.WAITING, "task_allowance"); database.updateTurn(turnId, TurnStatus.YIELDED); return false }
+                sliceTools++
+                sliceToolsByName[call.name] = sliceToolsByName.getOrDefault(call.name, 0) + 1
+                val captured = executeToolLocked(call)
+                if (database.loadToolCall(call.id)?.status == ToolCallStatus.UNKNOWN) { database.updateTurn(turnId, TurnStatus.FAILED, error = "Operation outcome requires reconciliation"); return false }
+                if (captured?.media?.purpose == MediaPurpose.WORKSPACE_UI) uiObservation = captured
+                else if (call.risk != com.grinningfrog.atlas.model.ToolRisk.READ_ONLY) uiObservation = null
+            }
+            return true
+        }
+        val recorded = database.loadMessages(session.id, limit = AgentLoopPolicy.MAX_STORED_MESSAGES_FOR_CONTEXT).mapNotNull { it.toolCallId }.toSet()
+        executionTasks.calls(lease.taskId).filter { it.status == ToolCallStatus.COMPLETED && it.id !in recorded && it.resultJson != null && database.loadTurn(it.turnId)?.status == TurnStatus.INTERRUPTED }.takeLast(10).forEach { recordToolResult(it, it.resultJson!!) }
+        if (!drainPending()) return
         while (step < AgentLoopPolicy.MAX_STEPS && System.currentTimeMillis() - startedAt < AgentLoopPolicy.MAX_WALL_TIME_MS) {
             currentCoroutineContext().ensureActive()
+            executionTasks.check(lease)
+            if (!executionTasks.available(lease.taskId)) break
+            val turnSession = database.loadSession(session.id) ?: session
             step += 1
             database.updateTurn(turnId, TurnStatus.ASSEMBLING_CONTEXT, stepCount = step)
             val summary = database.loadSummary(session.id)
-            val messages = database.loadMessages(session.id, afterSequence = summary?.throughMessageSequence ?: 0, limit = AgentLoopPolicy.MAX_STORED_MESSAGES_FOR_CONTEXT)
+            val task = executionTasks.get(lease.taskId)!!
+            val taskTurnIds = executionTasks.turns(task.id).toSet()
+            val messages = database.loadMessages(session.id, afterSequence = summary?.throughMessageSequence ?: 0, limit = AgentLoopPolicy.MAX_STORED_MESSAGES_FOR_CONTEXT).filter { it.createdAtMs <= task.document.getLong("created_at") || it.turnId in taskTurnIds }
             val memories = database.loadActiveMemories(session.id)
             val pendingClarification = database.loadPendingClarification(session.id)
             observation = usableLatestObservation(session.id) ?: observation
-            val capability = capabilityForTurn(messages, observation)
-            val risk = riskForTurn(messages)
+            val imageObservation = uiObservation ?: observation
+            val routingMessages = if (messages.any { it.role == MessageRole.USER && it.turnId in taskTurnIds }) messages else messages + AtlasMessage(sessionId = session.id, turnId = turnId, role = MessageRole.USER, content = task.objective, createdAtMs = System.currentTimeMillis())
+            val capability = if (uiObservation != null) RouteCapability.VISION else capabilityForTurn(routingMessages, observation)
+            val risk = riskForTurn(routingMessages)
             val latestToolCall = database.loadTurnToolCalls(turnId).lastOrNull()
-            val attachImage = observation != null && (capability == RouteCapability.VISION ||
+            val attachImage = imageObservation != null && (uiObservation != null || capability == RouteCapability.VISION ||
                 (latestToolCall?.name == "capture_current_view" && latestToolCall.status == ToolCallStatus.COMPLETED))
             val toolsAvailable = router.hasToolCapableRoute(capability, requiresVision = attachImage)
-            val context = contextAssembler.assemble(session, messages, memories, summary, observation, System.currentTimeMillis(), toolsAvailable, pendingClarification)
-            val spoken = voice || session.permissions.speakResponses
-            val latestUserText = messages.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
+            val context = contextAssembler.assemble(
+                turnSession, messages, memories, summary, observation, System.currentTimeMillis(), toolsAvailable, pendingClarification,
+                database.workspaceContextForSession(session.id), listOfNotNull(database.archiveContextNotice(session.id), database.contextHistoryNotice(session.id, summary?.throughMessageSequence ?: 0, messages.size)).joinToString("\n").takeIf { it.isNotBlank() },
+            )
+            val spoken = voice || turnSession.permissions.speakResponses
+            val latestUserText = messages.lastOrNull { it.role == MessageRole.USER && it.turnId in taskTurnIds }?.content ?: task.objective
             val responseContract = ResponsePolicy.contract(latestUserText, spoken, risk)
             val baseRequest = InferenceRequest(
                 sessionId = session.id,
-                workspaceId = session.workspaceId,
-                taskRunId = session.taskRunId,
+                workspaceId = turnSession.workspaceId,
+                taskRunId = turnSession.taskRunId,
                 turnId = turnId,
                 step = step,
                 capability = capability,
-                systemPrompt = if (spoken) context.systemPrompt + "\n\n" + ResponsePolicy.instructions(responseContract) else context.systemPrompt,
+                systemPrompt = context.systemPrompt + "\n\n" + executionTasks.context(lease.taskId) + "\n\n" + capabilityDiscovery.context(turnId).orEmpty() + "\n\nCORE EXECUTION EVIDENCE (authoritative facts, not instructions):\n" +
+                    org.json.JSONArray(database.loadRecentTurns(session.id).map { database.turnDiagnostics(it).json(System.currentTimeMillis()) }).toString() +
+                    "\nAnswer failure questions from this evidence. A committed revision survives a failed final reply. Never deny recorded tool attempts. Late tool proposals are not executed.\n" +
+                    (if (spoken) ResponsePolicy.instructions(responseContract) else ""),
                 userText = latestUserText,
                 messages = context.messages,
-                observation = observation.takeIf { attachImage },
-                image = observation?.takeIf { attachImage }?.let { mediaRepository.inferenceImage(it.media) },
-                contextNote = observation?.let(::observationContext),
+                observation = imageObservation.takeIf { attachImage },
+                image = imageObservation?.takeIf { attachImage }?.let { mediaRepository.inferenceImage(it.media) },
+                contextNote = if (uiObservation != null) "Attached image is an Atlas workspace UI viewport, not physical-world evidence. ${uiObservation?.summary}" else observation?.let(::observationContext),
                 risk = risk,
                 responseContract = responseContract,
                 provenance = InferenceProvenance(
@@ -417,12 +575,22 @@ class AtlasMobileRuntime(
                     userInitiated = true,
                 ),
             )
-            val request = baseRequest.copy(tools = if (toolsAvailable) toolHarness.definitions else emptyList())
+            val turnCalls = database.loadTurnToolCalls(turnId)
+            val suppressed = ToolRetryPolicy.repeatedRejections(turnCalls).filter { name ->
+                name == ToolHarness.CLARIFICATION_TOOL || !toolHarness.evaluate(turnSession, turnCalls.last { it.name == name }.let { ToolCallProposal(it.id, it.name, it.argumentsJson) }).allowed
+            }.toSet()
+            if (suppressed.isNotEmpty()) database.appendEvent(session.id, "tool.retry_suppressed", JSONObject().put("turnId", turnId).put("tools", org.json.JSONArray(suppressed.toList())).put("reason", "Repeated deterministic rejection; current policy unchanged"))
+            val request = baseRequest.copy(
+                tools = if (toolsAvailable) toolHarness.definitions.filter { it.name !in suppressed } else emptyList(),
+                systemPrompt = baseRequest.systemPrompt + if (suppressed.isEmpty()) "" else "\nCORE RETRY LIMIT: ${suppressed.joinToString()} repeatedly rejected. Do not repeat these calls. Correct a different control or report the unresolved blocker honestly; discovery resume_local only restores installed local mutations under ordinary policy.",
+            )
             database.appendEvent(session.id, "context.assembled", JSONObject().apply {
-                put("turnId", turnId); put("step", step); put("messageIds", org.json.JSONArray(context.includedMessageIds))
+                put("turnId", turnId); put("step", step); put("messageIds", org.json.JSONArray(context.includedMessageIds)); put("projectedMessageIds", org.json.JSONArray(context.projectedMessageIds))
                 put("omittedMessages", context.omittedMessageCount); put("approximateCharacters", context.approximateCharacters)
                 put("memoryCount", memories.size); put("summaryThrough", summary?.throughMessageSequence); put("toolsAvailable", request.tools.size)
             })
+            val estimatedInput = (request.systemPrompt.length + request.messages.sumOf { it.content.length } + request.tools.sumOf { it.parametersJson.length } + 3L) / 4 + if (request.image != null) 4096L else 0L
+            if (!executionTasks.reserveInference(lease, estimatedInput.coerceAtLeast(1), maxOf(2048L, request.responseContract?.maxOutputTokens?.toLong() ?: 2048L), request.requestId)) { executionTasks.control(lease.taskId, ExecutionState.WAITING, "task_allowance"); break }
             database.updateTurn(turnId, TurnStatus.WAITING_FOR_MODEL, stepCount = step)
             publish(phase = RuntimePhase.THINKING)
             database.appendEvent(session.id, "provider.requested", JSONObject().put("turnId", turnId).put("step", step).put("requestId", request.requestId)
@@ -444,6 +612,8 @@ class AtlasMobileRuntime(
                 database.appendEvent(session.id, "provider.result_discarded", JSONObject().put("turnId", turnId).put("requestId", request.requestId).put("reason", "session generation changed"))
                 throw CancellationException("Session changed during inference")
             }
+            executionTasks.check(lease)
+            executionTasks.reconcileInference(lease, response.promptTokens?.toLong(), response.completionTokens?.toLong())
             database.appendEvent(session.id, "provider.responded", JSONObject().apply {
                 put("turnId", turnId); put("step", step); put("requestId", request.requestId); put("endpointId", response.endpointId)
                 put("model", response.selectedModel); put("routingProfile", response.routingProfile); put("routingReason", response.routingReason)
@@ -454,19 +624,36 @@ class AtlasMobileRuntime(
                 put("text", response.text); put("toolCallCount", response.toolCalls.size)
                 put("providerToolUses", org.json.JSONArray(response.providerToolUses.map { use -> JSONObject().apply {
                     put("type", use.type); put("action", use.action); put("status", use.status)
+                    put("readOnlyResearch", use.readOnlyResearch); put("id", use.id)
                     put("queries", org.json.JSONArray(use.queries))
                     put("urls", org.json.JSONArray(use.urls))
                 } }))
                 put("citations", org.json.JSONArray(response.citations.map { citation -> JSONObject()
                     .put("title", citation.title).put("url", citation.url) }))
             })
+            capabilityDiscovery.hostedResearch(session.id, turnId, response)
+            if (!executionTasks.observeResponse(lease, response.finishReason)) {
+                database.updateTurn(turnId, TurnStatus.YIELDED, stepCount = step, error = "Incomplete provider output; continuation required")
+                return
+            }
             require(response.toolCalls.map { it.id }.distinct().size == response.toolCalls.size) {
                 "Provider returned duplicate tool-call ids in one response"
             }
             val clarificationCalls = response.toolCalls.filter { it.name == ToolHarness.CLARIFICATION_TOOL }
-            require(clarificationCalls.size <= 1) { "Provider returned multiple clarification controls in one step" }
             if (clarificationCalls.isNotEmpty()) {
-                require(response.toolCalls.size == 1) { "Clarification control cannot be mixed with physical tool proposals" }
+                val rejection = if (ToolHarness.CLARIFICATION_TOOL in suppressed) StructuredToolRejection("Repeated invalid clarification control", "clarification_retry_limit", JSONObject().put("hint", "Report the unresolved question; do not repeat the rejected control in this turn."))
+                    else ClarificationControl.rejection(response.toolCalls, database.loadPendingClarification(session.id)?.id)
+                if (rejection != null) {
+                    val prior = database.loadTurnToolCalls(turnId)
+                    require(response.toolCalls.size <= 64) { "Oversized provider tool batch" }
+                    response.toolCalls.forEachIndexed { index, proposal ->
+                        val call = prepareToolCall(turnSession, turnId, step, index, proposal, prior, index).copy(status = ToolCallStatus.REJECTED, requiresConfirmation = false, error = rejection.message)
+                        database.insertToolCall(call)
+                        database.appendEvent(session.id, "clarification.control_rejected", JSONObject().put("turnId", turnId).put("toolCallId", call.id).put("error", rejection.message).put("recovery", rejection.recovery))
+                        recordToolResult(call, ToolFailurePayload.json(rejection, rejection.message.orEmpty()).toString())
+                    }
+                    continue
+                }
                 when (handleClarificationControl(session, turnId, clarificationCalls.single(), observation, spoken)) {
                     ClarificationControlOutcome.WAITING -> {
                         database.updateTurn(turnId, TurnStatus.WAITING_FOR_USER_CLARIFICATION, stepCount = step)
@@ -498,29 +685,23 @@ class AtlasMobileRuntime(
             }
 
             val priorCalls = database.loadTurnToolCalls(turnId)
-            if (priorCalls.size + response.toolCalls.size > AgentLoopPolicy.MAX_TOOL_CALLS) {
-                throw IllegalStateException("Agent exceeded the ${AgentLoopPolicy.MAX_TOOL_CALLS}-tool budget")
-            }
+            require(response.toolCalls.size <= 64) { "Oversized provider tool batch" }
             val calls = response.toolCalls.mapIndexed { index, proposal ->
                 val earlierInBatch = response.toolCalls.take(index).count { it.name == proposal.name }
-                prepareToolCall(session, turnId, step, index, proposal, priorCalls, earlierInBatch)
+                prepareToolCall(turnSession, turnId, step, index, proposal, priorCalls, earlierInBatch)
             }
             calls.forEach(database::insertToolCall)
-            calls.forEach { call ->
-                if (call.status == ToolCallStatus.REJECTED) {
-                    recordToolResult(call, JSONObject().put("ok", false).put("error", call.error).toString())
-                } else if (!call.requiresConfirmation) {
-                    executeToolLocked(call)
-                    database.loadLatestObservation(session.id)?.let { observation = it }
-                }
-            }
+            calls.filter { it.status == ToolCallStatus.REJECTED }.forEach { call -> recordToolResult(call, JSONObject().put("ok", false).put("error", call.error).toString()) }
+            if (!drainPending()) return
             if (calls.any { it.status == ToolCallStatus.WAITING_FOR_CONFIRMATION }) {
                 database.updateTurn(turnId, TurnStatus.WAITING_FOR_CONFIRMATION, stepCount = step)
                 publish(response = response.text.takeIf(String::isNotBlank), streamingResponse = null, phase = if (speech.isSpeaking) RuntimePhase.SPEAKING else RuntimePhase.READY)
                 return
             }
         }
-        throw IllegalStateException("Agent loop exceeded its step or wall-time budget")
+        database.updateTurn(turnId, TurnStatus.YIELDED, stepCount = step)
+        database.appendEvent(session.id, "execution.slice_yielded", JSONObject().put("turnId", turnId).put("execution_task_id", lease.taskId).put("steps", step).put("tool_calls", sliceTools).put("elapsed_ms", System.currentTimeMillis() - startedAt))
+        publish(phase = RuntimePhase.THINKING)
     }
 
     private suspend fun handleClarificationControl(
@@ -574,9 +755,17 @@ class AtlasMobileRuntime(
     }
 
     private fun recordClarificationControlResult(sessionId: String, turnId: String, proposal: ToolCallProposal, action: String, clarificationId: String) {
-        database.insertMessage(AtlasMessage(sessionId = sessionId, turnId = turnId, role = MessageRole.TOOL,
-            content = JSONObject().put("ok", true).put("action", action).put("clarification_id", clarificationId).toString(),
-            createdAtMs = System.currentTimeMillis(), kind = MessageKind.TOOL_RESULT, toolCallId = proposal.id))
+        val result = JSONObject().put("ok", true).put("accepted", true).put("action", action).put("clarification_id", clarificationId).toString()
+        val now = System.currentTimeMillis()
+        database.writeTransaction {
+            val receipt = AtlasToolCall(id = proposal.id, sessionId = sessionId, turnId = turnId,
+                name = proposal.name, argumentsJson = proposal.argumentsJson, status = ToolCallStatus.COMPLETED,
+                risk = ToolRisk.SESSION_WRITE, requiresConfirmation = false, idempotencyKey = "$turnId:control:${proposal.id}",
+                createdAtMs = now, updatedAtMs = now)
+            database.insertToolCall(receipt)
+            database.updateToolCall(receipt.id, ToolCallStatus.COMPLETED, resultJson = result)
+            recordToolResult(receipt, result)
+        }
     }
 
     private suspend fun ensureClarificationDelivered(session: AtlasSession, turnId: String, clarification: PendingClarification, spoken: Boolean) {
@@ -654,6 +843,7 @@ class AtlasMobileRuntime(
                 if (softTimedOut.get()) {
                     database.refreshMessageDelivery(messageId, DeliveryStatus.TEXT_ONLY)
                     database.updateTurn(turnId, TurnStatus.COMPLETED_LATE, stepCount = request.step)
+                    executionTasks.reconcileLateInference(turnId,request.requestId,response.promptTokens?.toLong(),response.completionTokens?.toLong())
                     database.appendEvent(session.id, "provider.completed_late", lateResultEvent(turnId, messageId, request, response))
                     publish(error = "Response timed out at ${MODEL_SOFT_TIMEOUT_MS / 1_000}s and completed later. The diagnostic result is available below.", phase = RuntimePhase.READY)
                 } else {
@@ -694,7 +884,12 @@ class AtlasMobileRuntime(
         }
         lateTurnJob = collector
         lateTurnId = turnId
-        val timely = withTimeoutOrNull(MODEL_SOFT_TIMEOUT_MS) { result.await() }
+        result.invokeOnCompletion {if(result.isCancelled)collector.cancel()}
+        val durableAuthoring=activeExecutionLease?.let {executionTasks.get(it.taskId)?.document?.optJSONObject("completion_requirement")?.optString("delivery") in setOf("activation","draft")}==true
+        val timely = awaitModelResponse(result,durableAuthoring,{
+            database.appendEvent(session.id,"provider.authoring_still_running",JSONObject().put("turnId",turnId).put("requestId",request.requestId).put("interaction_deadline_ms",MODEL_SOFT_TIMEOUT_MS))
+            publish(error=null)
+        },{activeExecutionLease?.let(executionTasks::check) ?: throw CancellationException("Task lease unavailable")})
         if (timely != null) return timely.getOrThrow()
 
         softTimedOut.set(true)
@@ -779,9 +974,8 @@ class AtlasMobileRuntime(
         require(proposal.id.isNotBlank()) { "Provider returned a tool call without an id" }
         require(priorCalls.none { it.id == proposal.id }) { "Provider reused tool-call id ${proposal.id}" }
         val definition = toolHarness.definition(proposal.name)
-        val sameToolCount = priorCalls.count { it.name == proposal.name } + earlierInBatch
         val policy = toolHarness.evaluate(session, proposal)
-        val withinBudget = definition != null && sameToolCount < definition.maxCallsPerTurn
+        val withinBudget = definition != null
         val accepted = policy.allowed && withinBudget
         val timestamp = System.currentTimeMillis()
         return AtlasToolCall(
@@ -801,7 +995,7 @@ class AtlasMobileRuntime(
             reason = proposal.reason ?: policy.reason,
             error = when {
                 !policy.allowed -> policy.reason
-                !withinBudget -> "Per-turn limit reached for ${proposal.name}"
+                !withinBudget -> "Tool is not installed: ${proposal.name}"
                 else -> null
             },
             createdAtMs = timestamp,
@@ -809,27 +1003,34 @@ class AtlasMobileRuntime(
         )
     }
 
-    private suspend fun executeToolLocked(call: AtlasToolCall) {
+    private suspend fun executeToolLocked(call: AtlasToolCall): VisualObservation? {
         val current = database.loadToolCall(call.id) ?: call
-        if (current.status == ToolCallStatus.COMPLETED || current.status == ToolCallStatus.REJECTED || current.status == ToolCallStatus.FAILED) return
+        if (current.status == ToolCallStatus.COMPLETED || current.status == ToolCallStatus.REJECTED || current.status == ToolCallStatus.FAILED) return null
         if (current.status == ToolCallStatus.UNKNOWN) error("Tool outcome is unknown and cannot be retried automatically")
-        database.updateTurn(call.turnId, TurnStatus.EXECUTING_TOOL)
+        activeExecutionLease?.let(executionTasks::check)
+        database.updateTurn(activeTurnId ?: call.turnId, TurnStatus.EXECUTING_TOOL)
         database.updateToolCall(call.id, ToolCallStatus.RUNNING)
+        publish()
         try {
             val result = toolHarness.execute(call)
+            activeExecutionLease?.let(executionTasks::check)
             database.updateToolCall(call.id, ToolCallStatus.COMPLETED, resultJson = result.resultJson)
             recordToolResult(call, result.resultJson)
+            return result.observation
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
-            val result = JSONObject().put("ok", false).put("error", error.safeMessage()).toString()
-            database.updateToolCall(call.id, ToolCallStatus.FAILED, resultJson = result, error = error.safeMessage())
+            val result = ToolFailurePayload.json(error, error.safeMessage()).toString()
+            database.updateToolCall(call.id, if (call.risk == com.grinningfrog.atlas.model.ToolRisk.EXTERNAL_EFFECT) ToolCallStatus.UNKNOWN else ToolCallStatus.FAILED, resultJson = result, error = error.safeMessage())
             database.appendEvent(call.sessionId, "tool.failed", JSONObject().put("tool", call.name).put("error", error.safeMessage()))
             val count = database.loadRecentEvents(call.sessionId, 100).count { event ->
                 event.type == "tool.failed" && runCatching { JSONObject(event.dataJson).optString("tool") == call.name }.getOrDefault(false)
             }
             idleRuntime?.observeRepeatedFailure("${call.name} repeatedly failed", error.safeMessage(), count)
             recordToolResult(call, result)
+            return null
+        } finally {
+            publish()
         }
     }
 
@@ -856,6 +1057,7 @@ class AtlasMobileRuntime(
         return JSONObject().apply {
             put("providerToolUses", org.json.JSONArray(response.providerToolUses.map { use -> JSONObject().apply {
                 put("type", use.type); put("action", use.action); put("status", use.status)
+                    put("readOnlyResearch", use.readOnlyResearch); put("id", use.id)
                 put("queries", org.json.JSONArray(use.queries)); put("urls", org.json.JSONArray(use.urls))
             } }))
             put("citations", org.json.JSONArray(response.citations.map { citation -> JSONObject()
@@ -893,12 +1095,11 @@ class AtlasMobileRuntime(
         }
         val candidates = turns.dropLast(AgentLoopPolicy.RECENT_TURNS_AFTER_COMPACTION).flatten()
         if (candidates.isEmpty()) return
-        val transcript = candidates.joinToString("\n") { message ->
-            buildString {
-                append("${message.role.name.lowercase()}: ${message.content.ifBlank { "[tool proposal]" }}")
-                message.providerContextJson?.takeIf(String::isNotBlank)?.let { append(" [recorded provider evidence: ").append(it).append(']') }
-            }
-        }.take(24_000)
+        val batch = try { CheckpointPlanner.select(candidates) } catch (error: IllegalArgumentException) {
+            database.appendEvent(session.id, "memory.compaction_failed", JSONObject().put("stage", "context_budget").put("error", error.safeMessage()))
+            return
+        }
+        val transcript = batch.transcript
         val prompt = buildString {
             appendLine("Create a compact, factual checkpoint for a continuing conversation. Preserve user preferences, corrections, decisions, named entities, completed work, pending tasks, safety constraints, and unresolved references. Do not add facts. Do not describe the summarization process.")
             prior?.let { appendLine("Previous checkpoint:\n${it.summary}") }
@@ -915,22 +1116,24 @@ class AtlasMobileRuntime(
             provenance = InferenceProvenance(
                 domain = InferenceDomain.MEMORY,
                 purpose = InferencePurpose.MEMORY_COMPACTION,
-                triggerEventId = candidates.last().id,
+                triggerEventId = batch.messages.last().id,
                 userInitiated = false,
             ),
         )
         database.appendEvent(session.id, "provider.requested", JSONObject().put("source", "memory_compaction").put("requestId", request.requestId).putProvenance(request.provenance))
         try {
             val response = router.route(request)
-            val through = candidates.last().sequence
-            database.saveSummary(SessionSummary(session.id, response.text.take(8_000), through, System.currentTimeMillis()))
+            val through = batch.messages.last().sequence
             database.appendEvent(session.id, "provider.responded", JSONObject().put("source", "memory_compaction").put("requestId", request.requestId)
                 .put("endpointId", response.endpointId).put("model", response.selectedModel).put("routingProfile", response.routingProfile)
                 .put("routingReason", response.routingReason).put("routingRevision", response.routingRevision)
                 .put("latencyMs", response.latencyMs).put("firstTokenLatencyMs", response.firstTokenLatencyMs)
                 .put("promptTokens", response.promptTokens).put("completionTokens", response.completionTokens)
                 .put("totalTokens", response.totalTokens).put("finishReason", response.finishReason)
-                .put("providerContinuationId", response.providerContinuationId).put("throughMessageSequence", through))
+                .put("providerContinuationId", response.providerContinuationId).put("candidateThroughMessageSequence", through))
+            CheckpointPlanner.validateResponse(response.text, response.finishReason)
+            database.saveSummary(SessionSummary(session.id, response.text, through, System.currentTimeMillis()))
+            database.appendEvent(session.id, "memory.compacted", JSONObject().put("throughMessageSequence", through).put("requestId", request.requestId))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -1187,16 +1390,17 @@ class AtlasMobileRuntime(
         partialTranscript: String? = mutableState.value.partialTranscript,
         streamingResponse: String? = mutableState.value.streamingResponse,
     ) {
+        val durableSession = session?.let { database.loadSession(it.id) } ?: session
         val age = observation?.let { (System.currentTimeMillis() - it.observedAtMs).coerceAtLeast(0) }
-        val events = session?.let { database.loadRecentEvents(it.id, 80) }.orEmpty()
-        val messages = session?.let { database.loadMessages(it.id, limit = 80) }.orEmpty()
-        val activeTurn = session?.let { database.loadActiveTurn(it.id) }
-        val pendingTools = session?.let { database.loadPendingToolCalls(it.id) }.orEmpty()
-        val memories = session?.let { database.loadActiveMemories(it.id) }.orEmpty()
-        val summary = session?.let { database.loadSummary(it.id) }
-        val pendingClarification = session?.let { database.loadPendingClarification(it.id) }
+        val events = durableSession?.let { database.loadRecentEvents(it.id, 80) }.orEmpty()
+        val messages = durableSession?.let { database.loadMessages(it.id, limit = 80) }.orEmpty()
+        val activeTurn = durableSession?.let { database.loadActiveTurn(it.id) }
+        val pendingTools = durableSession?.let { database.loadPendingToolCalls(it.id) }.orEmpty()
+        val memories = durableSession?.let { database.loadActiveMemories(it.id) }.orEmpty()
+        val summary = durableSession?.let { database.loadSummary(it.id) }
+        val pendingClarification = durableSession?.let { database.loadPendingClarification(it.id) }
         mutableState.value = RuntimeSnapshot(
-            session = session,
+            session = durableSession,
             phase = phase,
             latestObservation = observation,
             latestResponse = response,
@@ -1207,6 +1411,8 @@ class AtlasMobileRuntime(
             recentEvents = events,
             messages = messages,
             activeTurn = activeTurn,
+            executionTasks = durableSession?.let { executionTasks.list(it.id) }.orEmpty(),
+            turnDiagnostics = durableSession?.let { database.loadRecentTurns(it.id).map(database::turnDiagnostics) }.orEmpty(),
             pendingToolCalls = pendingTools,
             memories = memories,
             sessionSummary = summary,
@@ -1246,3 +1452,15 @@ private class SoftTimeoutDetached : Exception()
 
 private const val STREAM_CHECKPOINT_INTERVAL_MS = 250L
 private const val MODEL_SOFT_TIMEOUT_MS = 60_000L
+
+/** An authoring request keeps its lease and original result beyond the interactive notification deadline. */
+internal suspend fun <T> awaitModelResponse(pending: kotlinx.coroutines.Deferred<T>, keepWorking: Boolean, onSlow: () -> Unit, check: () -> Unit): T? {
+    val timely=kotlinx.coroutines.withTimeoutOrNull(60_000L) {pending.await()}
+    if(timely!=null || !keepWorking)return timely
+    onSlow()
+    try {while(true) {
+        check()
+        val next=kotlinx.coroutines.withTimeoutOrNull(60_000L) {pending.await()}
+        if(next!=null)return next
+    }} catch(cancelled: CancellationException) {pending.cancel(cancelled);throw cancelled}
+}

@@ -2,9 +2,21 @@
 
 Atlas is easiest to understand by following ownership from the persistent runtime outward. Start with the runtime map, then use the focused documents below when a boundary matters.
 
+## Current implementation
+
+- [Alpha.28 live assessment](./alpha28-live-assessment.md) — observed delivery, persistence, authoring churn, completion failures, and next implementation priorities.
+
+- [Current status](./current-status.md) — alpha.28 capabilities, verification evidence, limits, and distribution.
+- [Durable execution](../apps/atlas-android/DURABLE_EXECUTION.md) — slice continuation, task ownership, receipts, recovery, and allowances.
+- [Workspace application host](./workspace-application-host.md) — implementation chronology and qualification evidence.
+- [Import and export](./import-export.md) — session/workspace recovery and authority reset.
+- [Capability discovery](./capability-discovery.md) — bounded external capability inspection.
+
 ## Runtime and ownership
 
 - [Runtime code map](./runtime-code-map.md) — end-to-end path through the shipping Android implementation, with direct source links.
+- [Composable workspaces](./composable-workspaces.md) — original design and acceptance goals; use current status and the application-host chronology for implemented behavior.
+- [Workspace alpha test plan](./workspace-alpha-test-plan.md) — live Android exercises for creation, revision, context switching, session boundaries, persistence, canvas, export, and failure handling.
 - [Persistent intent and idle runtime](./persistent-intent-runtime.md) — durable unresolved intent, autonomy modes, scoring, budgets, preemption, and idle telemetry.
 - [Sign in with ChatGPT and plan inference](./chatgpt-plan-inference.md) — local OAuth, protected credentials, Responses translation, and provider boundaries.
 - [Architecture](./architecture.md) — repository-level components and ownership boundaries.

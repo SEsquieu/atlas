@@ -18,7 +18,7 @@ The phone is the body. Models are replaceable reasoning engines.
 
 <img src="./docs/assets/atlas-session-alpha.jpg" alt="Atlas alpha session interface on Android" width="420">
 
-<sub><em>Current Android alpha. Real app, not a product mockup.</em></sub>
+<sub><em>Earlier Android alpha session view. Navigation has evolved since this capture.</em></sub>
 
 </div>
 
@@ -43,6 +43,14 @@ Changing from an on-device model to a LAN server or cloud API changes a capabili
 
 > **Status:** public open-source Android alpha under active development. Atlas is appropriate for development and hands-on physical-device testing, not unattended, emergency, safety-critical, or production operation.
 
+## Current alpha
+
+The current Android source baseline is **0.1.0-alpha.28**. Atlas can author contained HTML/CSS/JavaScript workspace apps during a session, retain their data, and continue durable tasks across bounded execution slices. This remains an experimental alpha: automated checks do not guarantee that a generated app satisfies a live user request.
+
+Live testing has demonstrated app activation and isolated save/reload verification. Repeated authoring errors and optional visual-inspection failures can still waste inference and leave delivered tasks waiting; see the [alpha.28 live assessment](./docs/alpha28-live-assessment.md).
+
+See the [current implementation and verification status](./docs/current-status.md) for supported behavior, evidence, limitations, and distribution details.
+
 ## Start here
 
 | If you want to... | Go here |
@@ -54,6 +62,7 @@ Changing from an on-device model to a LAN server or cloud API changes a capabili
 | **Understand context and memory** | [`docs/context-memory-and-sidecars.md`](./docs/context-memory-and-sidecars.md) |
 | **Understand failure semantics** | [`docs/runtime-failure-semantics.md`](./docs/runtime-failure-semantics.md) |
 | **Use a ChatGPT plan** | [`docs/chatgpt-plan-inference.md`](./docs/chatgpt-plan-inference.md) |
+| **Build and use workspace apps** | [`docs/current-status.md`](./docs/current-status.md) |
 | **Understand persistent intent** | [`docs/persistent-intent-runtime.md`](./docs/persistent-intent-runtime.md) |
 | **Browse all engineering docs** | [`docs/README.md`](./docs/README.md) |
 | **See what is intentionally unfinished** | [`ROADMAP.md`](./ROADMAP.md) |
@@ -103,7 +112,10 @@ The native Android reference app currently provides:
 - motion-aware visual freshness and detail-suitability checks;
 - push-to-talk, streaming sentence-aware TTS, and barge-in tracking;
 - manual and Live Context modes with scene-change and proactive-inference limits;
-- bounded multi-step model/tool turns with confirmation and restart recovery;
+- durable execution tasks with checkpoints and automatic continuation across bounded model/tool slices, confirmation, resource ceilings, and restart recovery;
+- contained workspace apps with HTML/CSS/JavaScript presentation, scoped storage, candidate checks, and controlled activation;
+- host-mediated workspace BLE capabilities with Android permissions and scoped consent;
+- session/workspace export and copy-based import with executable authority reset;
 - durable conversational clarification that survives tangents and blocks ambiguous physical actions;
 - capability routes for `fast`, `vision`, `reasoning`, and `fallback`;
 - direct OpenAI-compatible local, LAN, and cloud endpoints;
@@ -186,7 +198,7 @@ Managed inference is optional. See [`apps/atlas-cloud/README.md`](./apps/atlas-c
 
 ## v0.1 boundary
 
-**One Android phone. One durable personal workspace. One excellent observe → reason → act → respond loop. User-owned inference. Enough evidence to explain every consequential decision.**
+**One Android phone. Durable sessions and composable workspace apps. An observe → reason → act → respond loop with user-owned inference and evidence for consequential actions.**
 
 The source repository is public. [`OPEN_SOURCE_CHECKLIST.md`](./OPEN_SOURCE_CHECKLIST.md) records maintainer release-readiness work. Distribution of a signed release APK remains a separate gate tracked by [`docs/closed-alpha.md`](./docs/closed-alpha.md); CI debug APKs are test artifacts, not production releases.
 

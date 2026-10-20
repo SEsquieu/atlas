@@ -34,6 +34,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import com.grinningfrog.atlas.workspace.WorkspaceTools
 
 /**
  * Process-local owner of a physical Atlas session.
@@ -59,7 +60,9 @@ class AtlasSessionService : LifecycleService() {
         val speech = SpeechController(this)
         val health = DeviceHealthMonitor(this, motion)
         val router = CapabilityRouter(
-            backend = ProviderBackendRegistry(OpenAiCompatibleBackend(), ChatGptPlanBackend(app.chatGptAuth)),
+            backend = ProviderBackendRegistry(OpenAiCompatibleBackend(), ChatGptPlanBackend(app.chatGptAuth, diagnosticSink = { request, data ->
+                app.database.appendEvent(request.sessionId, "provider.http_diagnostic", data.put("turnId", request.turnId))
+            })),
             endpoints = app::inferenceProviders,
             routes = app.settings::loadRoutes,
             apiKey = { endpoint -> when {
@@ -96,7 +99,7 @@ class AtlasSessionService : LifecycleService() {
         )
         runtime = AtlasMobileRuntime(
             app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope, idleRuntime,
-            additionalTools = AndroidContextTools.create(this, app.database, app.settings),
+            additionalTools = AndroidContextTools.create(this, app.database, app.settings) + WorkspaceTools.create(app.database, app.mediaRepository, this),
         )
         serviceScope.launch {
             runCatching { runtime.initialize() }.onFailure { error ->
