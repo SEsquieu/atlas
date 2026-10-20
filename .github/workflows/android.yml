@@ -68,7 +68,7 @@ jobs:
           ./gradlew "${tasks[@]}"
 
   installable:
-    if: (github.event_name == 'push' && !contains(github.event.head_commit.message, '[validation-only]')) || (github.event_name == 'workflow_dispatch' && inputs.installable)
+    if: github.event_name == 'workflow_dispatch' && inputs.installable
     needs: build
     runs-on: ubuntu-latest
     environment: closed-alpha
@@ -121,12 +121,29 @@ jobs:
                   has_panel = all(any(marker in data for data in dex) for marker in markers)
                   assert has_panel == (apk.parent.name == 'developer'), f'DEV source isolation failed: {apk}'
           PYCODE
+      - name: Record build provenance
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+          BUILD_REF: ${{ github.ref }}
+          BUILD_RUN: ${{ github.run_id }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          python3 - <<'PYCODE'
+          import hashlib, json, os
+          from pathlib import Path
+          artifacts = []
+          for apk in sorted(Path('app/build/outputs/apk').glob('*/*/*.apk')):
+              artifacts.append({'path': str(apk), 'bytes': apk.stat().st_size, 'sha256': hashlib.sha256(apk.read_bytes()).hexdigest()})
+          provenance = {'commit': os.environ['BUILD_COMMIT'], 'ref': os.environ['BUILD_REF'], 'run_id': os.environ['BUILD_RUN'], 'version_code': 1000 + int(os.environ['BUILD_NUMBER']), 'artifacts': artifacts}
+          Path('build-provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
+          PYCODE
       - name: Upload installable APKs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: atlas-android-installable
           if-no-files-found: error
           path: |
+            apps/atlas-android/build-provenance.json
             apps/atlas-android/app/build/outputs/apk/*/debug/*.apk
             apps/atlas-android/app/build/outputs/apk/*/developer/*.apk
       - name: Remove signing material

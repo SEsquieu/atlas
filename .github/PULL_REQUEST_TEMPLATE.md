@@ -1,3 +1,11 @@
+## Tracking and scope
+
+Fix ID: AF-___ (or explain why none applies)
+Tracking issue: #___
+Related discoveries: #___
+
+List acceptance criteria addressed and any intentionally remaining work. Use `Closes #...` only when the entire issue, including required live verification, is satisfied; otherwise use `Refs #...`.
+
 ## Problem and outcome
 
 Describe the user/runtime problem and the result of this change.
@@ -20,3 +28,12 @@ Describe the user/runtime problem and the result of this change.
 ## Compatibility
 
 List schema, event, API, configuration, or durable-state migration implications. Write `None` when not applicable.
+
+## Delivery and remaining verification
+
+- Source commit tested:
+- Checks run and results (include failures or checks not run):
+- Phone/provider verification still needed:
+- Backlog status update and evidence link:
+
+Merging code does not automatically establish live verification or request a new APK. Maintainers generate installable builds separately. Agent-assisted changes have the same evidence and DCO requirements as other contributions.

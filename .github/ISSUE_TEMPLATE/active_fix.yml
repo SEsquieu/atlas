@@ -1,0 +1,37 @@
+name: Scoped fix
+description: Define a bounded outcome for a human or agent contributor
+title: "[AF-ID]: Short outcome"
+body:
+  - type: input
+    id: fix_id
+    attributes:
+      label: Stable fix ID
+      description: Use the existing AF ID, or write new for maintainer triage.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and safe evidence
+      description: Expected versus observed behavior, minimal reproduction, and relevant source. Do not upload private session logs or credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable outcomes, failure cases, and checks needed for completion.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Scope, constraints, and dependencies
+      description: Preserve relevant permissions, receipts, persistence, recovery, and provider boundaries. State what is excluded.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification and coordination
+      description: Automated versus live checks, related issue or draft PR, owner if claimed, and known uncertainty.

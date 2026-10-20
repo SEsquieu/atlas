@@ -2,6 +2,10 @@
 
 Atlas welcomes focused contributions that strengthen a provider-independent physical-agent runtime. The project is preparing for v0.1; compatibility, deterministic behavior, privacy, and failure handling matter more than feature count.
 
+## Work queue and ownership
+
+Start with [active fixes](./docs/active-fixes.md) and the [contributor workflow](./docs/contributor-workflow.md). Human and agent-assisted contributions follow the same process. Reference the stable fix ID, open or find its tracking issue, and claim work with a draft PR before substantial implementation. A claim is coordination, not exclusive ownership; maintainers resolve overlap. Keep unrelated discoveries in separate issues.
+
 ## Before opening a change
 
 - Use a GitHub discussion or issue for a large new subsystem, public interface, storage migration, provider contract, or behavior that can cause a physical-world effect.
@@ -26,7 +30,9 @@ Android:
 
 ```bash
 cd apps/atlas-android
-./gradlew testDebugUnitTest assembleDebug
+cmake -S app/src/main/cpp -B app/build/workspace-native-host -DCMAKE_BUILD_TYPE=Release
+cmake --build app/build/workspace-native-host --target atlas_workspace_js -j2
+./gradlew testSecureDebugUnitTest lintSecureDebug
 ```
 
 Managed-inference gateway:
@@ -40,6 +46,8 @@ npm run build
 ```
 
 Run `npm run check:public` from the repository root before submitting. Tests requiring a real phone or provider must be opt-in and must never consume a contributor's paid inference unexpectedly.
+
+Installable APK generation is a separate manual maintainer action, not a PR requirement. See [build and test](./docs/build-and-test.md) for prerequisites.
 
 ## Pull requests
 

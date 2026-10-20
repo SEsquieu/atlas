@@ -59,7 +59,7 @@ Copy `.env.example` to a local ignored `.env` and replace placeholders. The clou
 ### Installing CI builds without losing data
 
 Only `atlas-android-installable` is intended for phone installs. Android unit tests and lint run
-without signing secrets, including on PRs. A separate push-only `closed-alpha` job uses the
+without signing secrets, including on PRs. A separate manual-dispatch-only `closed-alpha` job uses the
 persistent alpha key; it fails explicitly rather than distributing APKs with a fresh runner key.
 Configure the four signing secrets listed in `closed-alpha-release-runbook.md`. Keep the key backed
 up outside git. CI uses versionCode `1000 + Android workflow run_number`; the alpha.28 local default is 29.
@@ -69,3 +69,7 @@ than the installed build. LAN and Secure have different application IDs: update 
 Previously distributed runner-signed debug APKs cannot be upgraded with a new signing identity.
 If the old private key was not retained, export sessions/workspaces from the old app first, then
 perform one reinstall with the persistent-key build. Version bumps cannot fix certificate mismatch.
+
+## Delivery cadence
+
+PR and push validation does not generate installable APKs. Manually dispatch Android with installable=true for a chosen ref; builds include build-provenance.json. See [contributor and build workflow](./contributor-workflow.md). The obsolete alpha.5 publisher has been retired.
