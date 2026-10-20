@@ -265,7 +265,10 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         work.put("no_progress_slices", stagnant)
         task.document.put("work_state", work)
         event(task, "execution.progress", JSONObject().put("frontier_changed", madeProgress).put("no_progress_slices", stagnant))
-        val repeated=if(effectiveSignature.isNotBlank() && (failedThisSlice || !madeProgress) && effectiveSignature==task.document.optString("failure_signature")) task.document.optInt("repeated_failures")+1 else if(failedThisSlice || deliveryPending) 1 else 0
+        val repeatedCalls=failures.maxOfOrNull { failed -> all.count { prior ->
+            prior.name==failed.name && prior.argumentsJson==failed.argumentsJson && failedOperation(prior)
+        } } ?: 0
+        val repeated=maxOf(repeatedCalls, if(effectiveSignature.isNotBlank() && (failedThisSlice || !madeProgress) && effectiveSignature==task.document.optString("failure_signature")) task.document.optInt("repeated_failures")+1 else if(failedThisSlice || deliveryPending) 1 else 0)
         task.document.put("failure_signature",effectiveSignature).put("repeated_failures",repeated)
         val recent=all.takeLast(20)
         val definitionId=all.lastOrNull { it.name == "workspace_package_activate" || runCatching {JSONObject(it.argumentsJson).has("definition")}.getOrDefault(false) }?.id ?: task.document.getJSONObject("checkpoint").optString("latest_definition_operation_id").takeIf { it.isNotBlank() && it!="null" }
@@ -330,6 +333,15 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         }
     }
     private fun nonBlockingAuditFailure(call: AtlasToolCall, task: ExecutionTask, all: List<AtlasToolCall>): Boolean {
+        if(call.name=="atlas_task_handoff_pixels" && call.status in setOf(ToolCallStatus.FAILED,ToolCallStatus.REJECTED)) {
+            val requirement=task.document.optJSONObject("completion_requirement")
+            if(requirement?.optBoolean("require_pixels")==true)return false
+            val workspace=task.document.optJSONObject("workspace_target")?.optString("workspace_id") ?: return false
+            return all.any { success -> success.name=="workspace_package_activate" && success.status==ToolCallStatus.COMPLETED &&
+                runCatching { val r=receipt(success)?.let(::JSONObject) ?: return@runCatching false
+                    r.optBoolean("activated") && r.optString("workspace_id")==workspace && database.loadComposableWorkspace(workspace)?.liveRevisionId==r.optString("revision_id")
+                }.getOrDefault(false) }
+        }
         if(call.name=="workspace_package_read_file" && call.status==ToolCallStatus.FAILED && call.error.orEmpty().startsWith("EMPTY_PACKAGE_DRAFT")) {
             val workspace=runCatching {JSONObject(call.argumentsJson).getString("workspace_id")}.getOrNull() ?: return false
             return all.drop(all.indexOf(call)+1).any {next -> next.name=="workspace_package_stage" && next.status==ToolCallStatus.COMPLETED && runCatching {val r=JSONObject(next.resultJson.orEmpty());r.optString("workspace_id")==workspace && r.optBoolean("structurally_valid")}.getOrDefault(false)}

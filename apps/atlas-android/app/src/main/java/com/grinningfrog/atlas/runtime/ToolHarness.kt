@@ -75,7 +75,7 @@ class ToolHarness(
         ),
         ToolDefinition(
             name = "capture_current_view",
-            description = "Capture a current camera observation when existing physical context is absent, stale, or lacks needed detail.",
+            description = "Capture the PHYSICAL CAMERA scene, never the phone screen or workspace UI. For app appearance use workspace_capture_view. A black camera frame says nothing about app rendering.",
             parametersJson = """{"type":"object","properties":{"reason":{"type":"string"},"detail":{"type":"boolean"}},"required":["reason"],"additionalProperties":false}""",
             risk = ToolRisk.READ_ONLY,
             maxCallsPerTurn = 3,
@@ -159,6 +159,9 @@ class ToolHarness(
         (discovery.localWorkResumed(turnId) && additionalTools.any { it.definition.name == name && it.supportsLocalMutation && it.definition.risk == ToolRisk.SESSION_WRITE })
 
     suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
+        val executionStore=ExecutionTaskStore(database)
+        val history=executionStore.forTurn(call.turnId)?.let {executionStore.calls(it.id)} ?: database.loadTurnToolCalls(call.turnId)
+        require(!ToolRetryPolicy.identicalDeterministicFailure(call,history)) { "IDENTICAL_RETRY_SUPPRESSED: Correct the arguments or report the blocker; identical deterministic failures persist across slices." }
         val arguments = JSONObject(call.argumentsJson)
         val researching = discovery.active(call.turnId)
         // Recheck at execution: a preceding call in this same batch may have declared a blocker.

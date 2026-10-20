@@ -56,6 +56,16 @@ class ExecutionTasksTest {
             if(required)store.control(t.id,ExecutionState.CANCELLED,"test complete")
         }
     }
+    @Test fun rejectedOptionalHandoffCannotPoisonDeliveredTask() {
+        val w=db.createComposableWorkspace("Delivered", "")
+        val t=task();val lease=store.claim(t.id,"owner")!!
+        store.bindWorkspace(store.currentTurn(t.id),w.id,"activation")
+        delivered(t,lease,w.id,w.liveRevisionId)
+        val handoff=call(t,"atlas_task_handoff_pixels", "{\"user_quote\":\"invented instruction\"}")
+        db.insertToolCall(handoff);db.updateToolCall(handoff.id,ToolCallStatus.FAILED,error="user_quote must quote the latest user instruction in this task")
+        assertEquals(ExecutionState.COMPLETED,store.finish(lease,SliceOutcome.RESPONDED,1)!!.state)
+        assertEquals(ToolCallStatus.FAILED,db.loadToolCall(handoff.id)!!.status)
+    }
     @Test fun captureFailureWithoutDeliveryOrWithOtherErrorRemainsBlocking() {
         for(error in listOf("WORKSPACE_NOT_OPEN","Workspace changed during screenshot capture; retry")) {
             val w=db.createComposableWorkspace("Capture", "")
