@@ -51,7 +51,15 @@ internal object WorkspaceLiveTools {
         override val supportsLocalMutation=true
         override val definition=ToolDefinition("workspace_accept_unverified", "Ask the user to confirm activating exact candidate bytes with selected behavior checks UNVERIFIED. Use only after the user requests manual testing or accepts uncertainty. Copy exact outstanding missing_criteria strings and quote their latest instruction. Always requires native confirmation; creates no passing test evidence and grants no permissions.",
             """{"type":"object","properties":{"workspace_id":{"type":"string"},"candidate_id":{"type":"string"},"navigation_sequence":{"type":"integer"},"criteria":{"type":"array","maxItems":17,"items":{"type":"string"}},"user_quote":{"type":"string","minLength":8,"maxLength":500}},"required":["workspace_id","candidate_id","navigation_sequence","criteria","user_quote"],"additionalProperties":false}""",ToolRisk.SESSION_WRITE,requiresConfirmation=true,maxCallsPerTurn=1)
-        override fun evaluate(session: AtlasSession, proposal: ToolCallProposal)=ToolPolicyDecision(true,true,ToolRisk.SESSION_WRITE,"Activate for manual testing with selected behavior UNVERIFIED. Approval is limited to the candidate and criteria shown in this proposal; it never grants device permissions.")
+        override fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision = try {
+            val a=JSONObject(proposal.argumentsJson)
+            val w=requireNotNull(db.loadComposableWorkspace(a.getString("workspace_id")))
+            require(w.realmId==session.workspaceId && w.id==session.activeComposableWorkspaceId && session.workspaceNavigationSequence==a.getLong("navigation_sequence"))
+            WorkspacePackageRepository(db).inspect(w.id,w.realmId,a.getString("candidate_id"))
+            val criteria=a.getJSONArray("criteria");require(criteria.length() in 1..17)
+            val summary=(0 until criteria.length()).joinToString("\n") { "• "+criteria.getString(it).take(200) }
+            ToolPolicyDecision(true,true,ToolRisk.SESSION_WRITE,"Activate '${w.name}' for your manual testing. These behaviors remain UNVERIFIED:\n$summary\nApproval applies only to this staged version and grants no device permissions.")
+        } catch(error:Exception) {ToolPolicyDecision(false,false,ToolRisk.SESSION_WRITE,"Invalid acceptance target or criteria; inspect the current task and candidate first.")}
         override fun executeLocal(call: AtlasToolCall): ToolExecutionResult {
             val args=JSONObject(call.argumentsJson)
             WorkspaceApplicationContract.exactKeys(args,setOf("workspace_id","candidate_id","navigation_sequence","criteria","user_quote"),setOf("workspace_id","candidate_id","navigation_sequence","criteria","user_quote"))
