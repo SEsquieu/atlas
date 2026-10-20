@@ -8,7 +8,7 @@ import org.json.JSONObject
 
 /** The primary application authoring path. No legacy definition interpreter is exposed here. */
 internal object WorkspaceLiveTools {
-    fun create(database: AtlasDatabase, context: Context): List<AtlasToolAdapter> = listOf(Create(database), Activate(database, context), Source(database), Run(database, WorkspaceWorkerSupervisor(context)))
+    fun create(database: AtlasDatabase, context: Context): List<AtlasToolAdapter> = listOf(Create(database), AcceptUnverified(database), Activate(database, context), Source(database), Run(database, WorkspaceWorkerSupervisor(context)))
     private abstract class Adapter(protected val db: AtlasDatabase) : AtlasToolAdapter {
         protected fun session(call: AtlasToolCall) = ExecutionTaskStore(db).workspaceSession(requireNotNull(db.loadSession(call.sessionId)), call.turnId)
         protected fun target(call: AtlasToolCall, args: JSONObject) {
@@ -47,6 +47,18 @@ internal object WorkspaceLiveTools {
             }
         }
     }
+    private class AcceptUnverified(db: AtlasDatabase) : Adapter(db), AtlasLocalMutationAdapter {
+        override val supportsLocalMutation=true
+        override val definition=ToolDefinition("workspace_accept_unverified", "Ask the user to confirm activating exact candidate bytes with selected behavior checks UNVERIFIED. Use only after the user requests manual testing or accepts uncertainty. Copy exact outstanding missing_criteria strings and quote their latest instruction. Always requires native confirmation; creates no passing test evidence and grants no permissions.",
+            """{"type":"object","properties":{"workspace_id":{"type":"string"},"candidate_id":{"type":"string"},"navigation_sequence":{"type":"integer"},"criteria":{"type":"array","maxItems":17,"items":{"type":"string"}},"user_quote":{"type":"string","minLength":8,"maxLength":500}},"required":["workspace_id","candidate_id","navigation_sequence","criteria","user_quote"],"additionalProperties":false}""",ToolRisk.SESSION_WRITE,requiresConfirmation=true,maxCallsPerTurn=1)
+        override fun evaluate(session: AtlasSession, proposal: ToolCallProposal)=ToolPolicyDecision(true,true,ToolRisk.SESSION_WRITE,"Activate for manual testing with selected behavior UNVERIFIED. Approval is limited to the candidate and criteria shown in this proposal; it never grants device permissions.")
+        override fun executeLocal(call: AtlasToolCall): ToolExecutionResult {
+            val args=JSONObject(call.argumentsJson)
+            WorkspaceApplicationContract.exactKeys(args,setOf("workspace_id","candidate_id","navigation_sequence","criteria","user_quote"),setOf("workspace_id","candidate_id","navigation_sequence","criteria","user_quote"))
+            target(call,args)
+            return ToolExecutionResult(ExecutionTaskStore(db).acceptUnverified(call,args.getString("candidate_id"),args.getJSONArray("criteria"),args.getString("user_quote")).toString())
+        }
+    }
     private class Activate(db: AtlasDatabase, private val context: Context) : Adapter(db), AtlasReceiptBackedAdapter {
         override val supportsLocalMutation = true
         override val definition = ToolDefinition("workspace_package_activate", "Activate the exact tested candidate after a host-owned startup check. check_id must be the passing pure_fixtures check_id from workspace_package_test, never the UI check ID. A separate passing UI check is found automatically for BLE packages. Reuse valid check IDs rather than rerunning unchanged tests. Requires task target and navigation_sequence. Preserves records for unchanged data_schema_version; nonempty legacy conversion and permission requests are rejected. Failed startup or stale data leaves the current revision untouched. Retrying the same candidate/check returns the durable activation receipt.",
@@ -59,9 +71,9 @@ internal object WorkspaceLiveTools {
             fun authorize() { target(call, a); lease?.let(execution::check) }
             authorize()
             val missing=execution.missingAcceptance(call.turnId,a.getString("candidate_id"))
-            if(missing.isNotEmpty())return ToolExecutionResult(JSONObject().put("ok",false).put("error","ACCEPTANCE_REQUIRED").put("missing_criteria",org.json.JSONArray(missing)).put("next_step","Run meaningful UI assertions with criterion labels for these declared behaviors; do not replace them with baseline capability checks.").toString())
+            if(missing.isNotEmpty())return ToolExecutionResult(JSONObject().put("ok",false).put("error","ACCEPTANCE_REQUIRED").put("missing_criteria",org.json.JSONArray(missing)).put("next_step","Run meaningful UI assertions. If the user explicitly requests manual testing, use workspace_accept_unverified for exact missing criteria and this candidate; native confirmation is required.").toString())
             val result = try { WorkspaceApplicationActivation(db).activate(context, a.getString("workspace_id"), session(call).workspaceId, a.getString("candidate_id"), a.getString("check_id"),
-                authorize = ::authorize, committed = { receipt -> execution.localOperation(call, lease) { ToolExecutionResult(receipt.toString()) } }) } catch(error: IllegalArgumentException) {
+                authorize = ::authorize, committed = { receipt -> receipt.put("user_accepted_unverified",execution.manualAcceptance(call.turnId,a.getString("candidate_id"))); execution.localOperation(call, lease) { ToolExecutionResult(receipt.toString()) } }) } catch(error: IllegalArgumentException) {
                 if(error.message!="CHECK_REQUIRED")throw error
                 val ids=org.json.JSONArray()
                 val candidate=WorkspacePackageRepository(db).inspect(a.getString("workspace_id"),session(call).workspaceId,a.getString("candidate_id"))
@@ -69,6 +81,8 @@ internal object WorkspaceLiveTools {
                     arrayOf(a.getString("workspace_id"),a.getString("candidate_id"),candidate.getString("content_hash"),candidate.getString("base_revision_id"),WorkspaceApplicationData(db).version(a.getString("workspace_id")).toString())).use {while(it.moveToNext())ids.put(it.getString(0))}
                 return ToolExecutionResult(JSONObject().put("ok",false).put("error","CHECK_REQUIRED").put("required_check_kind","pure_fixtures").put("supplied_check_id",a.getString("check_id")).put("valid_check_ids",ids).put("next_step",if(ids.length()>0) "Retry activation with an exact valid_check_ids entry; existing pure checks remain valid. UI checks are separate." else "Run workspace_package_test and use its passing check_id; UI checks are separate.").toString())
             }
+            val accepted=execution.manualAcceptance(call.turnId,a.getString("candidate_id"))
+            result.put("user_accepted_unverified",accepted)
             return ToolExecutionResult(result.toString())
         }
     }

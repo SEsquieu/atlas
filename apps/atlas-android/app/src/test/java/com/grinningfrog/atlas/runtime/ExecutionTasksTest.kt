@@ -56,6 +56,28 @@ class ExecutionTasksTest {
             if(required)store.control(t.id,ExecutionState.CANCELLED,"test complete")
         }
     }
+    @Test fun manualAcceptanceRequiresNativeApprovalAndDoesNotTransferToNewBytes() {
+        val w=db.createComposableWorkspace("Manual", "")
+        val t=task();store.claim(t.id,"owner")!!
+        val turn=store.currentTurn(t.id)
+        val criterion="Drag the graph point"
+        store.bindWorkspace(turn,w.id,"activation",org.json.JSONArray(listOf(criterion)))
+        val quote="Push the change so I can test it myself"
+        db.insertMessage(AtlasMessage(sessionId=session.id,turnId=turn,role=MessageRole.USER,content=quote,createdAtMs=clock))
+        val bundle=com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.example()
+        val repo=com.grinningfrog.atlas.workspace.application.WorkspacePackageRepository(db)
+        val candidate=repo.stage(w.id,w.realmId,w.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,turn).getString("candidate_id")
+        val proposed=call(t,"workspace_accept_unverified")
+        assertTrue(runCatching {store.acceptUnverified(proposed,candidate,org.json.JSONArray(listOf(criterion)),quote)}.isFailure)
+        val approved=proposed.copy(status=ToolCallStatus.APPROVED,requiresConfirmation=true)
+        assertTrue(runCatching {store.acceptUnverified(approved,candidate,org.json.JSONArray(listOf(criterion)),"invented approval")}.isFailure)
+        val receipt=store.acceptUnverified(approved,candidate,org.json.JSONArray(listOf(criterion)),quote)
+        assertFalse(receipt.getBoolean("tested"));assertTrue(store.missingAcceptance(turn,candidate).isEmpty())
+        bundle.getJSONObject("files").put("ui/extra.js","export const changed=true;")
+        val next=repo.stage(w.id,w.realmId,w.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,turn).getString("candidate_id")
+        assertEquals(listOf(criterion),store.missingAcceptance(turn,next))
+        assertEquals(1,ExecutionTaskStore(db).manualAcceptance(turn,candidate).length())
+    }
     @Test fun rejectedOptionalHandoffCannotPoisonDeliveredTask() {
         val w=db.createComposableWorkspace("Delivered", "")
         val t=task();val lease=store.claim(t.id,"owner")!!

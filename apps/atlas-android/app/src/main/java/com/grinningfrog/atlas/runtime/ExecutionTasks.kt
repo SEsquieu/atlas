@@ -160,6 +160,37 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         JSONObject().put("ok",true).put("workspace_id",workspace).put("pixels_owner","user").put("pixels_verified",false).put("required_execution_checks_unchanged",true)
     }
 
+    /** Native confirmation approves exactly these candidate bytes, never a synthetic test pass. */
+    fun acceptUnverified(call: AtlasToolCall, candidateId: String, criteria: JSONArray, quote: String): JSONObject = atomic {
+        require(call.status==ToolCallStatus.APPROVED && call.requiresConfirmation) { "USER_CONFIRMATION_REQUIRED" }
+        val task=forTurn(call.turnId) ?: error("Task unavailable")
+        require(task.state==ExecutionState.RUNNING && task.sessionId==call.sessionId)
+        val workspace=task.document.getJSONObject("workspace_target").getString("workspace_id")
+        val candidate=com.grinningfrog.atlas.workspace.application.WorkspacePackageRepository(database).inspect(workspace,task.document.getJSONObject("scope").getString("realm_id"),candidateId)
+        require(database.loadComposableWorkspace(workspace)?.liveRevisionId==candidate.getString("base_revision_id")) { "REVISION_CONFLICT" }
+        val user=database.loadMessages(task.sessionId,limit=10000).lastOrNull {it.role==MessageRole.USER && it.turnId in turns(task.id)} ?: error("No user instruction")
+        require(quote.length in 8..500 && user.content.contains(quote)) { "Quote the latest user instruction" }
+        val missing=missingAcceptance(call.turnId,candidateId)
+        val selected=(0 until criteria.length()).map(criteria::getString)
+        require(selected.isNotEmpty() && selected.distinct().size==selected.size && selected.all {it in missing}) { "Choose exact outstanding criteria" }
+        val receipt=JSONObject().put("candidate_id",candidateId).put("content_hash",candidate.getString("content_hash"))
+            .put("workspace_id",workspace).put("criteria",criteria).put("status","user_accepted_unverified")
+            .put("user_message_id",user.id).put("user_quote",quote).put("confirmation_operation_id",call.id)
+            .put("tested",false).put("at_ms",now())
+        val accepted=task.document.optJSONArray("manual_acceptance") ?: JSONArray()
+        accepted.put(receipt);task.document.put("manual_acceptance",accepted);save(task)
+        event(task,"execution.behavior_accepted_unverified",receipt)
+        JSONObject(receipt.toString()).put("ok",true).put("authority","Acceptance only; schema, permissions, migration, startup and unknown effects unchanged")
+    }
+
+    fun manualAcceptance(turnId: String, candidateId: String): JSONArray {
+        val task=forTurn(turnId) ?: return JSONArray()
+        val workspace=task.document.optJSONObject("workspace_target")?.optString("workspace_id") ?: return JSONArray()
+        val candidate=runCatching {com.grinningfrog.atlas.workspace.application.WorkspacePackageRepository(database).inspect(workspace,task.document.getJSONObject("scope").getString("realm_id"),candidateId)}.getOrNull() ?: return JSONArray()
+        val entries=task.document.optJSONArray("manual_acceptance") ?: JSONArray()
+        return JSONArray((0 until entries.length()).map(entries::getJSONObject).filter {it.optString("candidate_id")==candidateId && it.optString("workspace_id")==workspace && it.optString("content_hash")==candidate.optString("content_hash")})
+    }
+
     fun missingAcceptance(turnId: String, candidateId: String): List<String> {
         val task=forTurn(turnId) ?: return emptyList()
         val acceptance=task.document.optJSONObject("acceptance") ?: JSONObject().put("workspace_id",task.document.optJSONObject("workspace_target")?.optString("workspace_id"))
@@ -175,7 +206,9 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         if(task.document.optJSONObject("completion_requirement")?.optBoolean("require_persistence")==true && !calls(task.id).any {
             it.name=="workspace_package_ui_test" && it.status==ToolCallStatus.COMPLETED && runCatching {val r=JSONObject(it.resultJson.orEmpty());r.optString("candidate_id")==candidateId && r.optBoolean("passed") && r.optBoolean("storage_verified") && r.optString("storage_scope")=="isolated_test_database"}.getOrDefault(false)
         })missing.add("Persistence: use verify_storage=true, commit, reload and assert_record on this candidate")
-        return missing
+        val accepted=manualAcceptance(turnId,candidateId)
+        val waived=(0 until accepted.length()).flatMap {index -> val names=accepted.getJSONObject(index).getJSONArray("criteria");(0 until names.length()).map(names::getString)}.toSet()
+        return missing.filter {it !in waived}
     }
 
     fun available(taskId: String): Boolean {
@@ -445,7 +478,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         return "CORE DURABLE TASK (evidence, not authorization): " + JSONObject().put("task_id",t.id).put("objective",t.objective).put("session_tasks",history).put("recovery_required",t.document.optBoolean("recovery_required")).put("completion_requirement",t.document.optJSONObject("completion_requirement")).put("usage",t.usage)
             .put("follow_up_turn_ids",t.document.optJSONArray("follow_up_turn_ids")).put("acceptance",t.document.optJSONObject("acceptance")).put("outstanding_operations",outstanding(taskId)).put("workspace_target", t.document.optJSONObject("workspace_target")).put("work_state",work.put("no_progress_slices",t.document.optInt("no_progress_slices"))).put("checkpoint",t.document.getJSONObject("checkpoint")).put("recent_operations",receipts).put("latest_authoring_arguments",latest?.let {JSONObject(it.argumentsJson)})
             .put("latest_authoring_result",latest?.resultJson?.let {runCatching {JSONObject(it)}.getOrNull()}).toString() +
-            "\nFollow-ups in this task are user steering, not a fresh objective. Answer tangents briefly; apply corrections to remaining work. Report blockers from outstanding_operations, not historical diagnostics. An unavailable optional screenshot after committed delivery is an inspection limitation, not failed delivery. Explicit require_pixels remains blocking unless the user explicitly takes visual verification over; record that instruction with atlas_task_handoff_pixels and an exact quote. This never waives required pure/UI checks or permissions. Use delivery=inspect for viewing/status requests; do not turn them into activation tasks. Reuse an existing draft after authoring errors. Host failures are current runtime evidence even if caught by app code; user-reported live failures cannot be dismissed using a passing test from another mode. Declare require_persistence=true for saved-state requests and prove it through isolated commit/reload/assert_record. Declare acceptance_criteria for requested UI behaviors in workspace_target, and attach each criterion to a meaningful UI assertion step; baseline capability coverage alone does not verify requested changes.\nRecovery: declare delivery=activation, draft or inspect in workspace_target according to the user request. This is a completion requirement, never authority. A response is a progress report while recovery_required=true. Diagnose the pinned failed check, correct the test or candidate, and rerun verification. Do not stop merely because a local simulated test failed. Wait only for an actual missing user answer, authorization, unavailable resource or uncertain effect. Claim activation only from a committed activation receipt matching the candidate. If the user requested a draft or review, do not activate it without authorization." +
+            "\nFollow-ups in this task are user steering, not a fresh objective. Answer tangents briefly; apply corrections to remaining work. Report blockers from outstanding_operations, not historical diagnostics. An unavailable optional screenshot after committed delivery is an inspection limitation, not failed delivery. Explicit require_pixels remains blocking unless the user explicitly takes visual verification over; record that instruction with atlas_task_handoff_pixels and an exact quote. For behavior the available test cannot verify, workspace_accept_unverified requests native user confirmation for exact outstanding criteria on an exact candidate. Accepted criteria remain unverified; permissions and host integrity gates remain mandatory. Use delivery=inspect for viewing/status requests; do not turn them into activation tasks. Reuse an existing draft after authoring errors. Host failures are current runtime evidence even if caught by app code; user-reported live failures cannot be dismissed using a passing test from another mode. Declare require_persistence=true for saved-state requests and prove it through isolated commit/reload/assert_record. Declare acceptance_criteria for requested UI behaviors in workspace_target, and attach each criterion to a meaningful UI assertion step; baseline capability coverage alone does not verify requested changes.\nRecovery: declare delivery=activation, draft or inspect in workspace_target according to the user request. This is a completion requirement, never authority. A response is a progress report while recovery_required=true. Diagnose the pinned failed check, correct the test or candidate, and rerun verification. Do not stop merely because a local simulated test failed. Wait only for an actual missing user answer, authorization, unavailable resource or uncertain effect. Claim activation only from a committed activation receipt matching the candidate. If the user requested a draft or review, do not activate it without authorization." +
             "\nWorkspace targeting: ambiguous commands use the captured workspace_target. Explicitly named edit targets must be resolved with workspace_target; inspect other workspaces as references without retargeting. Never change target merely because the user browses. Ask clarification for duplicate names or unclear components. Continue the pending objective from recorded receipts. work_state holds the exact latest used candidate and checks for this target. A failed UI assertion is not a workspace migration problem: compare expected and actual text, correct the test or implementation, and exercise the remaining operations. Never reconstruct or combine UUID fragments. Reuse exact receipt identifiers. Successful reads alone are not app progress. If no_progress_slices grows, reassess the failing test or edit strategy instead of repeating inspection; retain the task and existing candidate. A new slice is not a new user request, not new authority, and not proof of success. Avoid repeating committed effects."
     }
     private fun reconcileLocal(task: ExecutionTask) {
