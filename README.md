@@ -209,3 +209,5 @@ Contributions are welcome under [`CONTRIBUTING.md`](./CONTRIBUTING.md) and requi
 ## License
 
 Atlas repository code and documentation are licensed under the [Apache License 2.0](./LICENSE) unless a file states otherwise. Dependencies retain their own licenses. The software license does not grant rights to official project identity or imply access to Atlas-operated services.
+
+Contributor work starts in the [active fix backlog](./docs/active-fixes.md); see the [workflow guide](./docs/contributor-workflow.md) for claims, PR evidence, and independent APK builds.

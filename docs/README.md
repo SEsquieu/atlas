@@ -60,3 +60,5 @@ Atlas is easiest to understand by following ownership from the persistent runtim
 - [Legacy Android/OpenClaw example](../examples/android-openclaw-basic/README.md) — retained adapter harness and contract tests, not current app setup.
 
 Documents describe the code that exists. A future direction is labeled as such; absence of a document is preferable to pretending that a subsystem has already shipped.
+
+Contributor work starts in the [active fix backlog](./active-fixes.md); see the [workflow guide](./contributor-workflow.md) for claims, PR evidence, and independent APK builds.
