@@ -992,7 +992,7 @@ class AtlasMobileRuntime(
             risk = policy.risk,
             requiresConfirmation = accepted && policy.requiresConfirmation,
             idempotencyKey = "$turnId:$step:$index:${proposal.name}",
-            reason = proposal.reason ?: policy.reason,
+            reason = if(proposal.name=="workspace_accept_unverified") policy.reason else proposal.reason ?: policy.reason,
             error = when {
                 !policy.allowed -> policy.reason
                 !withinBudget -> "Tool is not installed: ${proposal.name}"
