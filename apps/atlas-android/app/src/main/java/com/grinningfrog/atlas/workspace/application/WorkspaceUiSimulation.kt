@@ -41,9 +41,10 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
         require(steps.length() in 1..32)
         for(i in 0 until steps.length()) {
             val step=steps.getJSONObject(i)
+            WorkspaceUiStepSchema.normalize(step,i)
             WorkspaceApplicationContract.exactKeys(step,setOf("action","selector","value","criterion"),setOf("action","selector"))
             require(step.getString("action") in setOf("click","input","select","assert_text","wait_text","assert_value","assert_visible","assert_hidden","assert_absent","assert_count","reload","assert_record","set_checked","drag","drag_cancel","assert_attribute","assert_text_exact"))
-            if(step.has("criterion"))require(step.getString("criterion").trim().length in 1..200 && step.getString("action") in setOf("assert_text","wait_text","assert_value","assert_visible","assert_hidden","assert_absent","assert_count","assert_record","assert_attribute","assert_text_exact")) { "Criteria require an assertion, not merely a click/input" }
+            if(step.has("criterion"))require(step.getString("criterion").trim().length in 1..200 && step.getString("action") in setOf("assert_text","wait_text","assert_value","assert_visible","assert_hidden","assert_absent","assert_count","assert_record","assert_attribute","assert_text_exact")) { "steps[$i].criterion requires an assertion, not merely a click/input" }
             require(step.getString("selector").length in 0..128 && step.optString("value").length<=2000)
             if(step.getString("action")=="assert_attribute") {
                 val attribute=JSONObject(step.getString("value"))
@@ -51,7 +52,7 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
                 require(attribute.getString("name").matches(Regex("[A-Za-z][A-Za-z0-9_-]{0,63}")) && attribute.get("equals") is String) { "ATTRIBUTE_ASSERTION_INVALID" }
             }
             if(step.getString("action")=="set_checked")require(step.optString("value") in setOf("true","false")) { "set_checked value must be true or false" }
-            require(step.has("value") || step.getString("action") in setOf("click","reload","assert_visible","assert_hidden","assert_absent")) { "This action requires value" }
+            require(step.has("value") || step.getString("action") in setOf("click","reload","assert_visible","assert_hidden","assert_absent")) { "steps[$i].value is required for ${step.getString("action")}" }
         }
         val repository=WorkspacePackageRepository(database)
         val candidate=repository.inspect(workspaceId,realmId,candidateId)
