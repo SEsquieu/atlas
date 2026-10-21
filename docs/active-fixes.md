@@ -1,6 +1,6 @@
 # Active fixes
 
-Canonical repository work queue. Evidence: [alpha.28 assessment](./alpha28-live-assessment.md). Updated October 20, 2026. Implementation work is tracked below; phone verification remains separate.
+Canonical repository work queue. Evidence: [alpha.28 assessment](./alpha28-live-assessment.md). Updated October 21, 2026. Implementation work is tracked below; phone verification remains separate.
 
 Stable IDs never change or get reused. Status: **proposed** needs design; **ready** is bounded enough to implement; **in progress** links a claim/draft PR; **blocked** names a dependency; **implemented** links merged code but has outstanding acceptance; **verified** links all required evidence. Merged code and shipped builds are separate milestones. Keep verified entries with their resolution for traceability.
 
@@ -15,12 +15,12 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 | AF-005 | Make acceptance assertions prove requested behavior | implemented | [#42](https://github.com/SEsquieu/atlas/issues/42); [PR #37](https://github.com/SEsquieu/atlas/pull/37) |
 | AF-006 | Accept unverified behavior for an exact candidate | implemented | [#43](https://github.com/SEsquieu/atlas/issues/43); [PR #36](https://github.com/SEsquieu/atlas/pull/36) |
 | AF-007 | Support pointer dragging and classify test limitations | implemented | [#44](https://github.com/SEsquieu/atlas/issues/44); [PR #37](https://github.com/SEsquieu/atlas/pull/37) |
-| AF-008 | Cancel superseded validation without interrupting manual delivery | implemented; acceptance pending | [#46](https://github.com/SEsquieu/atlas/issues/46); [PR #56](https://github.com/SEsquieu/atlas/pull/56) |
+| AF-008 | Cancel superseded validation without interrupting manual delivery | verified | [#46](https://github.com/SEsquieu/atlas/issues/46); [PR #56](https://github.com/SEsquieu/atlas/pull/56) |
 | AF-009 | Bound hung UI checks and recover workspace rendering | verified | [#48](https://github.com/SEsquieu/atlas/issues/48); [PR #49](https://github.com/SEsquieu/atlas/pull/49) |
 | AF-010 | Keep blocker replies available and retire approval turns | implemented; phone verification pending | [#50](https://github.com/SEsquieu/atlas/issues/50); [PR #54](https://github.com/SEsquieu/atlas/pull/54) |
 | AF-011 | Resolve obsolete acceptance failures after matching delivery | implemented; phone verification pending | [#51](https://github.com/SEsquieu/atlas/issues/51); [PR #54](https://github.com/SEsquieu/atlas/pull/54) |
 | AF-012 | Return explicit expected and actual assertion counts | implemented; phone verification pending | [#52](https://github.com/SEsquieu/atlas/issues/52); [PR #54](https://github.com/SEsquieu/atlas/pull/54) |
-| AF-013 | Audit and reduce model-boundary schema and identity churn | partially implemented; open | [#53](https://github.com/SEsquieu/atlas/issues/53); [PR #55](https://github.com/SEsquieu/atlas/pull/55) |
+| AF-013 | Audit and reduce model-boundary schema and identity churn | implemented; phone benchmark pending | [#53](https://github.com/SEsquieu/atlas/issues/53); [PR #55](https://github.com/SEsquieu/atlas/pull/55), [PR #58](https://github.com/SEsquieu/atlas/pull/58) |
 
 ## AF-001: Reduce malformed package staging
 
@@ -87,13 +87,13 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 
 ## AF-008: Cancel superseded validation without interrupting manual delivery
 
-- Status: proposed. Tracking issue: #46.
+- Status: verified. Tracking issue: #46; implementation PR #56, operational evidence from PR #58 and the alpha.31 build.
 - Evidence: push and pull_request duplicate checks; device concurrency retains obsolete runs and queues newer qualification.
 - Acceptance: updates cancel/deduplicate stale validation, latest heads still receive required checks, and manual signed builds retain their exact source and are never cancelled by PR updates.
 - Constraints: preserve fork read-only validation and signing-secret isolation. Workflow scheduling only, separate from runtime behavior.
-- Resolution: none; proposed for the next workflow pass.
+- Resolution: superseded Android/device runs cancelled on PR update; current checks passed and manual dispatch remained independent. See alpha.31 release evidence.
 
-AF-005 implements stronger assertion tools and explicit evidence, not an independent semantic oracle. AF-004 clarifies evidence provenance; the reported open-workspace capture mismatch still needs live reproduction. AF-007 uses synthetic DOM input with simulated capture; native hit testing and physical touch require phone verification. All seven implementation issues remain open for their outstanding acceptance evidence.
+AF-005 implements stronger assertion tools and explicit evidence, not an independent semantic oracle. AF-004 clarifies evidence provenance; the reported open-workspace capture mismatch still needs live reproduction. AF-007 uses synthetic DOM input with simulated capture; native hit testing and physical touch require phone verification. Outstanding phone acceptance is tracked individually; AF-002/003 and AF-008 have completed their acceptance evidence.
 
 ## AF-009: Bound hung UI checks and recover workspace rendering
 
@@ -109,19 +109,19 @@ Final alpha.30 source 7b77046 passed Android unit/lint, signed build 39522593617
 
 ## AF-010–012: Alpha.30 follow-up
 
-Session ab31192d reproduced disabled text entry until pause/resume, an obsolete failed acceptance blocking delivered work, and a zero-count assertion misread as evidence of no path. Current work separates draft editing from submission gating, retires resolved authorization turns on continuation, scopes failed-acceptance supersession to the exact delivered candidate, and returns typed expected/actual counts. Unit and device checks are required before merge; phone acceptance remains separate. Unknown effects and other-candidate failures stay blockers.
+Session ab31192d reproduced disabled text entry until pause/resume, an obsolete failed acceptance blocking delivered work, and a zero-count assertion misread as evidence of no path. Current work separates draft editing from submission gating, retires resolved authorization turns on continuation, scopes failed-acceptance supersession to the exact delivered candidate, and returns typed expected/actual counts. Unit/lint and API 35/36 checks passed before merge; these fixes are delivered in alpha.31 and phone acceptance remains separate. Unknown effects and other-candidate failures stay blockers.
 
 ## AF-013: Model boundary audit
 
-Confirmed ChatGptPlanBackend serializes function tools with strict=false; OpenAiCompatibleBackend forwards parameters without a strict declaration. Workspace UI test values include JSON encoded inside strings. Do not globally enable strict mode until tool schemas have been made compatible and the transport is tested. Follow-up must measure first-attempt validity, model calls, cumulative input and elapsed activation time against fixed tasks. No measured latency improvement is claimed by AF-010–012.
+Confirmed ChatGptPlanBackend serializes function tools with strict=false; OpenAiCompatibleBackend forwards parameters without a strict declaration. Workspace UI tests accept native structured values and historical JSON strings. Do not globally enable strict mode until tool schemas have been made compatible and the transport is tested. Follow-up must measure first-attempt validity, model calls, cumulative input and elapsed activation time against fixed tasks. No measured latency improvement is claimed by AF-010–012.
 
 ### Alpha.30 follow-up resolution
 
 PR #54 resolves code defects tracked by #50–52: drafting remains available during active work, blocker replies can be submitted, resolved authorization turns retire without approving tools, exact delivered candidates supersede failed acceptance attempts, and count reports carry expected/actual values through checkpoints. Phone verification of these new changes remains pending; no new APK is implied by merging source.
 
-PR #55 provides enumerated UI action/assertion schema alternatives and native object-valued gesture/attribute/record inputs with historical string compatibility. #53 remains open for other schemas, identity binding, authorization evidence binding, context duplication and measured call/token/latency benchmarks. Provider strict mode is not enabled globally.
+PR #55 provides enumerated UI action/assertion schema alternatives and native object-valued gesture/attribute/record inputs with historical string compatibility. #58 implements the identity/evidence binding and context compaction follow-up and audits the remaining native JSON fields. #53 remains open for measured call/token/latency benchmarks. Provider strict mode is not enabled globally.
 
-PR #56 restricts push validation to main, retains PR validation including forks, cancels superseded same-ref validation and isolates manual dispatch by run ID with cancellation disabled. #46 remains open until live supersession and manual-delivery behavior have been observed together.
+PR #56 restricts push validation to main, retains PR validation including forks, cancels superseded same-ref validation and isolates manual dispatch by run ID with cancellation disabled. #46 is verified by observed PR supersession, independent manual dispatch, and successful signed alpha.31 delivery.
 
 Issues #39 and #40 were closed against their narrow alpha.30 phone evidence: activation succeeded without optional viewport pixels, and deterministic rejection suppression fired. The remaining failed acceptance and semantic/context churn were not hidden by those closures.
 
@@ -132,3 +132,5 @@ Automated follow-up evidence: PR #54 combined head passed Android run `395313158
 Omitted identifiers on stage/validate/test/UI-test/accept/activate resolve from the durable task target and latest successful staged candidate. Explicit identifiers are preserved for ordinary conflict checks; reference reads and explicit retargeting are unchanged. Base revisions and pure check IDs remain explicit. Native manual acceptance binds a user message ID before confirmation and rejects changed instructions. Action-specific schemas require applicable values and describe structured gesture/attribute/record fields. Existing source, input and execution-time bounds still apply.
 
 Byte-identical pinned source/contract reads retain the newest body and project older duplicates with audit references. Recent-operation summaries omit read bodies already represented by transcript and source inventory. Tests measure deterministic packet reduction; live model first-attempt validity, cumulative input/output tokens, calls and elapsed time still require the next fixed phone task. Global strict mode remains disabled because package file maps, record data and export inputs are dynamic; this build does not claim provider-enforced strict decoding.
+
+Alpha.31 delivery: PR #58 merged; signed main build `39534360360` delivered with matching provenance and persistent signing identity. Unit/lint, public readiness, and API 35/36 passed. AF-008 operational acceptance is recorded in the [alpha.31 notes](./releases/v0.1.0-alpha.31.md). AF-010–013 are included in this APK; phone acceptance and the fixed-task performance comparison remain pending.
