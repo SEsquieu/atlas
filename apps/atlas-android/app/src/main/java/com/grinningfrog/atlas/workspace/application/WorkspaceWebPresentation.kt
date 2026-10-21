@@ -28,6 +28,7 @@ class WorkspaceWebPresentation(
     private val files = JSONObject(bundle.getJSONObject("files").toString())
     private val policy = WorkspacePresentationPolicy(principal, bundle.getJSONObject("manifest").getString("entry"))
     @Volatile private var disposed = false
+    private val rendererGone = CompletableDeferred<Unit>()
     private var remainingMessages = 64
     private var messageWindow = android.os.SystemClock.elapsedRealtime()
     private val bridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -125,7 +126,7 @@ class WorkspaceWebPresentation(
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean = !policy.navigation(url)
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse = serve(request.url.toString(), request.method)
             override fun shouldInterceptRequest(view: WebView, url: String): WebResourceResponse = serve(url, "GET")
-            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean { dispose(); onFailure("Workspace renderer terminated"); return true }
+            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean { rendererGone.complete(Unit); dispose(); onFailure("Workspace renderer terminated"); return true }
         }
         WebViewCompat.setWebViewRenderProcessClient(view, object : WebViewRenderProcessClient() {
             override fun onRenderProcessUnresponsive(view: WebView, renderer: WebViewRenderProcess?) {
@@ -243,9 +244,12 @@ class WorkspaceWebPresentation(
     /** A coroutine timeout does not interrupt JavaScript. Terminate before destroying a stuck view.
      * Android can share renderers; every affected live surface receives onRenderProcessGone.
      */
-    fun terminateRenderer() {
+    suspend fun terminateRenderer() {
         if (!disposed && WebViewFeature.isFeatureSupported(WebViewFeature.WEB_VIEW_RENDERER_TERMINATE)) {
-            view.webViewRenderProcess?.terminate()
+            if(view.webViewRenderProcess?.terminate()==true) {
+                // Let Android retire the renderer before a following test opens a fresh surface.
+                withTimeoutOrNull(2_000) { rendererGone.await() }
+            }
         }
     }
     fun dispose(preserveDeviceConsent: Boolean = false) {
