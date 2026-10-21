@@ -23,7 +23,7 @@ object WorkspacePackageTools {
             if (context != null && android.os.Build.VERSION.SDK_INT >= 29) listOf(Test(database, WorkspaceWorkerSupervisor(context)), UiTest(database, context)) else emptyList()
     private const val INSPECT_SCHEMA = """{"type":"object","properties":{"workspace_id":{"type":"string"},"candidate_id":{"type":"string"}},"required":["workspace_id"],"additionalProperties":false}"""
     private val CANDIDATE_SCHEMA = JSONObject(INSPECT_SCHEMA).put("required", JSONArray(listOf("workspace_id", "candidate_id"))).toString()
-    private const val STAGE_SCHEMA = """{"type":"object","properties":{"workspace_id":{"type":"string"},"base_revision_id":{"type":"string"},"navigation_sequence":{"type":"integer"},"parent_candidate_id":{"type":"string"},"manifest":{"type":"object"},"files":{"type":"object"}},"required":["workspace_id","base_revision_id","navigation_sequence","files"],"additionalProperties":false}"""
+    private const val STAGE_SCHEMA = """{"type":"object","properties":{"workspace_id":{"type":"string"},"base_revision_id":{"type":"string"},"navigation_sequence":{"type":"integer"},"parent_candidate_id":{"type":"string"},"manifest":{"type":"object"},"files":{"type":"object"},"edits":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"path":{"type":"string"},"expected_sha256":{"type":"string"},"find":{"type":"string","minLength":1},"replace":{"type":"string"}},"required":["path","expected_sha256","find","replace"],"additionalProperties":false}}},"required":["workspace_id","base_revision_id","navigation_sequence"],"anyOf":[{"required":["files"]},{"required":["edits"]}],"additionalProperties":false}"""
 
     private class Contract(private val pureTesting: Boolean) : AtlasToolAdapter {
         override val supportsLocalDiagnostics = true
@@ -65,7 +65,7 @@ object WorkspacePackageTools {
     }
     private class Stage(database: AtlasDatabase) : Adapter(database), AtlasLocalMutationAdapter {
         override val supportsLocalMutation = true
-        override val definition = ToolDefinition("workspace_package_stage", "Stage immutable HTML/CSS/JS package files against the inspected task target, live base revision and optional parent candidate. files maps package paths to complete UTF-8 contents; null deletes a file. Example: files maps ui/app.js to its complete source. Keep source paths inside files. An empty draft first requires manifest. With no parent candidate, an installed package is copied from the inspected live base, so ordinary edits can supply only changed files. Staging is structural validation only: it runs no code, changes no grants and does not activate. Inspect workspace_package_contract for the current closed contract and a valid example first.", STAGE_SCHEMA, ToolRisk.SESSION_WRITE, maxCallsPerTurn = 8, maxArgumentBytes = 1_100_000)
+        override val definition = ToolDefinition("workspace_package_stage", "Stage immutable HTML/CSS/JS package files against the inspected task target, live base revision and optional parent candidate. For small edits prefer edits:[{path,expected_sha256,find,replace}], using the exact file hash from inspection and a unique literal preimage. One edit per file; conflicting paths, hashes or nonunique matches fail atomically. Read the full pinned file if you need its exact preimage. files maps package paths to complete UTF-8 contents; null deletes a file. Example: files maps ui/app.js to its complete source. Keep source paths inside files. An empty draft first requires manifest. With no parent candidate, an installed package is copied from the inspected live base, so ordinary edits can supply only changed files. Staging is structural validation only: it runs no code, changes no grants and does not activate. Inspect workspace_package_contract for the current closed contract and a valid example first.", STAGE_SCHEMA, ToolRisk.SESSION_WRITE, maxCallsPerTurn = 8, maxArgumentBytes = 1_100_000)
         override fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision {
             val base = super<Adapter>.evaluate(session, proposal)
             val args = runCatching { JSONObject(proposal.argumentsJson) }.getOrNull()
@@ -76,12 +76,12 @@ object WorkspacePackageTools {
             val session = session(call)
             require(evaluate(session, ToolCallProposal(call.id, call.name, call.argumentsJson)).allowed) { "TARGET_CONFLICT" }
             val args = WorkspaceStageArguments.normalize(JSONObject(call.argumentsJson))
-            val allowed=setOf("workspace_id","base_revision_id","navigation_sequence","parent_candidate_id","manifest","files")
-            val malformed=runCatching {WorkspaceApplicationContract.exactKeys(args,allowed,setOf("workspace_id","base_revision_id","navigation_sequence","files"))}.exceptionOrNull()
+            val allowed=setOf("workspace_id","base_revision_id","navigation_sequence","parent_candidate_id","manifest","files","edits")
+            val malformed=runCatching {WorkspaceApplicationContract.exactKeys(args,allowed,setOf("workspace_id","base_revision_id","navigation_sequence")); require(args.has("files") || args.has("edits")) { "Supply files or edits" }; require(!args.has("files") || args.opt("files") is JSONObject) { "files must be an object" }; require(!args.has("edits") || args.opt("edits") is JSONArray) { "edits must be an array" }}.exceptionOrNull()
             if(malformed!=null)return ToolExecutionResult(JSONObject().put("ok",false).put("error","STAGING_ARGUMENTS_INVALID").put("detail",malformed.message).put("allowed_top_level",JSONArray(allowed.toList())).put("recovery","Put capabilities and dependencies inside manifest. Put every file path inside files. Reuse this workspace and exact identifiers; an argument error is not an unavailable capability.").toString())
             return ToolExecutionResult(WorkspacePackageRepository(database).stage(args.getString("workspace_id"), session.workspaceId,
                 args.getString("base_revision_id"), args.optString("parent_candidate_id").takeIf { it.isNotBlank() }, args.optJSONObject("manifest"),
-                args.getJSONObject("files"), session.id, call.turnId).toString())
+                args.optJSONObject("files") ?: JSONObject(), session.id, call.turnId, args.optJSONArray("edits")).toString())
         }
     }
     private class Validate(database: AtlasDatabase) : Adapter(database) {

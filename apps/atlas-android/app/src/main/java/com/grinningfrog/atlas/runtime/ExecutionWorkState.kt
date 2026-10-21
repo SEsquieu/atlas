@@ -38,7 +38,12 @@ internal object ExecutionWorkState {
         val evidence = JSONArray()
         checks.groupBy { it.name }.values.forEach { group -> evidence.put(receipt(group.last())) }
         val activated = scoped.lastOrNull { it.name == "workspace_package_activate" && it.status == ToolCallStatus.COMPLETED && json(it.resultJson).optBoolean("activated") }
-        val changedFiles = stage?.let { json(it.argumentsJson).optJSONObject("files")?.keys()?.asSequence()?.sorted()?.toList() }.orEmpty()
+        val changedFiles = stage?.let {
+            val args = json(it.argumentsJson)
+            val files = args.optJSONObject("files")?.keys()?.asSequence()?.toList().orEmpty()
+            val edits = args.optJSONArray("edits")
+            (files + (0 until (edits?.length() ?: 0)).mapNotNull { index -> edits?.optJSONObject(index)?.optString("path")?.takeIf(String::isNotBlank) }).distinct().sorted()
+        }.orEmpty()
         val state = JSONObject().put("workspace_id", target).put("latest_candidate", candidate)
             .put("changed_files", JSONArray(changedFiles.take(128))).put("latest_checks", evidence)
             .put("activation", activated?.let(::receipt)).put("authority", "Evidence only; identifiers must still pass target, freshness and permission checks.")
@@ -64,6 +69,10 @@ internal object ExecutionWorkState {
                         when { result.has(key) -> put(key,result.get(key)); args.has(key) -> put(key,args.get(key)) }
                 })
             }
+        val untestedStages = scoped.asReversed().takeWhile { it.name !in setOf("workspace_package_test", "workspace_package_ui_test") }
+            .count { it.name == "workspace_package_stage" && it.status == ToolCallStatus.COMPLETED && json(it.resultJson).optBoolean("structurally_valid") }
+        state.put("consecutive_untested_stages", untestedStages)
+        if (untestedStages > 0) state.put("next_authoring_action", "Verify the retained candidate with pure/UI checks. executed=false is expected after staging, not a failure. Restage only for a specific identified source defect or new requested change; use exact-source edits for small changes. Broad user goals authorize choosing useful bounded improvements and concrete acceptance criteria; they do not require approval of every design decision. Report delivered changes from committed receipts, with remaining limitations.")
         state.put("source_reads",inventory).put("contract_already_read", calls.any { it.name == "workspace_package_contract" && it.status == ToolCallStatus.COMPLETED })
         state.put("inspection_guidance", "Reuse source ranges and contract already supplied in the transcript. Read only missing ranges or changed candidate content; re-read when evidence was omitted, stale or insufficient. Descriptions are user metadata; the installed contract and manifest define available capabilities.")
         // Meaningful frontier excludes reads and timestamps. Repeating a failed assertion or

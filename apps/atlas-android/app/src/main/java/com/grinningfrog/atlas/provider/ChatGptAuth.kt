@@ -271,6 +271,7 @@ class ChatGptAuthManager(
             id = ENDPOINT_ID, name = "ChatGPT plan", baseUrl = ChatGptOAuth.RESOURCE, model = credential.selectedModel,
             supportsVision = true, supportsTools = true, supportsStreaming = true, reasoningEnabled = true,
             timeoutMs = 120_000, kind = com.grinningfrog.atlas.model.ProviderKind.CHATGPT_PLAN,
+            reasoningEffort = settings.chatGptReasoningEffort(),
         )
     }
 

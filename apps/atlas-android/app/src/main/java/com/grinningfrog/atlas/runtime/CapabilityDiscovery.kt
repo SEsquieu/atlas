@@ -108,6 +108,25 @@ class CapabilityDiscovery(private val database: AtlasDatabase) {
         return all.firstOrNull { blockerId(it) == requested }
             ?: reject(call, "invalid_blocker", "Blocker must belong to this turn", "Use a blocker_id listed in current_blockers; do not reuse IDs from another turn.")
     }
+    internal fun providerResearch(turnId: String): JSONObject {
+        val turn = database.loadTurn(turnId) ?: return JSONObject().put("advertised", false)
+        val recent = database.loadRecentEvents(turn.sessionId, 500)
+        val response = recent.lastOrNull { it.type == "provider.responded" && runCatching { JSONObject(it.dataJson).optString("turnId") == turnId }.getOrDefault(false) }
+            ?.let { JSONObject(it.dataJson) } ?: return JSONObject().put("advertised", false)
+        val requestId = response.optString("requestId")
+        val endpoint = response.optString("endpointId")
+        val advertisement = recent.lastOrNull { event ->
+            if (event.type != "provider.http_diagnostic") false else runCatching {
+                val data = JSONObject(event.dataJson)
+                data.optString("turnId") == turnId && data.optString("phase") == "request" &&
+                    data.optString("request_id") == requestId && data.optString("endpoint_id") == endpoint
+            }.getOrDefault(false)
+        }?.let { JSONObject(it.dataJson) }
+        val advertised = advertisement?.optBoolean("hosted_search") == true
+        return JSONObject().put("advertised", advertised).put("request_id", requestId).put("endpoint_id", endpoint)
+            .put("tool", if (advertised) "web_search" else JSONObject.NULL)
+            .put("authority", "Availability advertisement only; no successful research or external access beyond existing read-only policy is implied")
+    }
     fun context(turnId: String): String? = events(turnId).takeIf { it.isNotEmpty() }?.let { history ->
         val selected = JSONArray(); var bytes = 0
         for ((type, original) in history.takeLast(30).asReversed()) {
@@ -116,7 +135,7 @@ class CapabilityDiscovery(private val database: AtlasDatabase) {
             val item=JSONObject().put("event",type).put("data",data);val size=item.toString().length
             if(bytes+size<=24000){selected.put(item);bytes+=size}
         }
-        "DISCOVERY AUDIT: model assessments are not authorization. Older immutable receipts remain recorded under this task; this context is bounded. " + selected.toString()
+        "PROVIDER RESEARCH: " + providerResearch(turnId).toString() + "\nDISCOVERY AUDIT: model assessments are not authorization. Older immutable receipts remain recorded under this task; this context is bounded. " + selected.toString()
     }
     private fun event(call: AtlasToolCall, type: String, data: JSONObject) {
         database.appendEvent(call.sessionId, type, data.put("turnId", call.turnId).put("toolCallId", call.id).put("read_only", true).put("authorization_granted", false))
@@ -188,7 +207,10 @@ class CapabilityDiscovery(private val database: AtlasDatabase) {
             }
             "no_candidate" -> { val blocker = targetBlocker(call, args); data.put("blocker_id", blockerId(blocker)).put("parent_blocker_id", blocker.opt("parent_blocker_id")).put("root_objective", blocker.optString("root_objective")); event(call, "capability.no_candidate", data) }
         }
-        return ToolExecutionResult(JSONObject().put("ok", true).put("recorded_stage", args.getString("stage")).put("blocker_id", data.opt("blocker_id")).put("parent_blocker_id", data.opt("parent_blocker_id")).put("root_objective", data.opt("root_objective")).put("authorization_granted", false).put("candidate_invoked", false).put("local_work_resumed", localWorkResumed(call.turnId)).toString())
+        val research = providerResearch(call.turnId)
+        return ToolExecutionResult(JSONObject().put("provider_research", research)
+            .put("next_step", if (research.optBoolean("advertised")) "Provider web_search is advertised independently of local adapters. If public research is needed, attempt it and report its actual result. An unattempted advertised tool is not an unavailable capability." else "Use recorded capabilities and actual provider outcomes; do not invent availability.")
+            .put("ok", true).put("recorded_stage", args.getString("stage")).put("blocker_id", data.opt("blocker_id")).put("parent_blocker_id", data.opt("parent_blocker_id")).put("root_objective", data.opt("root_objective")).put("authorization_granted", false).put("candidate_invoked", false).put("local_work_resumed", localWorkResumed(call.turnId)).toString())
     }
     fun searchAttempt(call: AtlasToolCall) = event(call, "capability.search_attempted", JSONObject().put("tool", call.name).put("research_id", call.id).put("blocker_id", currentBlockerId(call.turnId)).put("arguments", JSONObject(call.argumentsJson)))
     fun searchResult(call: AtlasToolCall, result: String?, error: String? = null) {

@@ -4,6 +4,14 @@ Notable user-visible changes will be recorded here. Atlas follows semantic versi
 
 ## Unreleased
 
+## 0.1.0-alpha.32 — test build preparation
+
+- Add a separate ChatGPT reasoning-effort selector (Provider default / Low / Medium / High) and export requested/reported effort, served model, reasoning tokens and cached input counts when supplied. Missing telemetry remains unknown.
+
+- Preserve passing non-BLE UI checks in activation evidence, including criterion and storage scope.
+- Support atomic hash/preimage-checked source edits and expose pending candidate verification across slices.
+- Describe actual provider-hosted research availability separately from local adapters.
+
 ## 0.1.0-alpha.31 — delivered test build
 
 - Signed build 39534360360 from main source f7e3874, version code 1326. Unit/lint, public readiness and API 35/36 device verification passed. APK/provenance delivered to App Builds.

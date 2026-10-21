@@ -294,6 +294,7 @@ data class ProviderEndpoint(
     val reasoningEnabled: Boolean = false,
     val promptProfile: PromptProfile = PromptProfile.AUTO,
     val kind: ProviderKind = ProviderKind.OPENAI_COMPATIBLE,
+    val reasoningEffort: String? = null,
 )
 
 data class RouteTable(
