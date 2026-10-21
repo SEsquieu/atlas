@@ -41,6 +41,7 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
         val version = data.version(workspaceId)
         val hash = candidate.getString("content_hash")
         var uiCheckId: String?=null
+        var uiEvidence: JSONObject? = null
         fun verify() {
             executionContext.ensureActive()
             authorize()
@@ -52,12 +53,18 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
                 require(row.moveToFirst() && row.getString(0) == hash && row.getString(1) == base && row.getLong(2) == version) { "CHECK_REQUIRED" }
             }
             val capabilities = WorkspaceCapabilityRegistry.requested(bundle.getJSONObject("manifest"))
-            if(capabilities.isNotEmpty()) database.readableDatabase.rawQuery("SELECT check_id,result_json FROM workspace_application_checks WHERE workspace_id=? AND candidate_id=? AND content_hash=? AND base_revision_id=? AND data_version=? AND kind='ui_simulation' AND passed=1 ORDER BY created_at DESC,check_id DESC LIMIT 1",arrayOf(workspaceId,candidateId,hash,base,version.toString())).use {
-                require(it.moveToFirst()) { "UI_SIMULATION_REQUIRED: run workspace_package_ui_test covering declared controls before activation" }
-                val evidence=JSONObject(it.getString(1))
-                require(evidence.optInt("verification_version") >= 2) { "UI_SIMULATION_REQUIRED: rerun workspace_package_ui_test; older checks did not verify successful operations and visible notification delivery" }
-                uiCheckId=it.getString(0)
+            uiCheckId = null
+            uiEvidence = null
+            database.readableDatabase.rawQuery("SELECT check_id,result_json FROM workspace_application_checks WHERE workspace_id=? AND candidate_id=? AND content_hash=? AND base_revision_id=? AND data_version=? AND kind='ui_simulation' AND passed=1 ORDER BY created_at DESC,check_id DESC LIMIT 1", arrayOf(workspaceId,candidateId,hash,base,version.toString())).use {
+                if (it.moveToFirst()) {
+                    val evidence = JSONObject(it.getString(1))
+                    if (evidence.optInt("verification_version") >= 2) {
+                        uiCheckId = it.getString(0)
+                        uiEvidence = evidence
+                    }
+                }
             }
+            require(capabilities.isEmpty() || uiCheckId != null) { "UI_SIMULATION_REQUIRED: run workspace_package_ui_test covering declared controls before activation" }
             val old = JSONObject(database.loadLiveWorkspaceRevision(workspaceId)!!.definitionJson)
             if (WorkspaceApplicationData.isApplication(old)) {
                 require(old.getJSONObject("manifest").getInt("data_schema_version") == bundle.getJSONObject("manifest").getInt("data_schema_version")) { "MIGRATION_REQUIRED" }
@@ -91,7 +98,11 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
             val receipt = JSONObject().put("workspace_id", workspaceId).put("candidate_id", candidateId).put("revision_id", revision).put("previous_revision_id", base)
                 .put("epoch", epoch).put("data_version", version).put("activated", true).put("still_active", true)
                 .put("ui_check_id",uiCheckId ?: JSONObject.NULL)
-                .put("evidence_scope", if(uiCheckId==null) "Pure fixtures and startup handshake only; UI interactions and save/resume remain unverified" else "Pure fixtures, DOM UI simulation and startup handshake; physical device effects, painted pixels and save/resume remain unverified")
+                .put("ui_evidence_status", if (uiCheckId == null) "no_matching_passing_check" else "passing_matching_check")
+                .put("verified_criteria", uiEvidence?.optJSONArray("verified_criteria") ?: org.json.JSONArray())
+                .put("storage_verified", uiEvidence?.optBoolean("storage_verified") == true)
+                .put("semantic_correctness_verified", false)
+                .put("evidence_scope", if(uiCheckId==null) "Pure fixtures and startup handshake only; UI interactions and save/resume remain unverified" else "Pure fixtures, matching DOM UI simulation and startup handshake. Only reported criteria/assertions were exercised. Storage is verified only when storage_verified=true; physical device effects, painted pixels and general semantic correctness remain unverified")
             insertOrThrow("workspace_application_activations", null, ContentValues().apply {
                 put("workspace_id", workspaceId); put("candidate_id", candidateId); put("check_id", checkId); put("result_json", receipt.toString()); put("created_at", now)
             })

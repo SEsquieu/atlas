@@ -136,7 +136,7 @@ internal object WorkspaceLiveTools {
             require(start == source.length || !source[start].isLowSurrogate()) { "Offset splits a surrogate pair" }
             var end = minOf(source.length, start + limit)
             if (end < source.length && end > start && source[end - 1].isHighSurrogate()) end--
-            return ToolExecutionResult(JSONObject().put("workspace_id", w.id).put("path", a.getString("path")).put("revision_id", if (a.has("candidate_id")) JSONObject.NULL else revision.id).put("candidate_id", a.optString("candidate_id").ifBlank { null }).put("source", source.substring(start, end)).put("start_char", start).put("next_char", if (end < source.length) end else JSONObject.NULL).put("total_chars", source.length).toString())
+            return ToolExecutionResult(JSONObject().put("workspace_id", w.id).put("path", a.getString("path")).put("revision_id", if (a.has("candidate_id")) JSONObject.NULL else revision.id).put("candidate_id", a.optString("candidate_id").ifBlank { null }).put("source_sha256", WorkspaceApplicationContract.hash(source)).put("source", source.substring(start, end)).put("start_char", start).put("next_char", if (end < source.length) end else JSONObject.NULL).put("total_chars", source.length).toString())
         }
     }
 }

@@ -51,7 +51,7 @@ class WorkspacePackageRepository(private val database: AtlasDatabase) {
 
     /** Entire file batch is validated before any row is inserted. Old candidates are never updated. */
     fun stage(workspaceId: String, realmId: String, baseRevisionId: String, parentCandidateId: String?, manifest: JSONObject?, changes: JSONObject,
-        sessionId: String, turnId: String): JSONObject = database.writeTransaction {
+        sessionId: String, turnId: String, edits: JSONArray? = null): JSONObject = database.writeTransaction {
         val db = this
         run {
             val workspace = owner(workspaceId, realmId)
@@ -70,11 +70,13 @@ class WorkspacePackageRepository(private val database: AtlasDatabase) {
             }
             manifest?.let { bundle.put("manifest", JSONObject(it.toString())) }
             val files = bundle.getJSONObject("files")
-            changes.keys().asSequence().forEach { path ->
+            val resolvedChanges = WorkspaceSourceEdits.changes(files, changes, edits)
+            require(resolvedChanges.length() <= WorkspaceApplicationContract.MAX_FILES) { "Too many file changes" }
+            resolvedChanges.keys().asSequence().forEach { path ->
                 require(WorkspaceApplicationContract.validPath(path)) { "Invalid package path: $path" }
-                if (changes.isNull(path)) files.remove(path) else {
-                    require(changes.get(path) is String) { "File changes must be string or null" }
-                    files.put(path, changes.getString(path))
+                if (resolvedChanges.isNull(path)) files.remove(path) else {
+                    require(resolvedChanges.get(path) is String) { "File changes must be string or null" }
+                    files.put(path, resolvedChanges.getString(path))
                 }
             }
             val errors = WorkspaceApplicationContract.validate(bundle)
@@ -93,7 +95,7 @@ class WorkspacePackageRepository(private val database: AtlasDatabase) {
                 put("source_session_id", sessionId); put("source_turn_id", turnId); put("created_at", System.currentTimeMillis())
             })
             JSONObject().put("workspace_id", workspaceId).put("candidate_id", candidate).put("content_hash", hash)
-                .put("structurally_valid", true).put("executed", false).put("activated", false).put("tests_run", 0)
+                .put("structurally_valid", true).put("executed", false).put("activated", false).put("tests_run", 0).put("next_step", "Verify this candidate with workspace_package_test and meaningful workspace_package_ui_test assertions. Do not restage merely because executed=false; stage again only for an identified source defect or requested change.")
         }
     }
 

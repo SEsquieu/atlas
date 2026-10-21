@@ -59,7 +59,7 @@ class ChatGptPlanBackend(
         while (true) {
             val token = auth.accessToken(forceRefresh = refreshed)
             val json = requestJson(endpoint, request, hostedSearch)
-            fun diagnostic(data: JSONObject) { runCatching { diagnosticSink(request, data.put("request_id", request.requestId).put("elapsed_ms", elapsedMs(started))) } }
+            fun diagnostic(data: JSONObject) { runCatching { diagnosticSink(request, data.put("endpoint_id", endpoint.id).put("request_id", request.requestId).put("elapsed_ms", elapsedMs(started))) } }
             diagnostic(ProviderHttpDiagnostics.request(json).put("phase", "request"))
             val call = client(endpoint).newCall(httpRequest(endpoint, token, request, json))
             val invalidation = auth.onSessionInvalidated(call::cancel)
@@ -202,7 +202,7 @@ class ChatGptPlanBackend(
         put("model", endpoint.model)
         put("store", false)
         put("stream", true)
-        if (!omitEmptyOptionalFields || request.systemPrompt.isNotBlank()) put("instructions", request.systemPrompt)
+        if (!omitEmptyOptionalFields || request.systemPrompt.isNotBlank()) put("instructions", request.systemPrompt + if (includeHostedSearch) "\nPROVIDER CAPABILITY: web_search is advertised as an authorized read-only research tool on this request, independently of local Atlas adapters. An unattempted tool is not an unavailable capability. Use it when current external research is needed; record actual denials or failures rather than assuming absence." else "")
         put("input", input(request))
         if (includeHostedSearch) put("include", JSONArray().put("web_search_call.action.sources"))
         if (!omitEmptyOptionalFields || includeHostedSearch || request.tools.isNotEmpty()) put("tools", JSONArray().apply {

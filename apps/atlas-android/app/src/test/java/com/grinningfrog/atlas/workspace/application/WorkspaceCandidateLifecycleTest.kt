@@ -56,6 +56,34 @@ class WorkspaceCandidateLifecycleTest {
         val principal = WorkspacePrincipal(c.getString("realm_id"), id, result.getString("revision_id"), "new-view", store.epoch(id), WorkspaceInstanceMode.FOREGROUND)
         assertTrue(store.query(principal, JSONObject().put("collection", "notes")).has("data_version"))
     }
+    @Test fun ordinaryActivationIncludesOnlyFreshMatchingUiEvidence() = runTest {
+        for (fresh in listOf(false, true)) {
+            val c = candidate(); val pure = checks(c)
+            val evidence = JSONObject().put("verification_version", 3).put("verified_criteria", org.json.JSONArray(listOf("control works"))).put("storage_verified", true)
+            db.writableDatabase.execSQL("INSERT INTO workspace_application_checks(check_id,workspace_id,candidate_id,content_hash,kind,passed,base_revision_id,data_version,result_json,created_at) VALUES(?,?,?,?,'ui_simulation',1,?,?,?,0)",
+                arrayOf("ordinary-$fresh", c.getString("workspace_id"), c.getString("candidate_id"), c.getString("content_hash"), pure.getString("base_revision_id"), if(fresh) 0 else 1, evidence.toString()))
+            val result = activate(c, pure) { _, _ -> true }
+            assertEquals(fresh, !result.isNull("ui_check_id"))
+            assertEquals(fresh, result.getBoolean("storage_verified"))
+            assertEquals(if(fresh) 1 else 0, result.getJSONArray("verified_criteria").length())
+            assertFalse(result.getBoolean("semantic_correctness_verified"))
+        }
+    }
+
+    @Test fun sourceEditStagesExactPreimageAndConflictLeavesNoCandidate() {
+        val c = candidate(); val id = c.getString("workspace_id"); val realm = c.getString("realm_id")
+        val repo = WorkspacePackageRepository(db)
+        val stored = repo.inspect(id, realm, c.getString("candidate_id"))
+        val source = stored.getJSONObject("bundle").getJSONObject("files").getString("ui/app.js")
+        val session = db.createSession("Edit", "Test", workspaceId=realm); val turn = db.createTurn(session.id, "user")
+        val edits = org.json.JSONArray().put(JSONObject().put("path", "ui/app.js").put("expected_sha256", WorkspaceApplicationContract.hash(source)).put("find", source).put("replace", source + "\n// changed"))
+        val next = repo.stage(id, realm, stored.getString("base_revision_id"), c.getString("candidate_id"), null, JSONObject(), session.id, turn.id, edits)
+        assertTrue(repo.inspect(id, realm, next.getString("candidate_id")).getJSONObject("bundle").getJSONObject("files").getString("ui/app.js").endsWith("// changed"))
+        val before = repo.inspect(id, realm).getJSONArray("candidates").length()
+        assertTrue(runCatching { repo.stage(id, realm, stored.getString("base_revision_id"), next.getString("candidate_id"), null, JSONObject(), session.id, turn.id, edits) }.exceptionOrNull()?.message?.startsWith("SOURCE_EDIT_CONFLICT") == true)
+        assertEquals(before, repo.inspect(id, realm).getJSONArray("candidates").length())
+    }
+
     @Test fun fixtureReceiptActivatesExactBytesAndSurvivesReopen() = runTest {
         val c = candidate(); val checked = checks(c)
         assertTrue(checked.toString(), checked.getBoolean("passed")); assertFalse(checked.getBoolean("activation_performed")); assertTrue(checked.getString("next_step").contains("workspace_package_activate"))

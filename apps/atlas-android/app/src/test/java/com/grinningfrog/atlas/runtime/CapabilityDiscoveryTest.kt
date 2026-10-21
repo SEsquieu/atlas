@@ -32,6 +32,19 @@ class CapabilityDiscoveryTest {
         db.updateSessionStatus(session.id, SessionStatus.ACTIVE)
         turn = db.createTurn(session.id, "user")
     }
+    @Test fun hostedAdvertisementIsBoundToLatestResponseAndActualRequest() {
+        val discovery = CapabilityDiscovery(db)
+        fun response(request: String, endpoint: String) = db.appendEvent(session.id, "provider.responded", JSONObject().put("turnId",turn.id).put("requestId", request).put("endpointId", endpoint))
+        fun advert(request: String, available: Boolean) = db.appendEvent(session.id, "provider.http_diagnostic", JSONObject().put("turnId", turn.id).put("request_id",request).put("endpoint_id","plan").put("phase","request").put("hosted_search",available))
+        advert("one",true); response("one","plan")
+        assertTrue(discovery.providerResearch(turn.id).getBoolean("advertised"))
+        advert("one",false)
+        assertFalse(discovery.providerResearch(turn.id).getBoolean("advertised"))
+        advert("two",true); response("two","plan")
+        assertTrue(discovery.providerResearch(turn.id).getBoolean("advertised"))
+        response("two","local")
+        assertFalse(discovery.providerResearch(turn.id).getBoolean("advertised"))
+    }
     @After fun cleanup() { db.close() }
     private fun adapter(name: String, risk: ToolRisk, research: Boolean = false, fail: Boolean = false) = object : AtlasToolAdapter {
         override val supportsCapabilityDiscovery = research
