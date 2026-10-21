@@ -1,2 +1,2 @@
-0.1.0-alpha.30
-Bound hung UI tests, retire stuck renderers, and preserve terminal cancellation evidence.
+0.1.0-alpha.31
+Bind task identifiers and approval evidence; reduce duplicate context and enforce action-specific UI schemas.

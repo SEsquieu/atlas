@@ -581,7 +581,7 @@ class AtlasMobileRuntime(
             }.toSet()
             if (suppressed.isNotEmpty()) database.appendEvent(session.id, "tool.retry_suppressed", JSONObject().put("turnId", turnId).put("tools", org.json.JSONArray(suppressed.toList())).put("reason", "Repeated deterministic rejection; current policy unchanged"))
             val request = baseRequest.copy(
-                tools = if (toolsAvailable) toolHarness.definitions.filter { it.name !in suppressed } else emptyList(),
+                tools = if (toolsAvailable) toolHarness.definitions.filter { it.name !in suppressed }.map(WorkspaceArgumentBinding::definition) else emptyList(),
                 systemPrompt = baseRequest.systemPrompt + if (suppressed.isEmpty()) "" else "\nCORE RETRY LIMIT: ${suppressed.joinToString()} repeatedly rejected. Do not repeat these calls. Correct a different control or report the unresolved blocker honestly; discovery resume_local only restores installed local mutations under ordinary policy.",
             )
             database.appendEvent(session.id, "context.assembled", JSONObject().apply {
@@ -973,8 +973,12 @@ class AtlasMobileRuntime(
     ): AtlasToolCall {
         require(proposal.id.isNotBlank()) { "Provider returned a tool call without an id" }
         require(priorCalls.none { it.id == proposal.id }) { "Provider reused tool-call id ${proposal.id}" }
-        val definition = toolHarness.definition(proposal.name)
-        val policy = toolHarness.evaluate(session, proposal)
+        val bound = executionTasks.bindWorkspaceArguments(turnId, proposal)
+        if (bound.argumentsJson != proposal.argumentsJson) database.appendEvent(session.id, "tool.arguments_bound",
+            JSONObject().put("toolCallId", proposal.id).put("tool", proposal.name)
+                .put("notice", "Missing identifiers and user evidence resolved from the durable task; canonical arguments are in the tool call audit."))
+        val definition = toolHarness.definition(bound.name)
+        val policy = toolHarness.evaluate(session, bound)
         val withinBudget = definition != null
         val accepted = policy.allowed && withinBudget
         val timestamp = System.currentTimeMillis()
@@ -983,7 +987,7 @@ class AtlasMobileRuntime(
             sessionId = session.id,
             turnId = turnId,
             name = proposal.name,
-            argumentsJson = proposal.argumentsJson,
+            argumentsJson = bound.argumentsJson,
             status = when {
                 !accepted -> ToolCallStatus.REJECTED
                 policy.requiresConfirmation -> ToolCallStatus.WAITING_FOR_CONFIRMATION

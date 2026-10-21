@@ -18,6 +18,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ContextAssemblerTest {
+    @Test fun identicalPinnedSourceIsSentOnceWhileProtocolAndAuditRemainIntact() {
+        val source = "const retainedSource = 1;".repeat(100)
+        val body = org.json.JSONObject().put("workspace_id", "w").put("revision_id", "r").put("path", "ui/app.js").put("content", source).toString()
+        val messages = (1..2).flatMap { n -> listOf(
+            message(n * 2L, "turn", MessageRole.ASSISTANT, "").copy(toolCallsJson =
+                """[{"id":"read-$n","name":"workspace_package_read_file","arguments":"{}"}]"""),
+            message(n * 2L + 1, "turn", MessageRole.TOOL, body, MessageKind.TOOL_RESULT).copy(toolCallId="read-$n")) }
+        val context = ContextAssembler().assemble(session(), messages, emptyList(), null, null, 1)
+        assertEquals(4, context.messages.size)
+        assertTrue(context.messages[1].content.contains("duplicate_of_message_id"))
+        assertEquals(body, context.messages[3].content)
+        assertEquals(body, messages[1].content)
+        assertTrue(context.messages.sumOf { it.content.length } < body.length * 2 - 1000)
+        val changed = messages.toMutableList().apply { this[3] = this[3].copy(content=body.replace("\"r\"", "\"r2\"")) }
+        val distinct = ContextAssembler().assemble(session(), changed, emptyList(), null, null, 1)
+        assertFalse(distinct.messages.any { it.content.contains("duplicate_of_message_id") })
+    }
+
     @Test fun discoveryPolicyIsSuppliedOnlyWhenCoreToolsAreAvailable() {
         val available = ContextAssembler().assemble(session(), emptyList(), emptyList(), null, null, 1, toolsAvailable = true)
         val unavailable = ContextAssembler().assemble(session(), emptyList(), emptyList(), null, null, 1, toolsAvailable = false)

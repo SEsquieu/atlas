@@ -126,3 +126,9 @@ PR #56 restricts push validation to main, retains PR validation including forks,
 Issues #39 and #40 were closed against their narrow alpha.30 phone evidence: activation succeeded without optional viewport pixels, and deterministic rejection suppression fired. The remaining failed acceptance and semantic/context churn were not hidden by those closures.
 
 Automated follow-up evidence: PR #54 combined head passed Android run `39531315814`, public-readiness `39531315848`, and API 35/36 device run `39531315767` after incorporating #55. PR #55 separately passed Android `39530255640` and device `39530255541`. PR #56 scheduling-only source passed Android `39530362220` and device `39530362306` before its base update; no Android runtime code is changed by that PR.
+
+## Alpha.31 authoring boundary follow-up (#53)
+
+Omitted identifiers on stage/validate/test/UI-test/accept/activate resolve from the durable task target and latest successful staged candidate. Explicit identifiers are preserved for ordinary conflict checks; reference reads and explicit retargeting are unchanged. Base revisions and pure check IDs remain explicit. Native manual acceptance binds a user message ID before confirmation and rejects changed instructions. Action-specific schemas require applicable values and describe structured gesture/attribute/record fields. Existing source, input and execution-time bounds still apply.
+
+Byte-identical pinned source/contract reads retain the newest body and project older duplicates with audit references. Recent-operation summaries omit read bodies already represented by transcript and source inventory. Tests measure deterministic packet reduction; live model first-attempt validity, cumulative input/output tokens, calls and elapsed time still require the next fixed phone task. Global strict mode remains disabled because package file maps, record data and export inputs are dynamic; this build does not claim provider-enforced strict decoding.

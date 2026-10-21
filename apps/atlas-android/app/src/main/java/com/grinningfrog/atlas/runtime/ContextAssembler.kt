@@ -45,7 +45,7 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
         archiveNotice: String? = null,
     ): AssembledContext {
         val eligible = compactPackageSource(messages.filter { it.kind != MessageKind.INTERNAL })
-        val protocolSafe = recoverReadContext(sanitizeToolProtocol(eligible))
+        val protocolSafe = recoverReadContext(compactDuplicateReads(sanitizeToolProtocol(eligible)))
         val selected = selectRecentMessages(protocolSafe)
         val memoryBlock = formatMemories(memories, nowMs)
         val system = buildString {
@@ -214,6 +214,28 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
             }
         }
         return projected
+    }
+
+    /** Keep the newest byte-identical pinned read, retaining every protocol pair and audit ID. */
+    private fun compactDuplicateReads(messages: List<AtlasMessage>): List<AtlasMessage> {
+        val calls = messages.flatMap { parseToolCalls(it.toolCallsJson) }.associateBy { it.id }
+        val newest = mutableMapOf<String, String>()
+        return messages.asReversed().map { message ->
+            val name = calls[message.toolCallId]?.name
+            if (message.role != MessageRole.TOOL || name !in setOf("workspace_package_read_file", "workspace_package_contract") ||
+                message.content.length < 1000 || message.providerContextJson != null) return@map message
+            val json = runCatching { JSONObject(message.content) }.getOrNull() ?: return@map message
+            if (json.has("error") || (json.has("ok") && !json.optBoolean("ok"))) return@map message
+            if (name == "workspace_package_read_file" &&
+                json.optString("revision_id").isBlank() && json.optString("candidate_id").isBlank()) return@map message
+            val hash = com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.hash(message.content)
+            val key = "$name:$hash"
+            val retained = newest.putIfAbsent(key, message.id) ?: return@map message
+            message.copy(content = JSONObject().put("context_projection", true).put("tool", name)
+                .put("duplicate_of_message_id", retained).put("original_sha256", hash)
+                .put("original_characters", message.content.length)
+                .put("notice", "Byte-identical read retained in the newer tool result in this packet. Original audit is unchanged; reread pinned source if unavailable.").toString())
+        }.asReversed()
     }
 
     /** Read results are disposable views, not the durable audit. Recover before the hard guard,

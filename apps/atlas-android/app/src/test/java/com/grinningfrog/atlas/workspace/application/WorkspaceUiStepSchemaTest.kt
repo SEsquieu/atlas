@@ -8,7 +8,7 @@ class WorkspaceUiStepSchemaTest {
     @Test fun modelSchemaSeparatesActionsFromAssertions() {
         val variants=WorkspaceUiStepSchema.parameters().getJSONObject("properties").getJSONObject("steps").getJSONObject("items").getJSONArray("anyOf")
         val action=variants.getJSONObject(0).getJSONObject("properties")
-        val assertion=variants.getJSONObject(1).getJSONObject("properties")
+        val assertion=variants.getJSONObject(7).getJSONObject("properties")
         assertFalse(action.has("criterion"));assertTrue(assertion.has("criterion"))
         assertTrue(action.getJSONObject("action").getJSONArray("enum").toString().contains("click"))
         assertFalse(action.getJSONObject("action").getJSONArray("enum").toString().contains("assert_count"))

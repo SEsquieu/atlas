@@ -4,12 +4,19 @@ Notable user-visible changes will be recorded here. Atlas follows semantic versi
 
 ## Unreleased
 
+## 0.1.0-alpha.31 — test build preparation
+
+- Bind omitted workspace/candidate/navigation identifiers from the durable task; preserve explicit conflicts and existing freshness checks.
+- Bind manual acceptance to the actual user message before native confirmation; reject a changed instruction at execution.
+- Advertise action-specific required values and structured drag/attribute/record schemas.
+- Send byte-identical pinned source reads once per packet and remove duplicate read bodies from task receipts; preserve the original audit.
+
 - Keep draft editing available during active work and allow replies during user-action blockers.
 - Retire resolved approval turns and stop obsolete failed acceptance attempts blocking exact delivered candidates.
 - Return explicit expected/actual UI assertion counts.
 - Advertise separate enumerated action/assertion schemas and accept native structured test values while retaining historical string compatibility.
 - Deduplicate validation and isolate manual APK workflows from superseded validation cancellation.
-- These source changes are not part of the delivered alpha.30 APK. Phone verification and broader schema/identity/context benchmarking remain tracked in the active-fixes queue.
+- Includes the merged blocker-input, obsolete-acceptance, count-evidence and CI scheduling fixes since alpha.30. Build delivery and phone verification are recorded separately. Live-model latency/token comparisons remain pending; no measured live speedup is claimed.
 
 ## 0.1.0-alpha.30 — delivered test build
 

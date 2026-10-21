@@ -56,6 +56,30 @@ class ExecutionTasksTest {
             if(required)store.control(t.id,ExecutionState.CANCELLED,"test complete")
         }
     }
+    @Test fun argumentBindingUsesTaskTargetAndDurableStageWithoutRepairingConflicts() {
+        val workspace = db.createComposableWorkspace("Bound", "")
+        val t = task(); val lease = store.claim(t.id, "owner")!!
+        val turn = store.currentTurn(t.id)
+        val sequence = store.bindWorkspace(turn, workspace.id, "activation")
+        val stage = call(t, "workspace_package_stage", JSONObject().put("workspace_id", workspace.id).toString())
+        db.insertToolCall(stage)
+        store.localOperation(stage, lease) { ToolExecutionResult("""{"candidate_id":"exact-candidate"}""") }
+        val user = AtlasMessage(sessionId=session.id, turnId=turn, role=MessageRole.USER, content="Test it", createdAtMs=clock)
+        db.insertMessage(user)
+        val bound = JSONObject(store.bindWorkspaceArguments(turn, ToolCallProposal("p", "workspace_accept_unverified", "{} ")).argumentsJson)
+        assertEquals(workspace.id, bound.getString("workspace_id"))
+        assertEquals("exact-candidate", bound.getString("candidate_id"))
+        assertEquals(sequence, bound.getLong("navigation_sequence"))
+        assertEquals(user.id, bound.getString("user_message_id"))
+        assertEquals(user.content, bound.getString("user_quote"))
+        val conflict = """{"workspace_id":"other","candidate_id":"explicit","navigation_sequence":-1}"""
+        assertEquals(conflict, store.bindWorkspaceArguments(turn, ToolCallProposal("p", "workspace_package_activate", conflict)).argumentsJson)
+        val explicit = JSONObject(store.bindWorkspaceArguments(turn, ToolCallProposal("p", "workspace_package_test", """{"candidate_id":"explicit"}""")).argumentsJson)
+        assertEquals("explicit", explicit.getString("candidate_id"))
+        val read = ToolCallProposal("p", "workspace_package_read_file", "{}")
+        assertEquals(read, store.bindWorkspaceArguments(turn, read))
+    }
+
     @Test fun manualAcceptanceRequiresNativeApprovalAndDoesNotTransferToNewBytes() {
         val w=db.createComposableWorkspace("Manual", "")
         val t=task();store.claim(t.id,"owner")!!
@@ -71,6 +95,8 @@ class ExecutionTasksTest {
         assertTrue(runCatching {store.acceptUnverified(proposed,candidate,org.json.JSONArray(listOf(criterion)),quote)}.isFailure)
         val approved=proposed.copy(status=ToolCallStatus.APPROVED,requiresConfirmation=true)
         assertTrue(runCatching {store.acceptUnverified(approved,candidate,org.json.JSONArray(listOf(criterion)),"invented approval")}.isFailure)
+        val stale = approved.copy(argumentsJson=JSONObject().put("user_message_id", "older-user-message").toString())
+        assertTrue(runCatching {store.acceptUnverified(stale,candidate,org.json.JSONArray(listOf(criterion)),quote)}.isFailure)
         val receipt=store.acceptUnverified(approved,candidate,org.json.JSONArray(listOf(criterion)),quote)
         assertFalse(receipt.getBoolean("tested"));assertTrue(store.missingAcceptance(turn,candidate).isEmpty())
         bundle.getJSONObject("files").put("ui/extra.js","export const changed=true;")
