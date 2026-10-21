@@ -4,7 +4,9 @@ Notable user-visible changes will be recorded here. Atlas follows semantic versi
 
 ## Unreleased
 
-## 0.1.0-alpha.32 — test build preparation
+## 0.1.0-alpha.32 — delivered test build
+
+- Signed main build 39673414889 from source 1466bea, version code 1333; APK/provenance verified and delivered to App Builds. Unit/lint, public readiness and API 35/36 checks passed.
 
 - Add a separate ChatGPT reasoning-effort selector (Provider default / Low / Medium / High) and export requested/reported effort, served model, reasoning tokens and cached input counts when supplied. Missing telemetry remains unknown.
 
