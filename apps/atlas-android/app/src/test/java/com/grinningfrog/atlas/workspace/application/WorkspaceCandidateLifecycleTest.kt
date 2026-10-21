@@ -59,7 +59,7 @@ class WorkspaceCandidateLifecycleTest {
     @Test fun ordinaryActivationIncludesOnlyFreshMatchingUiEvidence() = runTest {
         for (fresh in listOf(false, true)) {
             val c = candidate(); val pure = checks(c)
-            val evidence = JSONObject().put("verification_version", 3).put("verified_criteria", org.json.JSONArray(listOf("control works"))).put("storage_verified", true)
+            val evidence = JSONObject().put("base_revision_id", pure.getString("base_revision_id")).put("data_version", if(fresh) 0 else 1).put("passed", true).put("kind", "ui_simulation").put("verification_version", 3).put("verified_criteria", org.json.JSONArray(listOf("control works"))).put("storage_verified", true)
             db.writableDatabase.execSQL("INSERT INTO workspace_application_checks(check_id,workspace_id,candidate_id,content_hash,kind,passed,base_revision_id,data_version,result_json,created_at) VALUES(?,?,?,?,'ui_simulation',1,?,?,?,0)",
                 arrayOf("ordinary-$fresh", c.getString("workspace_id"), c.getString("candidate_id"), c.getString("content_hash"), pure.getString("base_revision_id"), if(fresh) 0 else 1, evidence.toString()))
             val result = activate(c, pure) { _, _ -> true }

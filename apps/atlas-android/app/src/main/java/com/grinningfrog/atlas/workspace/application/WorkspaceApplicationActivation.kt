@@ -55,16 +55,19 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
             val capabilities = WorkspaceCapabilityRegistry.requested(bundle.getJSONObject("manifest"))
             uiCheckId = null
             uiEvidence = null
-            database.readableDatabase.rawQuery("SELECT check_id,result_json FROM workspace_application_checks WHERE workspace_id=? AND candidate_id=? AND content_hash=? AND base_revision_id=? AND data_version=? AND kind='ui_simulation' AND passed=1 ORDER BY created_at DESC,check_id DESC LIMIT 1", arrayOf(workspaceId,candidateId,hash,base,version.toString())).use {
-                if (it.moveToFirst()) {
+            var obsoleteUiCheck = false
+            database.readableDatabase.rawQuery("SELECT check_id,result_json FROM workspace_application_checks WHERE workspace_id=? AND candidate_id=? AND content_hash=? AND base_revision_id=? AND data_version=? AND kind='ui_simulation' AND passed=1 ORDER BY created_at DESC,check_id DESC LIMIT 256", arrayOf(workspaceId,candidateId,hash,base,version.toString())).use {
+                while (it.moveToNext()) {
                     val evidence = JSONObject(it.getString(1))
                     if (evidence.optInt("verification_version") >= 2) {
                         uiCheckId = it.getString(0)
                         uiEvidence = evidence
+                        break
                     }
+                    obsoleteUiCheck = true
                 }
             }
-            require(capabilities.isEmpty() || uiCheckId != null) { "UI_SIMULATION_REQUIRED: run workspace_package_ui_test covering declared controls before activation" }
+            require(capabilities.isEmpty() || uiCheckId != null) { if (obsoleteUiCheck) "UI_SIMULATION_REQUIRED: rerun workspace_package_ui_test; older checks did not verify successful operations and visible notification delivery" else "UI_SIMULATION_REQUIRED: run workspace_package_ui_test covering declared controls before activation" }
             val old = JSONObject(database.loadLiveWorkspaceRevision(workspaceId)!!.definitionJson)
             if (WorkspaceApplicationData.isApplication(old)) {
                 require(old.getJSONObject("manifest").getInt("data_schema_version") == bundle.getJSONObject("manifest").getInt("data_schema_version")) { "MIGRATION_REQUIRED" }
