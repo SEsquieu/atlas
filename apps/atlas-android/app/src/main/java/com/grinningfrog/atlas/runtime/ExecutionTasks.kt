@@ -124,6 +124,10 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
     fun currentTurn(taskId: String) = turns(taskId).last()
     fun nextTurn(taskId: String): String = atomic {
         val task=get(taskId)!!; require(task.state==ExecutionState.READY)
+        val previous=database.loadTurn(currentTurn(taskId))
+        if(previous?.status==TurnStatus.WAITING_FOR_CONFIRMATION && pending(taskId).none {it.status==ToolCallStatus.WAITING_FOR_CONFIRMATION}) {
+            database.updateTurn(previous.id,TurnStatus.INTERRUPTED,error="Authorization resolved; execution transferred to continuation")
+        }
         val turn=database.createTurn(task.sessionId,"continuation")
         val ordinal=task.document.optInt("slice_count")+1; task.document.put("slice_count",ordinal); save(task);link(taskId,turn.id,ordinal)
         event(task,"execution.slice_created",JSONObject().put("turnId",turn.id).put("ordinal",ordinal));turn.id
@@ -349,6 +353,18 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
 
     /** Only discarded, side-effect-free candidate attempts can be superseded. Unknown outcomes never are. */
     private fun supersedingActivation(call: AtlasToolCall, all: List<AtlasToolCall>): AtlasToolCall? {
+        if(call.name=="workspace_accept_unverified" && call.status in setOf(ToolCallStatus.FAILED,ToolCallStatus.REJECTED)) {
+            val args=runCatching {JSONObject(call.argumentsJson)}.getOrNull() ?: return null
+            val workspace=args.optString("workspace_id").takeIf(String::isNotBlank) ?: return null
+            val candidate=args.optString("candidate_id").takeIf(String::isNotBlank) ?: return null
+            return all.drop(all.indexOf(call)+1).lastOrNull { success ->
+                success.name=="workspace_package_activate" && success.status==ToolCallStatus.COMPLETED &&
+                    runCatching {val r=receipt(success)?.let(::JSONObject) ?: return@runCatching false
+                        r.optBoolean("activated") && r.optString("workspace_id")==workspace && r.optString("candidate_id")==candidate &&
+                            database.loadComposableWorkspace(workspace)?.liveRevisionId==r.optString("revision_id")
+                    }.getOrDefault(false)
+            }
+        }
         if (call.name !in setOf("workspace_package_stage", "workspace_package_test", "workspace_package_ui_test", "workspace_package_validate") ||
             call.status !in setOf(ToolCallStatus.FAILED, ToolCallStatus.REJECTED, ToolCallStatus.COMPLETED)) return null
         val args = runCatching { JSONObject(call.argumentsJson) }.getOrNull() ?: return null

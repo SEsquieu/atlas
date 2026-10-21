@@ -330,6 +330,27 @@ class ExecutionTasksTest {
         assertEquals(25000L,result.usage.getLong("output_tokens"))
         assertTrue(db.loadMessages(session.id).isEmpty())
     }
+    @Test fun resolvedAuthorizationRetiresOldTurnWithoutExecutingApprovedCall() {
+        val t=task();val old=store.currentTurn(t.id)
+        val c=call(t);db.insertToolCall(c);db.updateToolCall(c.id,ToolCallStatus.APPROVED)
+        db.updateTurn(old,TurnStatus.WAITING_FOR_CONFIRMATION)
+        store.nextTurn(t.id)
+        assertEquals(TurnStatus.INTERRUPTED,db.loadTurn(old)!!.status)
+        assertEquals(ToolCallStatus.APPROVED,db.loadToolCall(c.id)!!.status)
+        assertNotEquals(old,db.loadActiveTurn(session.id)!!.id)
+    }
+    @Test fun matchingDeliverySupersedesFailedAcceptanceButNotAnotherCandidateOrUnknownOutcome() {
+        for(mode in listOf("matching","other_candidate","unknown")) {
+            val t=task(atomicTools=listOf("workspace_package_activate"));val lease=store.claim(t.id,"owner")!!
+            val w=db.createComposableWorkspace("Acceptance $mode", "")
+            val failed=call(t,"workspace_accept_unverified",JSONObject().put("workspace_id",w.id).put("candidate_id",if(mode=="other_candidate")"different" else "candidate").toString())
+            db.insertToolCall(failed);db.updateToolCall(failed.id,if(mode=="unknown")ToolCallStatus.UNKNOWN else ToolCallStatus.FAILED,error="Quote invalid")
+            delivered(t,lease,w.id,w.liveRevisionId)
+            val result=store.finish(lease,SliceOutcome.RESPONDED,1)!!
+            assertEquals(mode,if(mode=="matching")ExecutionState.COMPLETED else ExecutionState.WAITING,result.state)
+            assertEquals(mode,if(mode=="matching")1 else 0,result.document.getJSONObject("checkpoint").getJSONArray("resolved_operations").length())
+        }
+    }
     @Test fun committedActivationSupersedesOnlyCandidateFailuresForItsWorkspaceAndBase() {
         val t=task(atomicTools=listOf("workspace_package_activate"));val lease=store.claim(t.id,"owner")!!
         val w=db.createComposableWorkspace("App", "")
