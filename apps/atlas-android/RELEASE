@@ -1,2 +1,2 @@
-0.1.0-alpha.29
-Reduce authoring churn, support candidate-scoped manual acceptance, and verify pointer gestures.
+0.1.0-alpha.30
+Bound hung UI tests, retire stuck renderers, and preserve terminal cancellation evidence.

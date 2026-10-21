@@ -245,7 +245,7 @@ class WorkspaceWebPresentation(
      * Android can share renderers; every affected live surface receives onRenderProcessGone.
      */
     suspend fun terminateRenderer() {
-        if (!disposed && WebViewFeature.isFeatureSupported(WebViewFeature.WEB_VIEW_RENDERER_TERMINATE)) {
+        if (!disposed && android.os.Build.VERSION.SDK_INT >= 29 && WebViewFeature.isFeatureSupported(WebViewFeature.WEB_VIEW_RENDERER_TERMINATE)) {
             if(view.webViewRenderProcess?.terminate()==true) {
                 // Let Android retire the renderer before a following test opens a fresh surface.
                 withTimeoutOrNull(2_000) { rendererGone.await() }

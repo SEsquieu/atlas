@@ -379,7 +379,7 @@ class WorkspaceDeviceTest {
     @Test fun hungCandidateHasTerminalEvidenceAndFreshSurfaceRecovers() = runBlocking {
         val db=(context.applicationContext as AtlasApplication).database
         val session=db.createSession("Hung UI recovery","test");val turn=db.createTurn(session.id,"user")
-        val w=db.createComposableWorkspace("Hung candidate", "", "{}")
+        val w=db.createComposableWorkspace("Hung candidate", "")
         val existingBundle=WorkspaceApplicationContract.example()
         val existing=db.createComposableWorkspace("Existing healthy application", "", existingBundle.toString())
         val existingRevision=existing.liveRevisionId
