@@ -1018,6 +1018,13 @@ class AtlasMobileRuntime(
             recordToolResult(call, result.resultJson)
             return result.observation
         } catch (cancelled: CancellationException) {
+            val result=JSONObject().put("ok",false).put("cancelled",true)
+                .put("error","Execution cancelled; no successful completion was recorded").toString()
+            if(database.loadToolCall(call.id)?.status == ToolCallStatus.RUNNING) {
+                database.updateToolCall(call.id, if(call.risk == com.grinningfrog.atlas.model.ToolRisk.EXTERNAL_EFFECT) ToolCallStatus.UNKNOWN else ToolCallStatus.FAILED,
+                    resultJson=result,error="Execution cancelled")
+            }
+            database.appendEvent(call.sessionId,"tool.cancelled",JSONObject().put("tool",call.name).put("toolCallId",call.id))
             throw cancelled
         } catch (error: Exception) {
             val result = ToolFailurePayload.json(error, error.safeMessage()).toString()

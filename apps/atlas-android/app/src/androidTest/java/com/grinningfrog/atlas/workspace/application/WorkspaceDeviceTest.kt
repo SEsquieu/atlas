@@ -376,6 +376,40 @@ class WorkspaceDeviceTest {
         } finally {db.deleteComposableWorkspace(w.id)}
     }
 
+    @Test fun hungCandidateHasTerminalEvidenceAndFreshSurfaceRecovers() = runBlocking {
+        val db=(context.applicationContext as AtlasApplication).database
+        val session=db.createSession("Hung UI recovery","test");val turn=db.createTurn(session.id,"user")
+        val w=db.createComposableWorkspace("Hung candidate", "")
+        val existingBundle=WorkspaceApplicationContract.example()
+        val existing=db.createComposableWorkspace("Existing healthy application", "", existingBundle.toString())
+        val existingRevision=existing.liveRevisionId
+        try {
+            val bundle=WorkspaceApplicationContract.example()
+            bundle.getJSONObject("files").put("ui/index.html","<!doctype html><html><body><button id=go>Generate</button><p id=status>Ready</p><script type=module src=./app.js></script></body></html>")
+            bundle.getJSONObject("files").put("ui/app.js","import {host} from '/atlas/host.js';document.querySelector('#go').onclick=()=>{while(true){}};await host.ready();")
+            val repo=WorkspacePackageRepository(db)
+            val bad=repo.stage(w.id,w.realmId,w.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,turn.id)
+            val steps=JSONArray().put(JSONObject().put("action","click").put("selector","#go"))
+            val result=withTimeout(15_000) {WorkspaceUiSimulation(context,db).test(w.id,w.realmId,bad.getString("candidate_id"),steps)}
+            assertFalse(result.toString(),result.getBoolean("passed"))
+            assertTrue(result.toString(),result.getString("failure_kind") in setOf("execution_timeout","renderer_failure"))
+            assertEquals("#go",result.getJSONArray("steps").getJSONObject(0).getString("selector"))
+            assertEquals(w.liveRevisionId,db.loadComposableWorkspace(w.id)!!.liveRevisionId)
+            val repeated=WorkspaceUiSimulation(context,db).test(w.id,w.realmId,bad.getString("candidate_id"),JSONArray().put(JSONObject().put("action","assert_visible").put("selector","#status")))
+            assertTrue(repeated.toString(),repeated.getBoolean("retry_suppressed"))
+            bundle.getJSONObject("files").put("ui/app.js","import {host} from '/atlas/host.js';document.querySelector('#go').onclick=()=>document.querySelector('#status').textContent='Recovered';await host.ready();")
+            val fixed=repo.stage(w.id,w.realmId,w.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,turn.id)
+            val healthy=withTimeout(15_000) {WorkspaceUiSimulation(context,db).test(w.id,w.realmId,fixed.getString("candidate_id"),JSONArray().put(JSONObject().put("action","click").put("selector","#go")).put(JSONObject().put("action","assert_text_exact").put("selector","#status").put("value","Recovered")))}
+            assertTrue(healthy.toString(),healthy.getBoolean("passed"))
+            val principal=WorkspacePrincipal("test",existing.id,existingRevision,UUID.randomUUID().toString(),1,WorkspaceInstanceMode.PREVIEW)
+            surface(existingBundle,principal) { presentation ->
+                assertTrue(presentation.diagnostics().getBoolean("ready"))
+                assertEquals("\"alive\"",evaluate(presentation,"'alive'"))
+            }
+            assertEquals(existingRevision,db.loadComposableWorkspace(existing.id)!!.liveRevisionId)
+        } finally {db.deleteComposableWorkspace(w.id);db.deleteComposableWorkspace(existing.id)}
+    }
+
     @Test fun svgPointerDragAndCancellationHaveIndependentBehaviorAssertions() = runBlocking {
         val db=(context.applicationContext as AtlasApplication).database
         val session=db.createSession("Pointer simulation","Verify graph interaction")
