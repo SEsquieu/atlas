@@ -21,6 +21,9 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 | AF-011 | Resolve obsolete acceptance failures after matching delivery | implemented; phone verification pending | [#51](https://github.com/SEsquieu/atlas/issues/51); [PR #54](https://github.com/SEsquieu/atlas/pull/54) |
 | AF-012 | Return explicit expected and actual assertion counts | implemented; phone verification pending | [#52](https://github.com/SEsquieu/atlas/issues/52); [PR #54](https://github.com/SEsquieu/atlas/pull/54) |
 | AF-013 | Audit and reduce model-boundary schema and identity churn | implemented; phone benchmark pending | [#53](https://github.com/SEsquieu/atlas/issues/53); [PR #55](https://github.com/SEsquieu/atlas/pull/55), [PR #58](https://github.com/SEsquieu/atlas/pull/58) |
+| AF-014 | Reduce untested candidate rewrites with exact source edits | implemented; phone benchmark pending | [#60](https://github.com/SEsquieu/atlas/issues/60); [PR #63](https://github.com/SEsquieu/atlas/pull/63) |
+| AF-015 | Include matching non-BLE UI activation evidence | implemented; phone verification pending | [#61](https://github.com/SEsquieu/atlas/issues/61); [PR #63](https://github.com/SEsquieu/atlas/pull/63) |
+| AF-016 | Distinguish hosted research from missing local adapters | implemented; phone verification pending | [#62](https://github.com/SEsquieu/atlas/issues/62); [PR #63](https://github.com/SEsquieu/atlas/pull/63) |
 
 ## AF-001: Reduce malformed package staging
 
@@ -138,3 +141,5 @@ Alpha.31 delivery: PR #58 merged; signed main build `39534360360` delivered with
 ## Alpha.32 follow-up: #60–62 and reasoning observability
 
 PR #63 implements exact hash/preimage-checked stage edits, pending verification guidance, matching non-BLE UI activation evidence, and request-bound hosted search availability. Phone performance and broad-goal decision quality remain separate acceptance in #53. Alpha.32 adds an explicit ChatGPT effort selector and optional provider reasoning/cache telemetry; the on-device thinking checkbox does not control ChatGPT. See the [alpha.32 test cycle](./releases/v0.1.0-alpha.32.md).
+
+Alpha.32 delivery: PR #63 merged; signed main source `1466bea`, run `39673414889`, version code `1333`. APK/provenance hashes, signing identity and Drive metadata were verified. Issues #60–62 are closed against implemented code and automated regression evidence; #53 retains phone benchmarks and broad-goal decision quality. The ChatGPT effort selector is independent of the on-device thinking checkbox and defaults to the provider's choice until explicitly changed. See the alpha.32 release notes for the two-round autonomy test.

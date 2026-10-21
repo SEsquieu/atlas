@@ -45,9 +45,9 @@ Changing from an on-device model to a LAN server or cloud API changes a capabili
 
 ## Current alpha
 
-The latest delivered Android test build is **0.1.0-alpha.31**. Main may contain later unreleased fixes; APK generation is a separate manual workflow. Atlas can author contained HTML/CSS/JavaScript workspace apps during a session, retain their data, and continue durable tasks across bounded execution slices. This remains an experimental alpha: automated checks do not guarantee that a generated app satisfies a live user request.
+The latest delivered Android test build is **0.1.0-alpha.32**. Main may contain later unreleased fixes; APK generation is a separate manual workflow. Atlas can author contained HTML/CSS/JavaScript workspace apps during a session, retain their data, and continue durable tasks across bounded execution slices. This remains an experimental alpha: automated checks do not guarantee that a generated app satisfies a live user request.
 
-Alpha.31 includes blocker-input reconciliation, explicit assertion counts, task-bound authoring identifiers and approval evidence, action-specific UI schemas, and reduced duplicate read context. Unit/lint and API 35/36 device checks passed; phone verification and live token/latency comparisons remain pending. Alpha.30 phone testing confirmed MazeGen and the existing workspaces worked. See the [alpha.31 notes](./docs/releases/v0.1.0-alpha.31.md), [active fixes](./docs/active-fixes.md), and [alpha.30 notes](./docs/releases/v0.1.0-alpha.30.md).
+Alpha.32 adds atomic exact-source edits, explicit pending-verification guidance, matching UI activation evidence, hosted-search availability evidence, and a separate ChatGPT reasoning-effort selector with optional reasoning/cache telemetry. Unit/lint and API 35/36 checks passed. Broad-goal phone testing and live performance comparisons remain pending. See the [alpha.32 notes and test cycle](./docs/releases/v0.1.0-alpha.32.md), [active fixes](./docs/active-fixes.md), and [alpha.31 notes](./docs/releases/v0.1.0-alpha.31.md).
 
 See the [current implementation and verification status](./docs/current-status.md) for supported behavior, evidence, limitations, and distribution details.
 
