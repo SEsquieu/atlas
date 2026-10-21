@@ -38,7 +38,12 @@ internal object ExecutionWorkState {
         val evidence = JSONArray()
         checks.groupBy { it.name }.values.forEach { group -> evidence.put(receipt(group.last())) }
         val activated = scoped.lastOrNull { it.name == "workspace_package_activate" && it.status == ToolCallStatus.COMPLETED && json(it.resultJson).optBoolean("activated") }
-        val changedFiles = stage?.let { json(it.argumentsJson).optJSONObject("files")?.keys()?.asSequence()?.sorted()?.toList() }.orEmpty()
+        val changedFiles = stage?.let {
+            val args = json(it.argumentsJson)
+            val files = args.optJSONObject("files")?.keys()?.asSequence()?.toList().orEmpty()
+            val edits = args.optJSONArray("edits")
+            (files + (0 until (edits?.length() ?: 0)).mapNotNull { index -> edits?.optJSONObject(index)?.optString("path")?.takeIf(String::isNotBlank) }).distinct().sorted()
+        }.orEmpty()
         val state = JSONObject().put("workspace_id", target).put("latest_candidate", candidate)
             .put("changed_files", JSONArray(changedFiles.take(128))).put("latest_checks", evidence)
             .put("activation", activated?.let(::receipt)).put("authority", "Evidence only; identifiers must still pass target, freshness and permission checks.")
