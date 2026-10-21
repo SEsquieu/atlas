@@ -17,6 +17,7 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 | AF-007 | Support pointer dragging and classify test limitations | implemented | [#44](https://github.com/SEsquieu/atlas/issues/44); [PR #37](https://github.com/SEsquieu/atlas/pull/37) |
 
 | AF-008 | Cancel superseded validation without interrupting manual delivery | proposed | [#46](https://github.com/SEsquieu/atlas/issues/46) |
+| AF-009 | Bound hung UI checks and recover workspace rendering | in progress | [#48](https://github.com/SEsquieu/atlas/issues/48) |
 
 ## AF-001: Reduce malformed package staging
 
@@ -90,3 +91,11 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 - Resolution: none; proposed for the next workflow pass.
 
 AF-005 implements stronger assertion tools and explicit evidence, not an independent semantic oracle. AF-004 clarifies evidence provenance; the reported open-workspace capture mismatch still needs live reproduction. AF-007 uses synthetic DOM input with simulated capture; native hit testing and physical touch require phone verification. All seven implementation issues remain open for their outstanding acceptance evidence.
+
+## AF-009: Bound hung UI checks and recover workspace rendering
+
+- Status: in progress; not included in alpha.29.
+- Evidence: Maze generation UI could leave its exit unreachable and loop forever tracing the route. A separate pure fixture passed; it did not execute the UI algorithm. Repeated UI calls lacked terminal results. Other live-workspace failures are user reported; shared renderer involvement remains to be confirmed on the phone.
+- Scope: per-evaluation and total deadlines, active-step failure receipts, renderer interruption before disposal, content-hash suppression after execution timeout, and terminal cancellation bookkeeping without overwriting committed receipts.
+- Validation: device regression exercises a synchronous infinite-loop click, suppression despite changed test steps, corrected source and reopening an existing healthy application's surface. CI pending; local Gradle distribution download is unavailable. No physical-device recovery or semantic correctness claim.
+- Constraint: WebView renderers may be shared; termination can invalidate other surfaces. Their stored packages and records must be preserved. This is recovery, not process isolation.

@@ -240,6 +240,14 @@ class WorkspaceWebPresentation(
 
     fun loadAttached() { if (!disposed && view.isAttachedToWindow && view.width > 0 && view.height > 0) load() }
     fun load() { check(!disposed); view.loadUrl(policy.entryUrl) }
+    /** A coroutine timeout does not interrupt JavaScript. Terminate before destroying a stuck view.
+     * Android can share renderers; every affected live surface receives onRenderProcessGone.
+     */
+    fun terminateRenderer() {
+        if (!disposed && WebViewFeature.isFeatureSupported(WebViewFeature.WEB_VIEW_RENDERER_TERMINATE)) {
+            view.webViewRenderProcess?.terminate()
+        }
+    }
     fun dispose(preserveDeviceConsent: Boolean = false) {
         if (disposed) return
         disposed = true
