@@ -47,6 +47,21 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         if (!c.moveToFirst()) null else ExecutionTask(c.getString(0), c.getString(1), ExecutionState.valueOf(c.getString(2)), c.getLong(3), if(c.isNull(4)) null else c.getString(4), c.getLong(5), c.getLong(6), JSONObject(c.getString(7)))
     }
     fun forTurn(turnId: String): ExecutionTask? = database.readableDatabase.rawQuery("SELECT task_id FROM execution_slices WHERE turn_id=?", arrayOf(turnId)).use { c -> if(c.moveToFirst()) get(c.getString(0)) else null }
+    /** Resolve only from this durable task, never the currently browsed workspace. */
+    internal fun bindWorkspaceArguments(turnId: String, proposal: ToolCallProposal): ToolCallProposal {
+        val task = forTurn(turnId) ?: return proposal
+        val binding = task.document.optJSONObject("workspace_target") ?: return proposal
+        val workspace = binding.optString("workspace_id")
+        val candidate = calls(task.id).lastOrNull { call ->
+            call.name == "workspace_package_stage" && call.status == ToolCallStatus.COMPLETED &&
+                runCatching { JSONObject(call.argumentsJson).optString("workspace_id") == workspace &&
+                    JSONObject(call.resultJson.orEmpty()).optString("candidate_id").isNotBlank() }.getOrDefault(false)
+        }?.let { JSONObject(it.resultJson!!).getString("candidate_id") }
+        val taskTurns = turns(task.id).toSet()
+        val user = database.loadMessages(task.sessionId, limit = 10000).lastOrNull { it.role == MessageRole.USER && it.turnId in taskTurns }
+        return WorkspaceArgumentBinding.bind(proposal, workspace, binding.optLong("sequence"), candidate, user?.id, user?.content)
+    }
+
     /** A task captures its default target once; browsing never changes it. */
     fun workspaceSession(session: AtlasSession, turnId: String?): AtlasSession {
         val task = turnId?.let(::forTurn) ?: return session
@@ -173,7 +188,9 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val candidate=com.grinningfrog.atlas.workspace.application.WorkspacePackageRepository(database).inspect(workspace,task.document.getJSONObject("scope").getString("realm_id"),candidateId)
         require(database.loadComposableWorkspace(workspace)?.liveRevisionId==candidate.getString("base_revision_id")) { "REVISION_CONFLICT" }
         val user=database.loadMessages(task.sessionId,limit=10000).lastOrNull {it.role==MessageRole.USER && it.turnId in turns(task.id)} ?: error("No user instruction")
-        require(quote.length in 8..500 && user.content.contains(quote)) { "Quote the latest user instruction" }
+        val boundUserId = JSONObject(call.argumentsJson).optString("user_message_id")
+        require(boundUserId.isBlank() || boundUserId == user.id) { "USER_INSTRUCTION_CHANGED: request fresh native confirmation" }
+        require(quote.length in 1..500 && user.content.contains(quote)) { "Quote the latest user instruction" }
         val missing=missingAcceptance(call.turnId,candidateId)
         val selected=(0 until criteria.length()).map(criteria::getString)
         require(selected.isNotEmpty() && selected.distinct().size==selected.size && selected.all {it in missing}) { "Choose exact outstanding criteria" }
@@ -480,9 +497,12 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val latest=calls(taskId).lastOrNull {it.name == "workspace_package_activate" || runCatching {JSONObject(it.argumentsJson).has("definition")}.getOrDefault(false)} ?: t.document.getJSONObject("checkpoint").optString("latest_definition_operation_id").takeIf { it.isNotBlank() && it!="null" }?.let(database::loadToolCall)
         val receipts=JSONArray();var receiptCharacters=0
         for(call in calls(taskId).takeLast(20).asReversed()) {
+            val read = call.name in setOf("workspace_package_read_file", "workspace_package_contract", "workspace_package_inspect", "workspace_inspect", "workspace_render_diagnostics")
             val item=ExecutionWorkState.receipt(call)
-                .put("result_json", if (call.name == "workspace_package_ui_test") null else call.resultJson?.take(2000)).put("result_truncated",(call.resultJson?.length ?: 0)>2000)
-                .put("error",call.error.takeIf {call.status!=ToolCallStatus.COMPLETED})
+                .put("result_json", if (read || call.name == "workspace_package_ui_test") null else call.resultJson?.take(2000))
+                .put("result_truncated", (call.resultJson?.length ?: 0)>2000)
+            if (read) item.put("read_body_location", "Transcript tool result or original audit; reread if projected or stale.")
+            item.put("error",call.error.takeIf {call.status!=ToolCallStatus.COMPLETED})
             val size=item.toString().length
             if(receiptCharacters+size<=24000) {receipts.put(item);receiptCharacters+=size}
         }
