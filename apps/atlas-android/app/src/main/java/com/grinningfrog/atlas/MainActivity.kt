@@ -1320,7 +1320,7 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                                 settings.updateProviderReasoning(endpoint.id, enabled)
                                 onChanged()
                             })
-                            Text("Reasoning (slower; off is recommended on-device)")
+                            Text("Local thinking (on-device only)")
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Prompt", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1363,7 +1363,7 @@ private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpo
                         Checkbox(streaming, { streaming = it }); Text("Endpoint supports SSE streaming")
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(reasoning, { reasoning = it }); Text("Enable model reasoning (slower; off by default)")
+                        Checkbox(reasoning, { reasoning = it }); Text("Enable local thinking (on-device only)")
                     }
                     OutlinedButton(
                         onClick = {
@@ -1464,6 +1464,13 @@ private fun ChatGptPlanCard(
                         val current = state.models.indexOfFirst { it.slug == state.model }.coerceAtLeast(0)
                         auth.selectModel(state.models[(current + 1) % state.models.size].slug); onChanged()
                     }, modifier = Modifier.fillMaxWidth()) { Text("Choose next eligible model") }
+                    val effort = settings.chatGptReasoningEffort()
+                    OutlinedButton(onClick = {
+                        val options = listOf(null, "low", "medium", "high")
+                        settings.saveChatGptReasoningEffort(options[(options.indexOf(effort) + 1) % options.size])
+                        onChanged()
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Reasoning effort: ${effort ?: "Provider default"}") }
+                    Text("Provider default leaves the reasoning budget to the connected model. Higher effort may take longer; compare total task time and retries.", style = MaterialTheme.typography.bodySmall)
                     OutlinedButton(onClick = { showUsage = !showUsage; if (showUsage) refreshUsage() }, modifier = Modifier.fillMaxWidth()) {
                         Text(if (showUsage) "Hide usage details" else "Usage details")
                     }

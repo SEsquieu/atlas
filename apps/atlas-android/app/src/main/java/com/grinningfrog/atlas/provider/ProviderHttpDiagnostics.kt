@@ -17,6 +17,7 @@ object ProviderHttpDiagnostics {
             if (nested != null) for (j in 0 until nested.length()) nested.optJSONObject(j)?.optString("name")?.let(functions::add)
         }
         return JSONObject().put("payload_bytes", body.size).put("payload_sha256", MessageDigest.getInstance("SHA-256").digest(body).joinToString("") { "%02x".format(it) })
+            .put("requested_reasoning_effort", json.optJSONObject("reasoning")?.opt("effort") ?: "provider_default")
             .put("model", json.optString("model")).put("input_items", json.optJSONArray("input")?.length() ?: 0)
             .put("instruction_characters", json.optString("instructions").length).put("stream", json.optBoolean("stream"))
             .put("tool_types", JSONArray((0 until tools.length()).map { tools.optJSONObject(it)?.optString("type") }))

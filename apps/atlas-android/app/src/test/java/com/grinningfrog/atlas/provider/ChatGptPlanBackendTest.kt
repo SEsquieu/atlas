@@ -23,6 +23,38 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatGptPlanBackendTest {
+    @Test fun explicitEffortIsForwardedIndependentlyOfLocalThinkingFlag() {
+        val backend = ChatGptPlanBackend(ChatGptTokenProvider { _ -> "token" })
+        assertFalse(backend.requestJson(endpoint().copy(reasoningEnabled=true), request()).has("reasoning"))
+        for (effort in listOf("low", "medium", "high")) {
+            val json = backend.requestJson(endpoint().copy(reasoningEnabled=false, reasoningEffort=effort), request())
+            assertEquals(effort, json.getJSONObject("reasoning").getString("effort"))
+            assertEquals(effort, ProviderHttpDiagnostics.request(json).getString("requested_reasoning_effort"))
+        }
+        assertTrue(runCatching { backend.requestJson(endpoint().copy(reasoningEffort="invalid"), request()) }.isFailure)
+    }
+
+    @Test fun usageDiagnosticsKeepRequestedAndReportedReasoningSeparate() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Done\"}\n\n" +
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"model\":\"served-model\",\"reasoning\":{\"effort\":\"high\"},\"usage\":{\"input_tokens\":100,\"output_tokens\":40,\"output_tokens_details\":{\"reasoning_tokens\":27},\"input_tokens_details\":{\"cached_tokens\":32}}}}\n\n"))
+        server.start()
+        try {
+            val diagnostics = mutableListOf<JSONObject>()
+            val backend = ChatGptPlanBackend(ChatGptTokenProvider { _ -> "token" }, responsesUrl=server.url("/responses").toString(), diagnosticSink={ _, data -> diagnostics += data })
+            backend.stream(endpoint().copy(reasoningEffort="high"), null, request()).toList()
+            val usage = diagnostics.single { it.optString("phase") == "usage" }
+            assertEquals("high", usage.getString("requested_reasoning_effort"))
+            assertEquals("high", usage.getString("served_reasoning_effort"))
+            assertEquals("served-model", usage.getString("served_model"))
+            assertEquals(27, usage.getInt("reasoning_tokens"))
+            assertEquals(32, usage.getInt("cached_input_tokens"))
+            val sent = JSONObject(server.takeRequest().body.readUtf8())
+            assertEquals("high", sent.getJSONObject("reasoning").getString("effort"))
+        } finally { server.shutdown() }
+    }
+
     @Test fun requestUsesStrictPlanInferenceContract() {
         val backend = ChatGptPlanBackend(ChatGptTokenProvider { _ -> "token" })
         val json = backend.requestJson(endpoint(), request().copy(tools = listOf(ToolDefinition("observe", "Observe", "{\"type\":\"object\"}", ToolRisk.READ_ONLY))))

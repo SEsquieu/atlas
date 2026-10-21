@@ -22,6 +22,12 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 class SecureSettings(context: Context) {
     private val prefs = context.getSharedPreferences("atlas.settings", Context.MODE_PRIVATE)
 
+    fun chatGptReasoningEffort(): String? = prefs.getString("chatgpt.reasoning_effort", null)?.takeIf { it in listOf("low", "medium", "high") }
+    fun saveChatGptReasoningEffort(effort: String?) {
+        require(effort == null || effort in listOf("low", "medium", "high"))
+        prefs.edit().putString("chatgpt.reasoning_effort", effort).apply()
+    }
+
     fun saveProvider(endpoint: ProviderEndpoint, apiKey: String?) {
         val providers = loadProviders().filterNot { it.id == endpoint.id } + endpoint
         prefs.edit().putString("providers", JSONArray(providers.map(::endpointJson)).toString()).apply()

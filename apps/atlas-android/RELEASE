@@ -1,2 +1,2 @@
-0.1.0-alpha.31
-Bind task identifiers and approval evidence; reduce duplicate context and enforce action-specific UI schemas.
+0.1.0-alpha.32
+Exact source edits, truthful UI and hosted-search evidence, and explicit ChatGPT reasoning effort with usage telemetry.

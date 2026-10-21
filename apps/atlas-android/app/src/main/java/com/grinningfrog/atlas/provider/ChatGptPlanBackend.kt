@@ -169,6 +169,13 @@ class ChatGptPlanBackend(
                                     totalTokens = usage.optInt("total_tokens").takeIf { usage.has("total_tokens") }
                                         ?: listOfNotNull(inputTokens, outputTokens).takeIf { it.size == 2 }?.sum()
                                 }
+                                val usage = finished.optJSONObject("usage")
+                                diagnostic(JSONObject().put("phase", "usage")
+                                    .put("requested_reasoning_effort", endpoint.reasoningEffort ?: "provider_default")
+                                    .put("served_reasoning_effort", finished.optJSONObject("reasoning")?.opt("effort") ?: JSONObject.NULL)
+                                    .put("served_model", finished.optString("model").takeIf(String::isNotBlank) ?: JSONObject.NULL)
+                                    .put("reasoning_tokens", usage?.optJSONObject("output_tokens_details")?.opt("reasoning_tokens") ?: JSONObject.NULL)
+                                    .put("cached_input_tokens", usage?.optJSONObject("input_tokens_details")?.opt("cached_tokens") ?: JSONObject.NULL))
                                 collectCompletedOutput(finished, citations, providerToolUses)
                                 completed = true
                             }
@@ -200,6 +207,10 @@ class ChatGptPlanBackend(
 
     internal fun requestJson(endpoint: ProviderEndpoint, request: InferenceRequest, includeHostedSearch: Boolean = true): JSONObject = JSONObject().apply {
         put("model", endpoint.model)
+        endpoint.reasoningEffort?.let { effort ->
+            require(effort in setOf("low", "medium", "high")) { "Unsupported Atlas reasoning effort" }
+            put("reasoning", JSONObject().put("effort", effort))
+        }
         put("store", false)
         put("stream", true)
         if (!omitEmptyOptionalFields || request.systemPrompt.isNotBlank()) put("instructions", request.systemPrompt + if (includeHostedSearch) "\nPROVIDER CAPABILITY: web_search is advertised as an authorized read-only research tool on this request, independently of local Atlas adapters. An unattempted tool is not an unavailable capability. Use it when current external research is needed; record actual denials or failures rather than assuming absence." else "")
