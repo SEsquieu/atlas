@@ -65,6 +65,8 @@ class WorkspaceCandidateLifecycleTest {
             val result = activate(c, pure) { _, _ -> true }
             assertEquals(fresh, !result.isNull("ui_check_id"))
             assertEquals(fresh, result.getBoolean("storage_verified"))
+            assertEquals(if(fresh) "isolated_test_database" else "not_verified", result.getString("storage_scope"))
+            assertFalse(result.getBoolean("ui_check_required"))
             assertEquals(if(fresh) 1 else 0, result.getJSONArray("verified_criteria").length())
             assertFalse(result.getBoolean("semantic_correctness_verified"))
         }

@@ -104,8 +104,10 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
                 .put("ui_evidence_status", if (uiCheckId == null) "no_matching_passing_check" else "passing_matching_check")
                 .put("verified_criteria", uiEvidence?.optJSONArray("verified_criteria") ?: org.json.JSONArray())
                 .put("storage_verified", uiEvidence?.optBoolean("storage_verified") == true)
+                .put("storage_scope", if (uiEvidence?.optBoolean("storage_verified") == true) "isolated_test_database" else "not_verified")
+                .put("ui_check_required", WorkspaceCapabilityRegistry.requested(bundle.getJSONObject("manifest")).isNotEmpty())
                 .put("semantic_correctness_verified", false)
-                .put("evidence_scope", if(uiCheckId==null) "Pure fixtures and startup handshake only; UI interactions and save/resume remain unverified" else "Pure fixtures, matching DOM UI simulation and startup handshake. Only reported criteria/assertions were exercised. Storage is verified only when storage_verified=true; physical device effects, painted pixels and general semantic correctness remain unverified")
+                .put("evidence_scope", if(uiCheckId==null) "Pure fixtures and startup handshake only; UI interactions and save/resume remain unverified" else "Pure fixtures, matching DOM UI simulation and startup handshake. Only reported criteria/assertions were exercised. Only isolated test storage is verified when storage_verified=true; physical device effects, painted pixels and general semantic correctness remain unverified")
             insertOrThrow("workspace_application_activations", null, ContentValues().apply {
                 put("workspace_id", workspaceId); put("candidate_id", candidateId); put("check_id", checkId); put("result_json", receipt.toString()); put("created_at", now)
             })
