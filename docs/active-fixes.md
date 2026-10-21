@@ -1,6 +1,6 @@
 # Active fixes
 
-Canonical repository work queue. Evidence: [alpha.28 assessment](./alpha28-live-assessment.md). Updated October 19, 2026. Implementation work is tracked below; phone verification remains separate.
+Canonical repository work queue. Evidence: [alpha.28 assessment](./alpha28-live-assessment.md). Updated October 20, 2026. Implementation work is tracked below; phone verification remains separate.
 
 Stable IDs never change or get reused. Status: **proposed** needs design; **ready** is bounded enough to implement; **in progress** links a claim/draft PR; **blocked** names a dependency; **implemented** links merged code but has outstanding acceptance; **verified** links all required evidence. Merged code and shipped builds are separate milestones. Keep verified entries with their resolution for traceability.
 
@@ -9,19 +9,18 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 | ID | Outcome | Status | Tracking issue / claim |
 | --- | --- | --- | --- |
 | AF-001 | Reduce malformed package staging | implemented | [#38](https://github.com/SEsquieu/atlas/issues/38); [PR #35](https://github.com/SEsquieu/atlas/pull/35) |
-| AF-002 | Complete delivery despite unavailable optional inspection | implemented | [#39](https://github.com/SEsquieu/atlas/issues/39); [PR #35](https://github.com/SEsquieu/atlas/pull/35) |
-| AF-003 | Bound identical deterministic retries across slices | implemented | [#40](https://github.com/SEsquieu/atlas/issues/40); [PR #35](https://github.com/SEsquieu/atlas/pull/35) |
+| AF-002 | Complete delivery despite unavailable optional inspection | verified | [#39](https://github.com/SEsquieu/atlas/issues/39); [PR #35](https://github.com/SEsquieu/atlas/pull/35) |
+| AF-003 | Bound identical deterministic retries across slices | verified | [#40](https://github.com/SEsquieu/atlas/issues/40); [PR #35](https://github.com/SEsquieu/atlas/pull/35) |
 | AF-004 | Separate camera evidence from workspace viewport evidence | implemented | [#41](https://github.com/SEsquieu/atlas/issues/41); [PR #35](https://github.com/SEsquieu/atlas/pull/35) |
 | AF-005 | Make acceptance assertions prove requested behavior | implemented | [#42](https://github.com/SEsquieu/atlas/issues/42); [PR #37](https://github.com/SEsquieu/atlas/pull/37) |
 | AF-006 | Accept unverified behavior for an exact candidate | implemented | [#43](https://github.com/SEsquieu/atlas/issues/43); [PR #36](https://github.com/SEsquieu/atlas/pull/36) |
 | AF-007 | Support pointer dragging and classify test limitations | implemented | [#44](https://github.com/SEsquieu/atlas/issues/44); [PR #37](https://github.com/SEsquieu/atlas/pull/37) |
-
-| AF-008 | Cancel superseded validation without interrupting manual delivery | proposed | [#46](https://github.com/SEsquieu/atlas/issues/46) |
+| AF-008 | Cancel superseded validation without interrupting manual delivery | implemented; acceptance pending | [#46](https://github.com/SEsquieu/atlas/issues/46); [PR #56](https://github.com/SEsquieu/atlas/pull/56) |
 | AF-009 | Bound hung UI checks and recover workspace rendering | verified | [#48](https://github.com/SEsquieu/atlas/issues/48); [PR #49](https://github.com/SEsquieu/atlas/pull/49) |
-| AF-010 | Keep blocker replies available and retire approval turns | in progress | [#50](https://github.com/SEsquieu/atlas/issues/50) |
-| AF-011 | Resolve obsolete acceptance failures after matching delivery | in progress | [#51](https://github.com/SEsquieu/atlas/issues/51) |
-| AF-012 | Return explicit expected and actual assertion counts | in progress | [#52](https://github.com/SEsquieu/atlas/issues/52) |
-| AF-013 | Audit and reduce model-boundary schema and identity churn | proposed | [#53](https://github.com/SEsquieu/atlas/issues/53) |
+| AF-010 | Keep blocker replies available and retire approval turns | implemented; phone verification pending | [#50](https://github.com/SEsquieu/atlas/issues/50); [PR #54](https://github.com/SEsquieu/atlas/pull/54) |
+| AF-011 | Resolve obsolete acceptance failures after matching delivery | implemented; phone verification pending | [#51](https://github.com/SEsquieu/atlas/issues/51); [PR #54](https://github.com/SEsquieu/atlas/pull/54) |
+| AF-012 | Return explicit expected and actual assertion counts | implemented; phone verification pending | [#52](https://github.com/SEsquieu/atlas/issues/52); [PR #54](https://github.com/SEsquieu/atlas/pull/54) |
+| AF-013 | Audit and reduce model-boundary schema and identity churn | partially implemented; open | [#53](https://github.com/SEsquieu/atlas/issues/53); [PR #55](https://github.com/SEsquieu/atlas/pull/55) |
 
 ## AF-001: Reduce malformed package staging
 
@@ -34,7 +33,7 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 
 ## AF-002: Complete delivery despite unavailable optional inspection
 
-- Status: implemented. Related work: AF-006 (coordination, not a hard dependency).
+- Status: verified. Related work: AF-006 (coordination, not a hard dependency).
 - Evidence: An activated, storage-verified app stayed WAITING after rejected pixel handoffs.
 - Starting points: ExecutionTasks.kt; WorkspaceLiveTools.kt under the Android application source tree; inspect current code before editing.
 - Acceptance: Proven delivery completes with optional inspection explicitly unverified; rejected unnecessary handoffs do not become permanent blockers; required checks and unknown effects remain blocking.
@@ -43,7 +42,7 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 
 ## AF-003: Bound identical deterministic retries across slices
 
-- Status: implemented. Related work: None (coordination, not a hard dependency).
+- Status: verified. Related work: None (coordination, not a hard dependency).
 - Evidence: Six identical invalid handoff calls and repeated staging errors consumed inference.
 - Starting points: ToolRetryPolicy.kt; ExecutionTasks.kt; ExecutionWorkState.kt under the Android application source tree; inspect current code before editing.
 - Acceptance: Equivalent deterministic failures cannot reset their retry allowance with a new slice or operation ID; corrected arguments can proceed; transient failures retain their separate handling.
@@ -101,7 +100,7 @@ AF-005 implements stronger assertion tools and explicit evidence, not an indepen
 - Status: verified in alpha.30; merged PR #49. Issue #48 closed.
 - Evidence: Maze generation UI could leave its exit unreachable and loop forever tracing the route. A separate pure fixture passed; it did not execute the UI algorithm. Repeated UI calls lacked terminal results. Other live-workspace failures are user reported; shared renderer involvement remains to be confirmed on the phone.
 - Scope: per-evaluation and total deadlines, active-step failure receipts, renderer interruption before disposal, content-hash suppression after execution timeout, and terminal cancellation bookkeeping without overwriting committed receipts.
-- Validation: device regression exercises a synchronous infinite-loop click, suppression despite changed test steps, corrected source and reopening an existing healthy application's surface. CI pending; local Gradle distribution download is unavailable. No physical-device recovery or semantic correctness claim.
+- Validation: device regression exercises a synchronous infinite-loop click, suppression despite changed test steps, corrected source and reopening an existing healthy application's surface. CI passed on API 35/36; the local Gradle distribution download is unavailable. No physical-device recovery or semantic correctness claim.
 - Constraint: WebView renderers may be shared; termination can invalidate other surfaces. Their stored packages and records must be preserved. This is recovery, not process isolation.
 
 ### AF-009 acceptance evidence
@@ -115,3 +114,15 @@ Session ab31192d reproduced disabled text entry until pause/resume, an obsolete 
 ## AF-013: Model boundary audit
 
 Confirmed ChatGptPlanBackend serializes function tools with strict=false; OpenAiCompatibleBackend forwards parameters without a strict declaration. Workspace UI test values include JSON encoded inside strings. Do not globally enable strict mode until tool schemas have been made compatible and the transport is tested. Follow-up must measure first-attempt validity, model calls, cumulative input and elapsed activation time against fixed tasks. No measured latency improvement is claimed by AF-010–012.
+
+### Alpha.30 follow-up resolution
+
+PR #54 resolves code defects tracked by #50–52: drafting remains available during active work, blocker replies can be submitted, resolved authorization turns retire without approving tools, exact delivered candidates supersede failed acceptance attempts, and count reports carry expected/actual values through checkpoints. Phone verification of these new changes remains pending; no new APK is implied by merging source.
+
+PR #55 provides enumerated UI action/assertion schema alternatives and native object-valued gesture/attribute/record inputs with historical string compatibility. #53 remains open for other schemas, identity binding, authorization evidence binding, context duplication and measured call/token/latency benchmarks. Provider strict mode is not enabled globally.
+
+PR #56 restricts push validation to main, retains PR validation including forks, cancels superseded same-ref validation and isolates manual dispatch by run ID with cancellation disabled. #46 remains open until live supersession and manual-delivery behavior have been observed together.
+
+Issues #39 and #40 were closed against their narrow alpha.30 phone evidence: activation succeeded without optional viewport pixels, and deterministic rejection suppression fired. The remaining failed acceptance and semantic/context churn were not hidden by those closures.
+
+Automated follow-up evidence: PR #54 combined head passed Android run `39531315814`, public-readiness `39531315848`, and API 35/36 device run `39531315767` after incorporating #55. PR #55 separately passed Android `39530255640` and device `39530255541`. PR #56 scheduling-only source passed Android `39530362220` and device `39530362306` before its base update; no Android runtime code is changed by that PR.

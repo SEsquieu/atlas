@@ -2,6 +2,21 @@
 
 Notable user-visible changes will be recorded here. Atlas follows semantic versioning beginning with its first tagged alpha.
 
+## Unreleased
+
+- Keep draft editing available during active work and allow replies during user-action blockers.
+- Retire resolved approval turns and stop obsolete failed acceptance attempts blocking exact delivered candidates.
+- Return explicit expected/actual UI assertion counts.
+- Advertise separate enumerated action/assertion schemas and accept native structured test values while retaining historical string compatibility.
+- Deduplicate validation and isolate manual APK workflows from superseded validation cancellation.
+- These source changes are not part of the delivered alpha.30 APK. Phone verification and broader schema/identity/context benchmarking remain tracked in the active-fixes queue.
+
+## 0.1.0-alpha.30 — delivered test build
+
+- Bound UI execution and record the stalled step; retire stuck renderers before opening replacement surfaces.
+- Suppress repeated execution of identical timed-out application content and retain terminal cancellation evidence.
+- Signed build 39522593617, source 7b77046, version code 1302. Device tests passed on API 35/36; phone testing confirmed MazeGen's visible solution and working existing workspaces.
+
 ## 0.1.0-alpha.29 — release preparation
 
 - Recover misplaced source fields and bound identical deterministic retries.
