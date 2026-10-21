@@ -602,9 +602,8 @@ private fun AtlasControls(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot
     var actionError by remember(session.id) { mutableStateOf<String?>(null) }
     val active = session.status == SessionStatus.ACTIVE
     val needsUser = AtlasUiPresentation.needsUserAction(snapshot)
-    val available = snapshot.activeTurn == null || snapshot.pendingClarification != null ||
-        snapshot.activeTurn?.status == com.grinningfrog.atlas.model.TurnStatus.SOFT_TIMED_OUT
-    val canSend = active && hasProvider && available
+    val canSend = AtlasUiPresentation.canSubmitMessage(snapshot, hasProvider)
+    val available = canSend
     fun runAction(block: suspend () -> Unit) {
         actionScope.launch { runCatching { block() }.onFailure { actionError = it.message ?: "Action failed" } }
     }
@@ -622,7 +621,7 @@ private fun AtlasControls(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot
         }
         VoiceDock(snapshot, active, active && hasProvider && (available || snapshot.phase == RuntimePhase.SPEAKING),
             { runAction { runtime.listenAndAsk() } }, { runAction { runtime.captureNow() } }, { showText = !showText }, needsUser)
-        if (showText) OutlinedTextField(prompt, { prompt = it }, label = { Text("Message Atlas") }, enabled = canSend, modifier = Modifier.fillMaxWidth(), maxLines = 3,
+        if (showText) OutlinedTextField(prompt, { prompt = it }, label = { Text("Message Atlas") }, enabled = active && hasProvider, modifier = Modifier.fillMaxWidth(), maxLines = 3,
             trailingIcon = { IconButton(enabled = canSend && prompt.isNotBlank(), onClick = { send() }) { Icon(Icons.AutoMirrored.Filled.Send, "Send") } },
             keyboardActions = KeyboardActions(onSend = { send() }), keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Send))
         actionError?.let { error -> Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1020,782 +1019,331 @@ private fun SessionPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, 
             })) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Icon(if (snapshot.phase == RuntimePhase.SPEAKING) Icons.Default.GraphicEq else Icons.Default.Mic, null, Modifier.size(30.dp), tint = MaterialTheme.colorScheme.primary)
-                        Column(Modifier.weight(1f)) {
-                            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                            Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                    snapshot.streamingResponse?.takeIf(String::isNotBlank)?.let {
-                        Text(it.takeLast(360), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Button(
-                        onClick = { runAction { runtime.listenAndAsk() } },
-                        enabled = canTalk,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Default.Mic, null)
-                        Text(if (snapshot.phase == RuntimePhase.SPEAKING) " Interrupt and talk" else " Talk")
-                    }
-                }
-            }
-        }
-
-        snapshot.latestObservation?.let { observation ->
-            item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Column {
-                        remember(observation.media.id) { BitmapFactory.decodeFile(mediaRepository.resolve(observation.media).absolutePath)?.asImageBitmap() }?.let { bitmap ->
-                            Image(bitmap, "Latest Atlas observation", Modifier.fillMaxWidth().height(220.dp), contentScale = ContentScale.Crop)
-                        }
-                        Column(Modifier.padding(14.dp)) {
-                            Text("Current visual context", fontWeight = FontWeight.SemiBold)
-                            Text("age ${snapshot.contextAgeMs?.let(::duration) ?: "—"} · ${observation.motionState.name.lowercase()} · ${observation.media.width}×${observation.media.height} · ${observation.media.byteSize / 1024} KB", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            observation.summary?.let { summary ->
-                                Spacer(Modifier.height(5.dp))
-                                Text(summary, style = MaterialTheme.typography.bodySmall)
-                                observation.interpretedAtMs?.let { Text("Interpreted ${duration((System.currentTimeMillis() - it).coerceAtLeast(0))} ago", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        snapshot.pendingClarification?.let { clarification ->
-            item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        Text("Atlas needs one detail", fontWeight = FontWeight.Bold)
-                        Text(clarification.question, style = MaterialTheme.typography.titleMedium)
-                        if (clarification.options.isNotEmpty()) {
-                            Text(clarification.options.joinToString(" · "), color = MaterialTheme.colorScheme.onTertiaryContainer)
-                        }
-                        Text("Answer naturally—short replies like “the black one” are enough.", style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onTertiaryContainer)
-                    }
-                }
-            }
-        }
-
-        val dialogue = snapshot.messages.filter { it.kind == MessageKind.DIALOGUE && it.content.isNotBlank() }.takeLast(30)
-        if (dialogue.isNotEmpty()) {
-            item { Text("Conversation", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
-            items(dialogue, key = { it.id }) { message ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.role == MessageRole.USER) Arrangement.End else Arrangement.Start) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(.88f),
-                        colors = CardDefaults.cardColors(containerColor = if (message.role == MessageRole.USER) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer),
-                    ) {
-                        Column(Modifier.padding(14.dp)) {
-                            Text(if (message.role == MessageRole.USER) "You" else "Atlas", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
-                            Spacer(Modifier.height(4.dp)); AutoLinkedText(message.content)
-                            if (message.role == MessageRole.ASSISTANT && message.deliveryStatus in setOf(DeliveryStatus.INTERRUPTED, DeliveryStatus.FAILED)) {
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    if (message.deliveryStatus == DeliveryStatus.INTERRUPTED) "Speech was interrupted; the unheard remainder will not be treated as shared context."
-                                    else "Speech playback failed; the text remains available here.",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            if (snapshot.phase == RuntimePhase.SPEAKING) item { TextButtonCompact("Stop speaking") { runtime.stopSpeaking() } }
-        }
-
-        val lateDiagnostics = snapshot.messages.filter {
-            it.kind == MessageKind.INTERNAL && it.role == MessageRole.ASSISTANT && it.content.isNotBlank()
-        }.takeLast(5)
-        if (lateDiagnostics.isNotEmpty()) {
-            item { Text("Late model results", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
-            items(lateDiagnostics, key = { "late-${it.id}" }) { message ->
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = .65f))) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text("DIAGNOSTIC · NOT CONVERSATION CONTEXT", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                        Text(message.content)
-                        Text("Completed after the interaction deadline. Preserved for alpha tuning and session export.", style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
-        }
-
-        snapshot.activeTurn?.let { turn ->
-            item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                    Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Agent turn · ${turn.status.name.lowercase().replace('_', ' ')}", fontWeight = FontWeight.SemiBold)
-                            Text("step ${turn.stepCount} · durable turn ${turn.id.take(8)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        if (turn.status !in setOf(com.grinningfrog.atlas.model.TurnStatus.WAITING_FOR_CONFIRMATION, com.grinningfrog.atlas.model.TurnStatus.WAITING_FOR_USER_CLARIFICATION)) {
-                            OutlinedButton({ runtime.cancelActiveTurn() }) { Text("Cancel") }
-                        }
-                    }
-                }
-            }
-        }
-
-        items(snapshot.pendingToolCalls.filter { it.status == ToolCallStatus.WAITING_FOR_CONFIRMATION }, key = { it.id }) { call ->
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = .65f))) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Atlas wants permission", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text(call.name, fontWeight = FontWeight.SemiBold)
-                    call.reason?.let { Text(it) }
-                    Text(call.argumentsJson.take(500), style = MaterialTheme.typography.bodySmall)
-                    Text("Risk: ${call.risk.name.lowercase().replace('_', ' ')}", style = MaterialTheme.typography.labelMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button({ runAction { runtime.resolveToolCall(call.id, true) } }) { Text("Allow") }
-                        OutlinedButton({ runAction { runtime.resolveToolCall(call.id, false) } }) { Text("Decline") }
-                    }
-                }
-            }
-        }
-
-        if (snapshot.pendingToolCalls.any { it.status == ToolCallStatus.UNKNOWN }) item {
-            NoticeCard("Tool outcome needs review", "Atlas was restarted while a tool was running. It will not retry the action automatically.")
-        }
-
-        if (snapshot.memories.isNotEmpty()) item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Text("What Atlas is carrying forward", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    snapshot.memories.take(12).forEach { memory ->
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(memory.kind.name.lowercase(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                                Text(memory.content, style = MaterialTheme.typography.bodySmall)
-                            }
-                            TextButtonCompact("Forget") { runtime.forgetMemory(memory.id) }
-                        }
-                    }
-                    snapshot.sessionSummary?.let { Text("Older conversation checkpointed through message ${it.throughMessageSequence}.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                }
-            }
-        }
-
-        if (actionError != null || snapshot.latestError != null) item {
-            NoticeCard(if (actionError != null || snapshot.phase == RuntimePhase.ERROR) "Runtime needs attention" else "Runtime notice · check current task status", actionError ?: snapshot.latestError.orEmpty())
-        }
-
-        item {
-            OutlinedTextField(
-                value = prompt,
-                onValueChange = { prompt = it },
-                label = { Text("Ask about here and now") },
-                enabled = active && (snapshot.activeTurn == null || awaitingClarification || snapshot.activeTurn?.status == com.grinningfrog.atlas.model.TurnStatus.SOFT_TIMED_OUT),
-                modifier = Modifier.fillMaxWidth(),
-                trailingIcon = { IconButton(enabled = active && (snapshot.activeTurn == null || awaitingClarification || snapshot.activeTurn?.status == com.grinningfrog.atlas.model.TurnStatus.SOFT_TIMED_OUT) && prompt.isNotBlank(), onClick = { val text = prompt; prompt = ""; runAction { runtime.ask(text) } }) { Icon(Icons.AutoMirrored.Filled.Send, "Send") } },
-                keyboardActions = KeyboardActions(onSend = { if (prompt.isNotBlank()) { val text = prompt; prompt = ""; runAction { runtime.ask(text) } } }),
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Send),
-            )
-        }
-        item {
-            OutlinedButton({ runAction { runtime.captureNow() } }, enabled = active && (snapshot.activeTurn == null || snapshot.activeTurn?.status == com.grinningfrog.atlas.model.TurnStatus.SOFT_TIMED_OUT), modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.CameraAlt, null); Text(" Observe now")
-            }
-        }
-        item { HealthCard(snapshot) }
+                        Icon(if (snapshot.phase == RuntimePhase.SPEAKING) Icons.Default.GraphicEq else Icon…19815 tokens truncated…tools. */
+    fun reconcileLateInference(turnId: String, requestId: String, input: Long?, output: Long?) = atomic {
+        val task=forTurn(turnId) ?: return@atomic
+        val reservation=task.document.optJSONObject("inference_reservations")?.optJSONObject(requestId) ?: return@atomic
+        reconcileUsage(task,requestId,reservation,input,output)
+        event(task,"execution.late_usage_reconciled",JSONObject().put("request_id",requestId).put("turn_id",turnId))
     }
-}
-
-@Composable
-private fun AutoLinkedText(content: String) {
-    val annotated = buildAnnotatedString {
-        append(content)
-        URL_PATTERN.findAll(content).forEach { match ->
-            val trimmed = match.value.trimEnd('.', ',', ')', ']', '}')
-            if (trimmed.isNotEmpty()) addLink(LinkAnnotation.Url(trimmed), match.range.first, match.range.first + trimmed.length)
-        }
+    private fun reconcileUsage(task: ExecutionTask, requestId: String, reservation: JSONObject, input: Long?, output: Long?) {
+        task.usage.put("input_tokens",maxOf(0,task.usage.optLong("input_tokens")-reservation.optLong("input")+(input ?: reservation.optLong("input"))))
+            .put("output_tokens",maxOf(0,task.usage.optLong("output_tokens")-reservation.optLong("output")+(output ?: reservation.optLong("output"))))
+        task.document.optJSONObject("inference_reservations")?.remove(requestId)
+        if(task.document.optJSONObject("reservation")?.optString("request_id")==requestId)task.document.remove("reservation")
+        save(task)
     }
-    Text(annotated)
-}
-
-private val URL_PATTERN = Regex("https?://[^\\s]+")
-
-@Composable
-private fun ProviderPage(settings: SecureSettings, providers: List<ProviderEndpoint>, managedAccount: ManagedAccountClient, chatGptAuth: ChatGptAuthManager, database: AtlasDatabase, modifier: Modifier, onChanged: () -> Unit) {
-    val scope = rememberCoroutineScope()
-    val managedState by managedAccount.state.collectAsState()
-    val chatGptState by chatGptAuth.state.collectAsState()
-    val tester = remember { ProviderConnectionTester() }
-    var name by remember { mutableStateOf("") }
-    var baseUrl by remember { mutableStateOf("") }
-    var model by remember { mutableStateOf("") }
-    var apiKey by remember { mutableStateOf("") }
-    var vision by remember { mutableStateOf(true) }
-    var tools by remember { mutableStateOf(true) }
-    var streaming by remember { mutableStateOf(true) }
-    var reasoning by remember { mutableStateOf(false) }
-    var promptProfile by remember { mutableStateOf(PromptProfile.AUTO) }
-    var draftCheck by remember { mutableStateOf<com.grinningfrog.atlas.provider.ProviderCheck?>(null) }
-    var endpointChecks by remember { mutableStateOf<Map<String, com.grinningfrog.atlas.provider.ProviderCheck>>(emptyMap()) }
-    val routes = remember(providers) { settings.loadRoutes() }
-
-    fun draftEndpoint(id: String = "connection-test") = ProviderEndpoint(
-        id, name.trim().ifBlank { "Endpoint" }, EndpointSecurity.assess(baseUrl).normalizedBaseUrl,
-        model.trim(), id, supportsVision = vision, supportsTools = tools, supportsStreaming = streaming, reasoningEnabled = reasoning,
-        promptProfile = promptProfile,
-    )
-
-    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item {
-            AtlasBrandHeader("where Atlas thinks", "Inference")
-            Spacer(Modifier.height(20.dp))
-            Text("Bring whatever brain you want.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text("Route by capability, never by a model baked into Atlas Core.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        if (providers.isNotEmpty()) item {
-            InstrumentCard {
-                Text("Capability routes", style = MaterialTheme.typography.titleMedium)
-                RouteSummaryRow("Fast", routes.fast, providers)
-                RouteSummaryRow("Vision", routes.vision, providers)
-                RouteSummaryRow("Reasoning", routes.reasoning, providers)
-                RouteSummaryRow("Fallback", routes.fallback, providers)
-                Text("Routes currently follow endpoint order. No routing behavior has been changed in this visual pass.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Direct · bring your own", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("OpenAI-compatible local, LAN, or cloud endpoint. Requests go directly from this phone; keys are encrypted with Android Keystore.")
-                }
-            }
-        }
-        item {
-            ChatGptPlanCard(chatGptAuth, chatGptState, settings, database) { onChanged() }
-        }
-        item {
-            if (managedState.configured) ManagedAccountCard(managedAccount, settings, onChanged)
-            else ManagedInferenceSoonCard()
-        }
-        if (providers.isNotEmpty()) item { Text("Configured endpoints", style = MaterialTheme.typography.titleMedium) }
-        items(providers.filter { it.kind != com.grinningfrog.atlas.model.ProviderKind.CHATGPT_PLAN }, key = { it.id }) { endpoint ->
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(endpoint.name, fontWeight = FontWeight.SemiBold)
-                        Text("${endpoint.model} · ${listOfNotNull("text", "vision".takeIf { endpoint.supportsVision }, "tools".takeIf { endpoint.supportsTools }, "streaming".takeIf { endpoint.supportsStreaming }).joinToString(" + ")}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(endpoint.baseUrl, style = MaterialTheme.typography.bodySmall)
-                        Text(runCatching { EndpointSecurity.assess(endpoint.baseUrl).notice }.getOrElse { "Blocked: ${it.message}" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        val check = endpointChecks[endpoint.id]
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButtonCompact("Test") {
-                                scope.launch {
-                                    val result = tester.check(endpoint, settings.apiKey(endpoint))
-                                    endpointChecks = endpointChecks + (endpoint.id to result)
-                                    if (result.ok) settings.markProviderVerified(endpoint.id)
-                                }
-                            }
-                            Text(check?.message ?: settings.providerVerifiedAt(endpoint.id)?.let { "Previously connected" } ?: "Not tested", style = MaterialTheme.typography.bodySmall,
-                                color = if (check?.ok == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(endpoint.supportsVision, { enabled ->
-                                settings.updateProviderCapabilities(endpoint.id, enabled, endpoint.supportsTools, endpoint.supportsStreaming)
-                                val all = settings.loadProviders()
-                                val ids = all.map { it.id }
-                                settings.saveRoutes(RouteTable(ids, all.filter { it.supportsVision }.map { it.id }, ids, ids))
-                                onChanged()
-                            })
-                            Text("Vision")
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(endpoint.supportsTools, { enabled ->
-                                settings.updateProviderCapabilities(endpoint.id, endpoint.supportsVision, enabled, endpoint.supportsStreaming)
-                                onChanged()
-                            })
-                            Text("Tools")
-                            Checkbox(endpoint.supportsStreaming, { enabled ->
-                                settings.updateProviderCapabilities(endpoint.id, endpoint.supportsVision, endpoint.supportsTools, enabled)
-                                onChanged()
-                            })
-                            Text("Stream")
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(endpoint.reasoningEnabled, { enabled ->
-                                settings.updateProviderReasoning(endpoint.id, enabled)
-                                onChanged()
-                            })
-                            Text("Reasoning (slower; off is recommended on-device)")
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Prompt", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            TextButtonCompact(endpoint.promptProfile.name.lowercase().replaceFirstChar { it.uppercase() }) {
-                                val next = when (endpoint.promptProfile) {
-                                    PromptProfile.AUTO -> PromptProfile.COMPACT
-                                    PromptProfile.COMPACT -> PromptProfile.FULL
-                                    PromptProfile.FULL -> PromptProfile.AUTO
-                                }
-                                settings.updateProviderPromptProfile(endpoint.id, next)
-                                onChanged()
-                            }
-                        }
-                    }
-                    TextButtonCompact("Remove") {
-                        settings.deleteProvider(endpoint.id)
-                        val remaining = settings.loadProviders().map { it.id }
-                        settings.saveRoutes(RouteTable(remaining, remaining.filter { id -> settings.loadProviders().firstOrNull { it.id == id }?.supportsVision == true }, remaining, remaining))
-                        onChanged()
-                    }
-                }
-            }
-        }
-        item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Add endpoint", style = MaterialTheme.typography.titleLarge)
-                    OutlinedTextField(name, { name = it; draftCheck = null }, label = { Text("Name (for example, Home Ollama)") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(baseUrl, { baseUrl = it; draftCheck = null }, label = { Text("Base URL") }, placeholder = { Text("https://provider.example/v1") }, modifier = Modifier.fillMaxWidth())
-                    runCatching { EndpointSecurity.assess(baseUrl).notice }.getOrNull()?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    OutlinedTextField(model, { model = it; draftCheck = null }, label = { Text("Model") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(apiKey, { apiKey = it; draftCheck = null }, label = { Text("API key (optional)") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(vision, { vision = it }); Text("Endpoint accepts image input")
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(tools, { tools = it }); Text("Endpoint supports OpenAI-compatible tool calls")
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(streaming, { streaming = it }); Text("Endpoint supports SSE streaming")
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(reasoning, { reasoning = it }); Text("Enable model reasoning (slower; off by default)")
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            promptProfile = when (promptProfile) {
-                                PromptProfile.AUTO -> PromptProfile.COMPACT
-                                PromptProfile.COMPACT -> PromptProfile.FULL
-                                PromptProfile.FULL -> PromptProfile.AUTO
-                            }
-                            draftCheck = null
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Prompt profile: ${promptProfile.name.lowercase()}") }
-                    Text(
-                        when (promptProfile) {
-                            PromptProfile.AUTO -> "Auto uses a compact prompt on this phone and the full Atlas contract elsewhere."
-                            PromptProfile.COMPACT -> "Compact minimizes prompt ingestion for small local or self-hosted models."
-                            PromptProfile.FULL -> "Full preserves the complete Atlas instruction contract for capable models."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    OutlinedButton(
-                        enabled = baseUrl.isNotBlank() && model.isNotBlank(),
-                        onClick = { scope.launch {
-                            draftCheck = runCatching { tester.check(draftEndpoint(), apiKey.takeIf(String::isNotBlank)) }
-                                .getOrElse { com.grinningfrog.atlas.provider.ProviderCheck(false, it.message ?: "Invalid endpoint") }
-                        } },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Test connection") }
-                    draftCheck?.let { Text(it.message, color = if (it.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error) }
-                    Button(
-                        enabled = name.isNotBlank() && model.isNotBlank() && draftCheck?.ok == true,
-                        onClick = {
-                            val id = UUID.randomUUID().toString()
-                            settings.saveProvider(draftEndpoint(id), apiKey)
-                            settings.markProviderVerified(id)
-                            val all = settings.loadProviders()
-                            val allIds = all.map { it.id }
-                            settings.saveRoutes(RouteTable(allIds, all.filter { it.supportsVision }.map { it.id }, allIds, allIds))
-                            name = ""; baseUrl = ""; model = ""; apiKey = ""; reasoning = false; promptProfile = PromptProfile.AUTO; draftCheck = null; onChanged()
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Save endpoint") }
-                }
-            }
-        }
+    /** Truncation yields for continuation, but repeated incomplete output is a diagnosable wait. */
+    fun observeResponse(lease: ExecutionLease, finishReason: String?): Boolean = atomic {
+        check(lease); val task=get(lease.taskId)!!
+        val truncated=finishReason in setOf("length", "max_tokens", "max_output_tokens")
+        val count=if(truncated) task.document.optInt("consecutive_cutoffs")+1 else 0
+        task.document.put("consecutive_cutoffs",count);save(task)
+        if(count>=3) control(task.id,ExecutionState.WAITING,"context_cutoff")
+        !truncated
     }
-}
-
-@Composable
-private fun ChatGptPlanCard(
-    auth: ChatGptAuthManager,
-    state: ChatGptAuthState,
-    settings: SecureSettings,
-    database: AtlasDatabase,
-    onChanged: () -> Unit,
-) {
-    val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    var showUsage by remember { mutableStateOf(false) }
-    var usage by remember { mutableStateOf(ChatGptUsageSummary()) }
-    fun refreshUsage() { usage = database.loadChatGptUsageSummary() }
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .35f))) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Text("CHATGPT", color = MaterialTheme.colorScheme.primary, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 1.sp)
-            when (state) {
-                ChatGptAuthState.Disconnected -> {
-                    Text("Continue with ChatGPT", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("Use eligible inference included with your ChatGPT plan. No API key required. Atlas cannot access your ChatGPT conversations or memory.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Button(onClick = { scope.launch {
-                        val result = auth.authorize()
-                        if (result is ChatGptAuthState.Connected) {
-                            val routes = settings.loadRoutes()
-                            val id = ChatGptAuthManager.ENDPOINT_ID
-                            settings.saveRoutes(routes.copy(
-                                fast = (routes.fast + id).distinct(), vision = (routes.vision + id).distinct(),
-                                reasoning = (routes.reasoning + id).distinct(), fallback = (routes.fallback + id).distinct(),
-                            ))
-                        }
-                        onChanged()
-                    } }, modifier = Modifier.fillMaxWidth()) { Text("Continue with ChatGPT") }
-                }
-                ChatGptAuthState.Authenticating -> {
-                    Text("Waiting for OpenAI authorization…", fontWeight = FontWeight.Bold)
-                    Text("Finish sign-in in your browser, then return to Atlas.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    CircularProgressIndicator(Modifier.size(28.dp))
-                }
-                ChatGptAuthState.Refreshing -> {
-                    Text("Refreshing ChatGPT authorization…", fontWeight = FontWeight.Bold)
-                    CircularProgressIndicator(Modifier.size(28.dp))
-                }
-                is ChatGptAuthState.Connected -> {
-                    Text("● Connected", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                    Text("Using ChatGPT plan${state.email?.let { " · $it" }.orEmpty()}")
-                    Text("Text · images where accepted · Atlas tools · hosted web search where eligible · streaming", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Model: ${state.models.firstOrNull { it.slug == state.model }?.displayName ?: state.model}", style = MaterialTheme.typography.bodySmall)
-                    if (state.models.size > 1) OutlinedButton(onClick = {
-                        val current = state.models.indexOfFirst { it.slug == state.model }.coerceAtLeast(0)
-                        auth.selectModel(state.models[(current + 1) % state.models.size].slug); onChanged()
-                    }, modifier = Modifier.fillMaxWidth()) { Text("Choose next eligible model") }
-                    OutlinedButton(onClick = { showUsage = !showUsage; if (showUsage) refreshUsage() }, modifier = Modifier.fillMaxWidth()) {
-                        Text(if (showUsage) "Hide usage details" else "Usage details")
-                    }
-                    OutlinedButton(onClick = { scope.launch {
-                        auth.disconnect()
-                        val id = ChatGptAuthManager.ENDPOINT_ID
-                        val routes = settings.loadRoutes()
-                        settings.saveRoutes(routes.copy(fast = routes.fast - id, vision = routes.vision - id, reasoning = routes.reasoning - id, fallback = routes.fallback - id))
-                        onChanged()
-                    } }, modifier = Modifier.fillMaxWidth()) { Text("Disconnect") }
-                }
-                is ChatGptAuthState.AuthorizationRequired -> {
-                    Text("Authorization required", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-                    Text(state.message)
-                    Button(onClick = { scope.launch { auth.authorize(); onChanged() } }, modifier = Modifier.fillMaxWidth()) { Text("Continue with ChatGPT") }
-                }
-                is ChatGptAuthState.EntitlementUnavailable -> {
-                    Text("ChatGPT plan unavailable", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-                    Text(state.message)
-                    OutlinedButton(onClick = { scope.launch { auth.authorize(); onChanged() } }, modifier = Modifier.fillMaxWidth()) { Text("Authorize plan usage") }
-                }
-                is ChatGptAuthState.UsageLimited -> {
-                    Text("ChatGPT plan usage limit reached", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-                    Text(state.message)
-                    Button(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://chatgpt.com/#settings/Usage"))) }, modifier = Modifier.fillMaxWidth()) { Text("View ChatGPT usage") }
-                    OutlinedButton(onClick = { auth.retryPlanUsage(); onChanged() }, modifier = Modifier.fillMaxWidth()) { Text("Try ChatGPT again") }
-                    OutlinedButton(onClick = { showUsage = !showUsage; if (showUsage) refreshUsage() }, modifier = Modifier.fillMaxWidth()) { Text(if (showUsage) "Hide Atlas usage" else "Atlas usage details") }
-                }
-                is ChatGptAuthState.UsageUnavailable -> {
-                    Text("ChatGPT usage temporarily unavailable", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-                    Text(state.message)
-                    OutlinedButton(onClick = { auth.retryPlanUsage(); onChanged() }, modifier = Modifier.fillMaxWidth()) { Text("Retry") }
-                    OutlinedButton(onClick = { showUsage = !showUsage; if (showUsage) refreshUsage() }, modifier = Modifier.fillMaxWidth()) { Text(if (showUsage) "Hide Atlas usage" else "Atlas usage details") }
-                }
-                is ChatGptAuthState.Error -> {
-                    Text("ChatGPT connection error", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-                    Text(state.message)
-                    OutlinedButton(onClick = { scope.launch { auth.authorize(); onChanged() } }, modifier = Modifier.fillMaxWidth()) { Text("Try again") }
-                }
-            }
-            if (showUsage) ChatGptUsageDetails(usage)
-        }
+    fun reserveTool(lease: ExecutionLease, executionTurnId: String? = null, operationId: String? = null): Boolean = atomic {
+        check(lease);val task=get(lease.taskId)!!;if(!available(task.id)) return@atomic false
+        task.usage.put("tool_calls",task.usage.optLong("tool_calls")+1);save(task.copy(leaseUntil=now()+LEASE_MS))
+        if(executionTurnId!=null && operationId!=null) event(task,"execution.tool_dispatched",JSONObject().put("turnId",executionTurnId).put("operation_id",operationId))
+        true
     }
-}
-
-@Composable
-private fun ChatGptUsageDetails(usage: ChatGptUsageSummary) {
-    HorizontalDivider()
-    Text("Atlas usage", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-    Text("${usage.totalTokens} tokens · ${usage.requests} completed requests", fontFamily = FontFamily.Monospace)
-    Text("Input ${usage.inputTokens} · output ${usage.outputTokens}", style = MaterialTheme.typography.bodySmall)
-    Text("Interactive ${usage.interactiveRequests} · background ${usage.backgroundRequests} · vision ${usage.visionRequests}", style = MaterialTheme.typography.bodySmall)
-    Text(
-        if (usage.hostedSearchUses == 0) "Hosted web search: no recorded use yet"
-        else "Hosted web search: ${usage.hostedSearchUses} actions · latest ${usage.lastHostedSearchAction ?: "unknown"} / ${usage.lastHostedSearchStatus ?: "unknown"}",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    if (usage.failedAttempts > 0) Text("Provider failures ${usage.failedAttempts} · usage-limit failures ${usage.usageLimitFailures}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-    Text("Measured locally by Atlas. OpenAI does not expose remaining plan allowance or reset time.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-}
-
-@Composable
-private fun RouteSummaryRow(label: String, ids: List<String>, providers: List<ProviderEndpoint>) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(88.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(ids.mapNotNull { id -> providers.firstOrNull { it.id == id }?.name }.joinToString(" → ").ifBlank { "No route" }, style = MaterialTheme.typography.bodySmall)
-    }
-}
-
-@Composable
-private fun ManagedInferenceSoonCard() {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .55f))) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Text("ATLAS CLOUD // ON THE WAY", color = MaterialTheme.colorScheme.primary, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 1.sp)
-            Text("Managed cloud inference", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Use Atlas without managing provider keys, with capability routing and a clear usage allowance. It is not enabled in this closed-alpha build yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-@Composable
-private fun ManagedAccountCard(account: ManagedAccountClient, settings: SecureSettings, onChanged: () -> Unit) {
-    val state by account.state.collectAsState()
-    val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-
-    fun installEndpoint() {
-        val endpoint = account.endpoint()
-        settings.saveProvider(endpoint, null)
-        val all = settings.loadProviders()
-        val ids = listOf(endpoint.id) + all.map { it.id }.filterNot { it == endpoint.id }
-        settings.saveRoutes(RouteTable(ids, ids.filter { id -> all.firstOrNull { it.id == id }?.supportsVision == true }, ids, ids))
-        onChanged()
-    }
-
-    fun launchCheckout(block: suspend () -> String) {
-        scope.launch {
-            runCatching { block() }
-                .onSuccess { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it))) }
-                .onFailure(account::reportError)
-        }
-    }
-
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .55f))) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Text("Atlas Cloud · managed frontier inference", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            if (!state.configured) {
-                Text("This build has the account and billing plumbing disabled. Configure the gateway and Supabase build values to enable it.")
-            } else if (!state.signedIn) {
-                Text("Create an Atlas account for metered inference. Subscribe for a recurring allowance or buy additional credit blocks.")
-                OutlinedTextField(email, { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(password, { password = it }, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(enabled = !state.busy && email.isNotBlank() && password.length >= 8, onClick = { scope.launch { account.signIn(email, password); if (account.state.value.signedIn) { installEndpoint(); account.refreshBalance() } } }) { Text("Sign in") }
-                    OutlinedButton(enabled = !state.busy && email.isNotBlank() && password.length >= 8, onClick = { scope.launch { account.signUp(email, password); if (account.state.value.signedIn) installEndpoint() } }) { Text("Create account") }
-                }
-            } else {
-                LaunchedEffect(state.email) { if (state.balanceMicros == null) account.refreshBalance() }
-                Text(state.email.orEmpty(), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("${state.balanceMicros?.let { "%.2f credits".format(it / 1_000_000.0) } ?: "Balance unavailable"} · ${state.subscriptionStatus}", fontWeight = FontWeight.SemiBold)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(enabled = !state.busy, onClick = { launchCheckout { account.checkout("subscription") } }) { Text("Subscribe") }
-                    OutlinedButton(enabled = !state.busy, onClick = { launchCheckout { account.checkout("credit_block") } }) { Text("Buy credits") }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButtonCompact("Use first") { installEndpoint() }
-                    TextButtonCompact("Refresh") { scope.launch { account.refreshBalance() } }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButtonCompact("Manage billing") { launchCheckout { account.portal() } }
-                    TextButtonCompact("Sign out") { scope.launch {
-                        settings.deleteProvider(ManagedAccountClient.ENDPOINT_ID)
-                        val remaining = settings.loadProviders()
-                        val ids = remaining.map { it.id }
-                        settings.saveRoutes(RouteTable(ids, remaining.filter { it.supportsVision }.map { it.id }, ids, ids))
-                        account.signOut()
-                        onChanged()
+    fun finish(lease: ExecutionLease, outcome: SliceOutcome, activeMs: Long): ExecutionTask? = atomic {
+        if(!valid(lease)) return@atomic get(lease.taskId)
+        val task=get(lease.taskId)!!;task.usage.put("active_ms",task.usage.optLong("active_ms")+activeMs.coerceAtLeast(0));task.document.remove("active_started_at")
+        save(task)
+        task.document.put("consecutive_retries",0)
+        val all=calls(task.id);val pending=pending(task.id).any { it.status==ToolCallStatus.UNKNOWN || it.status==ToolCallStatus.RUNNING }
+        val last=all.groupBy { it.name }.values.mapNotNull { it.lastOrNull() }
+        val superseded = all.filter(::failedOperation).mapNotNull { call -> (supersedingControl(call, all) ?: supersedingActivation(call, all))?.let { call to it } }.toMap()
+        val diagnosticFailures=last.filter { nonBlockingAuditFailure(it, task, all) }
+        val failures=last.filter { it !in diagnosticFailures && it !in superseded }.filter(::failedOperation)
+        val work = ExecutionWorkState.build(all, task.document.optJSONObject("workspace_target")?.optString("workspace_id"))
+        val requirement=task.document.optJSONObject("completion_requirement")
+        val missingCriteria=work.optJSONObject("latest_candidate")?.optString("candidate_id")?.let {missingAcceptance(currentTurn(task.id),it)} ?: emptyList()
+        work.put("missing_criteria",JSONArray(missingCriteria))
+        val pixelsPending=!pixelsSatisfied(task,all)
+        val deliveryPending=(missingCriteria.isNotEmpty() || pixelsPending) || requirement?.optString("delivery")=="activation" &&
+            requirement?.optString("workspace_id")==task.document.optJSONObject("workspace_target")?.optString("workspace_id") &&
+            work.optString("delivery_status")!="activated"
+        val signature=failures.joinToString("|") { call ->
+            if (recoverableVerification(call)) {
+                val r=ExecutionWorkState.receipt(call)
+                JSONObject().put("tool",call.name).put("error",call.error).apply {
+                    for (key in listOf("content_hash","passed","detail","host_failures","missing_operations","missing_criteria","failed_steps","failed_fixtures","notification_verified"))
+                        if(r.has(key))put(key,r.get(key))
+                    r.optJSONArray("failed_steps")?.let { steps -> for(i in 0 until steps.length()) {
+                        steps.getJSONObject(i).remove("ui_state");steps.getJSONObject(i).remove("recovery_guidance")
                     } }
+                }.toString()
+            } else call.name+":"+(call.error ?: call.resultJson.orEmpty()).take(1000)
+        }
+        val completionSignature=if(deliveryPending) "activation_required:"+(work.optJSONObject("latest_candidate")?.optString("content_hash") ?: "no_candidate") else ""
+        val effectiveSignature=signature+completionSignature
+        val failedThisSlice=failures.any { it.turnId==currentTurn(task.id) }
+        val priorFrontier = task.document.optJSONObject("work_state")?.optString("frontier")
+        val madeProgress = priorFrontier != work.getString("frontier")
+        val stagnant = if (madeProgress) 0 else task.document.optInt("no_progress_slices") + 1
+        task.document.put("no_progress_slices", stagnant)
+        work.put("no_progress_slices", stagnant)
+        task.document.put("work_state", work)
+        event(task, "execution.progress", JSONObject().put("frontier_changed", madeProgress).put("no_progress_slices", stagnant))
+        val repeatedCalls=failures.filter(ToolRetryPolicy::deterministicFailure).maxOfOrNull { failed -> all.count { prior ->
+            prior.name==failed.name && ToolRetryPolicy.sameArguments(prior.argumentsJson,failed.argumentsJson) && ToolRetryPolicy.deterministicFailure(prior)
+        } } ?: 0
+        val repeated=maxOf(repeatedCalls, if(effectiveSignature.isNotBlank() && (failedThisSlice || !madeProgress) && effectiveSignature==task.document.optString("failure_signature")) task.document.optInt("repeated_failures")+1 else if(failedThisSlice || deliveryPending) 1 else 0)
+        task.document.put("failure_signature",effectiveSignature).put("repeated_failures",repeated)
+        val recent=all.takeLast(20)
+        val definitionId=all.lastOrNull { it.name == "workspace_package_activate" || runCatching {JSONObject(it.argumentsJson).has("definition")}.getOrDefault(false) }?.id ?: task.document.getJSONObject("checkpoint").optString("latest_definition_operation_id").takeIf { it.isNotBlank() && it!="null" }
+        task.document.put("checkpoint",JSONObject().put("last_turn_id",currentTurn(task.id)).put("operation_ids",JSONArray(recent.map {it.id}))
+            .put("diagnostic_operation_ids", JSONArray(diagnosticFailures.map { it.id }))
+            .put("unresolved_operation_ids", JSONArray(failures.map { it.id }))
+            .put("resolved_operations", JSONArray(superseded.map { (failed, success) -> JSONObject().put("operation_id", failed.id)
+                .put("tool", failed.name).put("occurred_at_ms", failed.updatedAtMs).put("resolved_at_ms", success.updatedAtMs)
+                .put("resolved_by", success.id).put("resolution", if (failed.name == ToolHarness.CLARIFICATION_TOOL) "corrected_control_accepted" else "superseded_by_committed_activation") }))
+            .put("completed_operations",JSONArray(recent.filter {it.status==ToolCallStatus.COMPLETED}.map {it.id}))
+            .put("latest_definition_operation_id",definitionId))
+        val recover = outcome == SliceOutcome.RESPONDED && (deliveryPending || failures.isNotEmpty()) && failures.all(::recoverableVerification)
+        val reason=when { pending -> "unknown_operation_outcome";outcome==SliceOutcome.RESPONDED&&failures.isEmpty()&&!deliveryPending->"";!available(task.id)->"task_allowance";repeated>=3->"repeated_failure";recover -> "";outcome==SliceOutcome.RESPONDED&&failures.isNotEmpty()->"unresolved_tool_failure";else->when(outcome){SliceOutcome.WAITING_USER->"clarification";SliceOutcome.WAITING_PERMISSION->"authorization";SliceOutcome.WAITING_PROVIDER->"provider";SliceOutcome.BLOCKED->"runtime_blocker";else->""} }
+        task.document.put("wait_reason_at_ms", if (reason.isNotBlank()) now() else JSONObject.NULL)
+        task.document.put("wait_reason",reason).put("completion_kind",if(outcome==SliceOutcome.RESPONDED&&reason.isBlank()&&!recover) "response_finished; consult operation receipts for effects" else JSONObject.NULL)
+        task.document.put("recovery_required", recover && reason.isBlank())
+        if (recover && reason.isBlank()) event(task,"execution.recovery_required",JSONObject().put("reason",if(deliveryPending && failures.isEmpty()) "activation_required" else "recoverable_verification_failure").put("operation_ids",JSONArray(failures.map { it.id })))
+        val state=if(reason.isNotBlank()) ExecutionState.WAITING else if(recover) ExecutionState.READY else if(outcome==SliceOutcome.RESPONDED) ExecutionState.COMPLETED else ExecutionState.READY
+        val result=task.copy(state=state,owner=null,leaseUntil=0,nextRunAt=0);save(result);event(result,"execution.checkpoint",JSONObject().put("outcome",outcome.name).put("checkpoint",task.document.getJSONObject("checkpoint")).put("wait_reason",reason));result
+    }
+    private fun supersedingControl(call: AtlasToolCall, all: List<AtlasToolCall>): AtlasToolCall? {
+        if (call.name != ToolHarness.CLARIFICATION_TOOL || call.status != ToolCallStatus.REJECTED) return null
+        val args = runCatching { JSONObject(call.argumentsJson) }.getOrNull() ?: return null
+        return all.drop(all.indexOf(call) + 1).firstOrNull {
+            if (it.name != call.name || it.status != ToolCallStatus.COMPLETED) false else {
+                val result = runCatching { JSONObject(it.resultJson.orEmpty()) }.getOrDefault(JSONObject())
+                val next = runCatching { JSONObject(it.argumentsJson) }.getOrDefault(JSONObject())
+                result.optBoolean("accepted") && next.optString("action") == args.optString("action") &&
+                    next.optString("clarification_id") == args.optString("clarification_id")
+            }
+        }
+    }
+
+    private fun recoverableVerification(call: AtlasToolCall) =
+        (call.name in setOf("workspace_package_test", "workspace_package_ui_test", "workspace_package_validate") ||
+            call.name=="workspace_package_read_file" && call.status==ToolCallStatus.FAILED && call.error.orEmpty().startsWith("EMPTY_PACKAGE_DRAFT") ||
+            call.name=="workspace_package_stage" && (call.status==ToolCallStatus.COMPLETED && runCatching {JSONObject(call.resultJson.orEmpty()).optString("error")=="STAGING_ARGUMENTS_INVALID"}.getOrDefault(false) || call.status==ToolCallStatus.FAILED && (call.error.orEmpty().startsWith("VALIDATION_FAILED") || call.error.orEmpty().startsWith("Unknown fields:"))) ||
+            call.name=="workspace_package_activate" && call.status==ToolCallStatus.COMPLETED && runCatching {JSONObject(call.resultJson.orEmpty()).optString("error") in setOf("ACCEPTANCE_REQUIRED","CHECK_REQUIRED")}.getOrDefault(false)) &&
+        call.status in setOf(ToolCallStatus.COMPLETED, ToolCallStatus.REJECTED, ToolCallStatus.FAILED)
+
+    private fun failedOperation(call: AtlasToolCall): Boolean = call.status in setOf(ToolCallStatus.FAILED, ToolCallStatus.REJECTED) ||
+        (call.status == ToolCallStatus.COMPLETED && runCatching { JSONObject(call.resultJson.orEmpty()).let { result ->
+            listOf("valid", "ok", "passed", "structurally_valid").any { result.has(it) && !result.optBoolean(it) }
+        } }.getOrDefault(false))
+
+    /** Only discarded, side-effect-free candidate attempts can be superseded. Unknown outcomes never are. */
+    private fun supersedingActivation(call: AtlasToolCall, all: List<AtlasToolCall>): AtlasToolCall? {
+        if(call.name=="workspace_accept_unverified" && call.status in setOf(ToolCallStatus.FAILED,ToolCallStatus.REJECTED)) {
+            val args=runCatching {JSONObject(call.argumentsJson)}.getOrNull() ?: return null
+            val workspace=args.optString("workspace_id").takeIf(String::isNotBlank) ?: return null
+            val candidate=args.optString("candidate_id").takeIf(String::isNotBlank) ?: return null
+            return all.drop(all.indexOf(call)+1).lastOrNull { success ->
+                success.name=="workspace_package_activate" && success.status==ToolCallStatus.COMPLETED &&
+                    runCatching {val r=receipt(success)?.let(::JSONObject) ?: return@runCatching false
+                        r.optBoolean("activated") && r.optString("workspace_id")==workspace && r.optString("candidate_id")==candidate &&
+                            database.loadComposableWorkspace(workspace)?.liveRevisionId==r.optString("revision_id")
+                    }.getOrDefault(false)
+            }
+        }
+        if (call.name !in setOf("workspace_package_stage", "workspace_package_test", "workspace_package_ui_test", "workspace_package_validate") ||
+            call.status !in setOf(ToolCallStatus.FAILED, ToolCallStatus.REJECTED, ToolCallStatus.COMPLETED)) return null
+        val args = runCatching { JSONObject(call.argumentsJson) }.getOrNull() ?: return null
+        val workspace = args.optString("workspace_id").takeIf(String::isNotBlank) ?: return null
+        val base = args.optString("base_revision_id").takeIf(String::isNotBlank) ?: args.optString("candidate_id").takeIf(String::isNotBlank)?.let { candidate ->
+            database.readableDatabase.rawQuery("SELECT base_revision_id FROM workspace_package_candidates WHERE workspace_id=? AND candidate_id=?", arrayOf(workspace, candidate)).use { if (it.moveToFirst()) it.getString(0) else null }
+        } ?: return null
+        return all.drop(all.indexOf(call) + 1).lastOrNull { success ->
+            if (success.name != "workspace_package_activate" || success.status != ToolCallStatus.COMPLETED) false
+            else runCatching {
+                val receipt = receipt(success)?.let(::JSONObject) ?: return@runCatching false
+                receipt.optBoolean("activated") && receipt.optString("workspace_id") == workspace && receipt.optString("previous_revision_id") == base &&
+                    database.loadComposableWorkspace(workspace)?.liveRevisionId == receipt.optString("revision_id")
+            }.getOrDefault(false)
+        }
+    }
+    private fun nonBlockingAuditFailure(call: AtlasToolCall, task: ExecutionTask, all: List<AtlasToolCall>): Boolean {
+        if(call.name=="atlas_task_handoff_pixels" && call.status in setOf(ToolCallStatus.FAILED,ToolCallStatus.REJECTED)) {
+            val requirement=task.document.optJSONObject("completion_requirement")
+            if(requirement?.optBoolean("require_pixels")==true)return false
+            val workspace=task.document.optJSONObject("workspace_target")?.optString("workspace_id") ?: return false
+            return all.any { success -> success.name=="workspace_package_activate" && success.status==ToolCallStatus.COMPLETED &&
+                runCatching { val r=receipt(success)?.let(::JSONObject) ?: return@runCatching false
+                    r.optBoolean("activated") && r.optString("workspace_id")==workspace && database.loadComposableWorkspace(workspace)?.liveRevisionId==r.optString("revision_id")
+                }.getOrDefault(false) }
+        }
+        if(call.name=="workspace_package_read_file" && call.status==ToolCallStatus.FAILED && call.error.orEmpty().startsWith("EMPTY_PACKAGE_DRAFT")) {
+            val workspace=runCatching {JSONObject(call.argumentsJson).getString("workspace_id")}.getOrNull() ?: return false
+            return all.drop(all.indexOf(call)+1).any {next -> next.name=="workspace_package_stage" && next.status==ToolCallStatus.COMPLETED && runCatching {val r=JSONObject(next.resultJson.orEmpty());r.optString("workspace_id")==workspace && r.optBoolean("structurally_valid")}.getOrDefault(false)}
+        }
+        if(call.name=="workspace_capture_view" && call.status==ToolCallStatus.FAILED) {
+            val args=runCatching {JSONObject(call.argumentsJson)}.getOrDefault(JSONObject())
+            val requirement=task.document.optJSONObject("completion_requirement")
+            if(requirement?.optBoolean("require_pixels")==true)return false
+            val error=call.error.orEmpty()+call.resultJson.orEmpty()
+            if(!error.contains("WORKSPACE_NOT_OPEN") && !error.contains("Target workspace is not open for pixel capture") && !error.contains("Workspace panel is not visible or has not drawn this revision"))return false
+            if(requirement?.optString("pixels_owner")=="user" && requirement.optString("workspace_id")==args.optString("workspace_id"))return true
+            return all.any { success -> success.name=="workspace_package_activate" && success.status==ToolCallStatus.COMPLETED &&
+                runCatching {val r=receipt(success)?.let(::JSONObject) ?: return@runCatching false
+                    r.optBoolean("activated") && r.optString("workspace_id")==args.optString("workspace_id") &&
+                    database.loadComposableWorkspace(r.getString("workspace_id"))?.liveRevisionId==r.optString("revision_id")
+                }.getOrDefault(false) }
+        }
+        if (call.name != CapabilityDiscovery.TOOL || call.status != ToolCallStatus.FAILED) return false
+        val args = runCatching { JSONObject(call.argumentsJson) }.getOrNull() ?: return false
+        val result = runCatching { JSONObject(call.resultJson.orEmpty()) }.getOrNull() ?: return false
+        if (args.optString("stage") != "resume_local" || args.has("blocker_id") || result.optString("error_code") != "missing_blocker") return false
+        if (CapabilityDiscovery(database).active(currentTurn(task.id))) return false
+        val mutations = setOf("workspace_package_create", "workspace_package_activate", "workspace_create", "workspace_replace_definition", "workspace_patch_definition", "workspace_update_metadata",
+            "workspace_add_record", "workspace_update_record", "workspace_delete_record", "workspace_restore_record")
+        // A completion claim alone is insufficient: require an atomic committed effect receipt.
+        return all.any { it.name in mutations && it.status == ToolCallStatus.COMPLETED && receipt(it) != null }
+    }
+    private fun pixelsSatisfied(task: ExecutionTask, all: List<AtlasToolCall>): Boolean {
+        val requirement=task.document.optJSONObject("completion_requirement") ?: return true
+        if(!requirement.optBoolean("require_pixels"))return true
+        val workspace=requirement.optString("workspace_id")
+        val revision=database.loadComposableWorkspace(workspace)?.liveRevisionId ?: return false
+        return all.any {it.name=="workspace_capture_view" && it.status==ToolCallStatus.COMPLETED && runCatching {
+            val r=JSONObject(it.resultJson.orEmpty());r.optBoolean("ok") && r.optString("workspace_id")==workspace && r.optString("revision_id")==revision
+        }.getOrDefault(false)}
+    }
+    fun outstanding(taskId: String): JSONArray {
+        val task=get(taskId) ?: return JSONArray();val all=calls(taskId)
+        return JSONArray(all.groupBy {it.name}.values.mapNotNull {it.lastOrNull()}.filter {
+            failedOperation(it) && !nonBlockingAuditFailure(it,task,all) && supersedingControl(it,all)==null && supersedingActivation(it,all)==null
+        }.map {JSONObject().put("operation_id",it.id).put("tool",it.name).put("error",it.error).put("result",it.resultJson?.take(1200))})
+    }
+    /** Repair stale optional-inspection waits before creating another inference slice. */
+    fun reconcileDelivered(taskId: String): ExecutionTask? = atomic {
+        val task=get(taskId) ?: return@atomic null
+        if(task.state !in setOf(ExecutionState.WAITING,ExecutionState.PAUSED,ExecutionState.READY) ||
+            task.waitReason !in setOf("unresolved_tool_failure","repeated_failure") || pending(taskId).isNotEmpty())return@atomic task
+        val work=ExecutionWorkState.build(calls(taskId),task.document.optJSONObject("workspace_target")?.optString("workspace_id"))
+        val activation=work.optJSONObject("activation") ?: return@atomic task
+        if(work.optString("delivery_status")!="activated" || database.loadComposableWorkspace(activation.optString("workspace_id"))?.liveRevisionId!=activation.optString("revision_id") || outstanding(taskId).length()>0)return@atomic task
+        if(missingAcceptance(currentTurn(taskId),activation.optString("candidate_id")).isNotEmpty() || !pixelsSatisfied(task,calls(taskId)))return@atomic task
+        val checkpoint=task.document.optJSONObject("checkpoint") ?: JSONObject()
+        val diagnostics=calls(taskId).filter {nonBlockingAuditFailure(it,task,calls(taskId))}.map {it.id}
+        checkpoint.put("unresolved_operation_ids",JSONArray()).put("diagnostic_operation_ids",JSONArray(diagnostics))
+        task.document.put("checkpoint",checkpoint)
+        task.document.put("work_state",work).put("wait_reason","").put("recovery_required",false).put("completion_kind","delivered; optional inspection unavailable")
+        val result=task.copy(state=ExecutionState.COMPLETED,generation=task.generation+1,owner=null,leaseUntil=0,nextRunAt=0)
+        save(result);event(result,"execution.delivery_reconciled");result
+    }
+    fun control(taskId: String, state: ExecutionState, reason: String, budget: ExecutionBudget? = null): ExecutionTask? = atomic {
+        val t=get(taskId) ?: return@atomic null
+        if(t.state in setOf(ExecutionState.COMPLETED,ExecutionState.CANCELLED,ExecutionState.FAILED)) return@atomic t
+        if(t.state==ExecutionState.RUNNING) { t.usage.put("active_ms",t.usage.optLong("active_ms")+(now()-t.document.optLong("active_started_at",now())).coerceAtLeast(0));t.document.remove("active_started_at") }
+        if(state in setOf(ExecutionState.READY,ExecutionState.PAUSED,ExecutionState.CANCELLED)) reconcileLocal(t)
+        if(state==ExecutionState.READY && pending(taskId).any {it.status==ToolCallStatus.UNKNOWN || it.status==ToolCallStatus.RUNNING}) return@atomic t
+        if(state==ExecutionState.CANCELLED) {
+            pending(taskId).filter { it.status in setOf(ToolCallStatus.PROPOSED,ToolCallStatus.APPROVED,ToolCallStatus.WAITING_FOR_CONFIRMATION) }.forEach { call ->
+                val feedback=JSONObject().put("ok",false).put("error","Task cancelled before execution").toString()
+                database.updateToolCall(call.id,ToolCallStatus.REJECTED,resultJson=feedback,error=reason)
+                database.insertMessage(AtlasMessage(sessionId=t.sessionId,turnId=call.turnId,role=MessageRole.TOOL,content=feedback,createdAtMs=now(),kind=MessageKind.TOOL_RESULT,toolCallId=call.id))
+            }
+            database.updateTurn(currentTurn(taskId),TurnStatus.CANCELLED,error=reason)
+            database.loadPendingClarification(t.sessionId)?.takeIf {forTurn(it.sourceTurnId)?.id==taskId}?.let {database.updateClarification(it.id,ClarificationStatus.ABANDONED)}
+        }
+        t.document.put("wait_reason",reason);budget?.let { t.document.put("budget",it.json()) }
+        val result=t.copy(state=state,generation=t.generation+1,owner=null,leaseUntil=0,nextRunAt=0);save(result);event(result,"execution.${state.name.lowercase()}",JSONObject().put("reason",reason));result
+    }
+    fun retry(lease: ExecutionLease, reason: String, activeMs: Long = 0): ExecutionTask? = atomic {
+        if(!valid(lease)) return@atomic get(lease.taskId)
+        val t=get(lease.taskId)!!;t.usage.put("active_ms",t.usage.optLong("active_ms")+activeMs.coerceAtLeast(0));t.document.remove("active_started_at");val n=t.document.optInt("consecutive_retries")+1;t.document.put("consecutive_retries",n).put("wait_reason",reason)
+        val result=t.copy(state=if(n>=8) ExecutionState.WAITING else ExecutionState.READY,owner=null,leaseUntil=0,nextRunAt=now()+minOf(60_000L,1000L shl minOf(n,6)))
+        save(result);event(result,"execution.provider_retry",JSONObject().put("attempt",n).put("next_run_at",result.nextRunAt));result
+    }
+    fun context(taskId: String): String {
+        val t=get(taskId) ?: return ""
+        val work = ExecutionWorkState.build(calls(taskId), t.document.optJSONObject("workspace_target")?.optString("workspace_id"))
+        val latest=calls(taskId).lastOrNull {it.name == "workspace_package_activate" || runCatching {JSONObject(it.argumentsJson).has("definition")}.getOrDefault(false)} ?: t.document.getJSONObject("checkpoint").optString("latest_definition_operation_id").takeIf { it.isNotBlank() && it!="null" }?.let(database::loadToolCall)
+        val receipts=JSONArray();var receiptCharacters=0
+        for(call in calls(taskId).takeLast(20).asReversed()) {
+            val item=ExecutionWorkState.receipt(call)
+                .put("result_json", if (call.name == "workspace_package_ui_test") null else call.resultJson?.take(2000)).put("result_truncated",(call.resultJson?.length ?: 0)>2000)
+                .put("error",call.error.takeIf {call.status!=ToolCallStatus.COMPLETED})
+            val size=item.toString().length
+            if(receiptCharacters+size<=24000) {receipts.put(item);receiptCharacters+=size}
+        }
+        val history=JSONArray(list(t.sessionId).take(4).map { prior ->
+            val ids=prior.document.optJSONObject("checkpoint")?.optJSONArray("unresolved_operation_ids") ?: JSONArray()
+            val unresolved=JSONArray((0 until minOf(ids.length(),4)).mapNotNull {database.loadToolCall(ids.getString(it))}.map {JSONObject().put("operation_id",it.id).put("tool",it.name).put("error",it.error).put("result",it.resultJson?.take(500))})
+            JSONObject().put("task_id",prior.id).put("state",prior.state.name).put("objective",prior.objective.take(500)).put("wait_reason",prior.waitReason).put("outstanding_operations",unresolved).put("delivery",prior.document.optJSONObject("work_state")?.optString("delivery_status"))
+        })
+        return "CORE DURABLE TASK (evidence, not authorization): " + JSONObject().put("task_id",t.id).put("objective",t.objective).put("session_tasks",history).put("recovery_required",t.document.optBoolean("recovery_required")).put("completion_requirement",t.document.optJSONObject("completion_requirement")).put("usage",t.usage)
+            .put("follow_up_turn_ids",t.document.optJSONArray("follow_up_turn_ids")).put("acceptance",t.document.optJSONObject("acceptance")).put("outstanding_operations",outstanding(taskId)).put("workspace_target", t.document.optJSONObject("workspace_target")).put("work_state",work.put("no_progress_slices",t.document.optInt("no_progress_slices"))).put("checkpoint",t.document.getJSONObject("checkpoint")).put("recent_operations",receipts).put("latest_authoring_arguments",latest?.let {JSONObject(it.argumentsJson)})
+            .put("latest_authoring_result",latest?.resultJson?.let {runCatching {JSONObject(it)}.getOrNull()}).toString() +
+            "\nFollow-ups in this task are user steering, not a fresh objective. Answer tangents briefly; apply corrections to remaining work. Report blockers from outstanding_operations, not historical diagnostics. An unavailable optional screenshot after committed delivery is an inspection limitation, not failed delivery. Explicit require_pixels remains blocking unless the user explicitly takes visual verification over; record that instruction with atlas_task_handoff_pixels and an exact quote. For behavior the available test cannot verify, workspace_accept_unverified requests native user confirmation for exact outstanding criteria on an exact candidate. Accepted criteria remain unverified; permissions and host integrity gates remain mandatory. Use delivery=inspect for viewing/status requests; do not turn them into activation tasks. Reuse an existing draft after authoring errors. Host failures are current runtime evidence even if caught by app code; user-reported live failures cannot be dismissed using a passing test from another mode. Declare require_persistence=true for saved-state requests and prove it through isolated commit/reload/assert_record. Declare acceptance_criteria for requested UI behaviors in workspace_target, and attach each criterion to a meaningful UI assertion step; baseline capability coverage alone does not verify requested changes.\nRecovery: declare delivery=activation, draft or inspect in workspace_target according to the user request. This is a completion requirement, never authority. A response is a progress report while recovery_required=true. Diagnose the pinned failed check, correct the test or candidate, and rerun verification. Do not stop merely because a local simulated test failed. Wait only for an actual missing user answer, authorization, unavailable resource or uncertain effect. Claim activation only from a committed activation receipt matching the candidate. If the user requested a draft or review, do not activate it without authorization." +
+            "\nWorkspace targeting: ambiguous commands use the captured workspace_target. Explicitly named edit targets must be resolved with workspace_target; inspect other workspaces as references without retargeting. Never change target merely because the user browses. Ask clarification for duplicate names or unclear components. Continue the pending objective from recorded receipts. work_state holds the exact latest used candidate and checks for this target. A failed UI assertion is not a workspace migration problem: compare expected and actual text, correct the test or implementation, and exercise the remaining operations. Never reconstruct or combine UUID fragments. Reuse exact receipt identifiers. Successful reads alone are not app progress. If no_progress_slices grows, reassess the failing test or edit strategy instead of repeating inspection; retain the task and existing candidate. A new slice is not a new user request, not new authority, and not proof of success. Avoid repeating committed effects."
+    }
+    private fun reconcileLocal(task: ExecutionTask) {
+        val local=task.document.getJSONObject("scope").getJSONArray("atomic_local_tools")
+        val names=(0 until local.length()).map(local::getString).toSet()
+        pending(task.id).filter {it.status==ToolCallStatus.UNKNOWN}.forEach { call ->
+            val receipt=receipt(call)
+            if(receipt!=null) database.updateToolCall(call.id,ToolCallStatus.COMPLETED,resultJson=receipt)
+            else if(call.name in names) database.updateToolCall(call.id,ToolCallStatus.FAILED,error="Atomic local operation rolled back; no effect receipt")
+        }
+    }
+    fun recover(sessionId: String) = atomic {
+        running(sessionId).forEach { task ->
+            task.usage.put("active_ms",task.usage.optLong("active_ms")+(now()-task.document.optLong("active_started_at",now())).coerceIn(0,LEASE_MS));task.document.remove("active_started_at")
+            reconcileLocal(task)
+            val unknown=pending(task.id).any {it.status==ToolCallStatus.UNKNOWN}
+            task.document.put("wait_reason",if(unknown) "unknown_operation_outcome" else "process_restart")
+            val result=task.copy(state=if(unknown) ExecutionState.WAITING else ExecutionState.READY,generation=task.generation+1,owner=null,leaseUntil=0)
+            save(result);event(result,"execution.recovered")
+        }
+    }
+    fun receipt(call: AtlasToolCall): String? = database.readableDatabase.rawQuery("SELECT session_id,arguments_hash,result_json FROM local_operation_receipts WHERE operation_id=?",arrayOf(call.id)).use { c ->
+        if(!c.moveToFirst()) null else {require(c.getString(0)==call.sessionId&&c.getString(1)==hash(call.name+"\n"+call.argumentsJson)){"Operation ID reused with different scope or arguments"};c.getString(2)} }
+    fun localOperation(call: AtlasToolCall, lease: ExecutionLease?, execute: () -> ToolExecutionResult): ToolExecutionResult = atomic {
+        receipt(call)?.let { return@atomic ToolExecutionResult(it) }
+        forTurn(call.turnId)?.let { task -> require(lease != null && lease.taskId == task.id) { "A task effect requires its execution lease" };check(lease) }
+        val result=execute()
+        lease?.let(::check)
+        database.writableDatabase.insertOrThrow("local_operation_receipts",null,ContentValues().apply {put("operation_id",call.id);put("session_id",call.sessionId);put("arguments_hash",hash(call.name+"\n"+call.argumentsJson));put("result_json",result.resultJson)})
+        if(database.loadToolCall(call.id)!=null) database.updateToolCall(call.id,ToolCallStatus.COMPLETED,resultJson=result.resultJson)
+        result
+    }
+}
+
+/** Driver is the same foreground slice used by the app. No model-authored scheduling or extra authority. */
+class DurableTaskExecutor(private val store: ExecutionTaskStore, private val now: () -> Long = System::currentTimeMillis,
+    private val sleep: suspend (Long) -> Unit = { delay(it) }) {
+    suspend fun run(taskId: String, driver: suspend (ExecutionLease, String) -> SliceOutcome): ExecutionTask? {
+        val owner=UUID.randomUUID().toString()
+        while(true) {
+            currentCoroutineContext().ensureActive()
+            val task=store.get(taskId) ?: return null
+            if(task.state!=ExecutionState.READY) return task
+            if(task.nextRunAt>now()) {sleep(minOf(task.nextRunAt-now(),60_000));continue}
+            if(!store.available(taskId)) return store.control(taskId,ExecutionState.WAITING,"task_allowance")
+            val lease=store.claim(taskId,owner) ?: return store.get(taskId)
+            val turnId=store.currentTurn(taskId)
+            val started=now()
+            val outcome=try { driver(lease,turnId) } catch(cancelled: CancellationException) {
+                val current=store.get(taskId)
+                if(current?.state==ExecutionState.RUNNING && current.owner==lease.owner && current.generation==lease.generation) store.control(taskId,ExecutionState.PAUSED,"runner interrupted")
+                throw cancelled
+            }
+            catch(error: com.grinningfrog.atlas.provider.InferenceUnavailableException) {
+                if(!error.outcomeAmbiguous && error.providerCode !in setOf("subscription_sharing_usage_limit_exceeded","subscription_sharing_invalid_user","subscription_sharing_user_not_eligible")) {
+                    val retry=store.retry(lease,error.message.orEmpty(),now()-started);if(retry?.state!=ExecutionState.READY) return retry;store.nextTurn(taskId);continue
                 }
-            }
-            state.message?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            if (state.busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-        }
-    }
-}
-
-@Composable
-private fun EventsPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, settings: SecureSettings, archive: SessionArchive, modifier: Modifier) {
-    val scope = rememberCoroutineScope()
-    var retentionDays by remember { mutableIntStateOf(settings.mediaRetentionDays) }
-    var confirmDelete by remember { mutableStateOf(false) }
-    var actionMessage by remember { mutableStateOf<String?>(null) }
-    if (confirmDelete) AlertDialog(
-        onDismissRequest = { confirmDelete = false },
-        title = { Text("Delete this session permanently?") },
-        text = { Text("This removes its transcript, memory, observations, events, tool records, and Atlas-owned images from this phone. This cannot be undone.") },
-        confirmButton = { TextButton(onClick = {
-            confirmDelete = false
-            scope.launch { runCatching { runtime.deleteCurrentSession() }
-                .onSuccess { actionMessage = "Session deleted from this phone" }
-                .onFailure { actionMessage = it.message ?: "Deletion failed" } }
-        }) { Text("Delete") } },
-        dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
-    )
-    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item {
-            AtlasBrandHeader("LOCAL RECORD", "DEVICE OWNED")
-            Spacer(Modifier.height(20.dp))
-            Text("Data & activity", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text("Your session stays on this phone except for content sent to your chosen inference and speech services.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(6.dp))
-        }
-        item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    Text("Session controls", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("Exports contain the transcript, session state and related live workspaces. Images, audio, revision history and credentials are excluded.", style = MaterialTheme.typography.bodySmall)
-                    com.grinningfrog.atlas.ui.ArchiveImportControl(archive.database, "session") { result -> runtime.openImportedSession(result.id) }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(enabled = snapshot.session != null, onClick = {
-                            snapshot.session?.let { runCatching { archive.share(it.id) }.onFailure { error -> actionMessage = error.message } }
-                        }) { Icon(Icons.Default.IosShare, null); Text(" Export") }
-                        OutlinedButton(enabled = snapshot.session != null, onClick = { confirmDelete = true }) {
-                            Icon(Icons.Default.Delete, null); Text(" Delete")
-                        }
-                    }
-                    actionMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                }
-            }
-        }
-        item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Image retention", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("Processed images from completed sessions are removed after $retentionDays days. Transcripts and audit records remain until you delete the session.", style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(1, 7, 30).forEach { days ->
-                            if (retentionDays == days) Button(onClick = {}) { Text("$days d") }
-                            else OutlinedButton(onClick = {
-                                retentionDays = days; settings.mediaRetentionDays = days
-                                scope.launch { archive.enforceMediaRetention(days) }
-                            }) { Text("$days d") }
-                        }
-                    }
-                }
-            }
-        }
-        item {
-            Text("Local event stream", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("Monotonic sequence · newest first", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        if (snapshot.recentEvents.isEmpty()) item { Text("Start a session to create an auditable physical-agent trace.") }
-        items(snapshot.recentEvents.asReversed(), key = AtlasEvent::sequence) { event -> EventRow(event) }
-    }
-}
-
-@Composable
-private fun EventRow(event: AtlasEvent) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.padding(12.dp)) {
-            Row(Modifier.fillMaxWidth()) {
-                Text("#${event.sequence}  ${event.type}", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                Text(DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(event.atMs)), style = MaterialTheme.typography.bodySmall)
-            }
-            if (event.dataJson != "{}") Text(event.dataJson.take(420), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-@Composable
-private fun HealthCard(snapshot: RuntimeSnapshot) {
-    val health = snapshot.deviceHealth
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.padding(14.dp)) {
-            Text("Runtime health", fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(5.dp))
-            Text("battery ${health.batteryPercent?.let { "$it%" } ?: "—"} · ${health.thermalStatus} · ${health.network} · ${health.motion.name.lowercase()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            snapshot.nextHeartbeatAtMs?.let { Text("next heartbeat ${DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(it))}", style = MaterialTheme.typography.bodySmall) }
-        }
-    }
-}
-
-@Composable
-private fun NoticeCard(title: String, detail: String) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-        Column(Modifier.padding(14.dp)) { Text(title, fontWeight = FontWeight.Bold); Text(detail) }
-    }
-}
-
-@Composable
-private fun TextButtonCompact(text: String, onClick: () -> Unit) {
-    androidx.compose.material3.TextButton(onClick, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)) { Text(text) }
-}
-
-private fun duration(milliseconds: Long): String = when {
-    milliseconds < 1_000 -> "${milliseconds}ms"
-    milliseconds < 60_000 -> "${milliseconds / 1_000}s"
-    else -> "${milliseconds / 60_000}m"
-}
-
-private val AtlasColors = darkColorScheme(
-    primary = Color(0xFF5CFF78),
-    onPrimary = Color(0xFF001707),
-    primaryContainer = Color(0xFF0A1A0F),
-    onPrimaryContainer = Color(0xFFC3FFD0),
-    secondary = Color(0xFFD7DED9),
-    onSecondary = Color(0xFF111512),
-    secondaryContainer = Color(0xFF111713),
-    onSecondaryContainer = Color(0xFFDDE7DF),
-    tertiary = Color(0xFFE2B96A),
-    tertiaryContainer = Color(0xFF241B0D),
-    onTertiaryContainer = Color(0xFFF4D79B),
-    background = Color(0xFF010302),
-    onBackground = Color(0xFFEEF5EF),
-    surface = Color(0xFF080C09),
-    onSurface = Color(0xFFEEF5EF),
-    surfaceVariant = Color(0xFF101612),
-    onSurfaceVariant = Color(0xFF98A29B),
-    outline = Color(0xFF253029),
-    outlineVariant = Color(0xFF18201B),
-    error = Color(0xFFFF7B78),
-    errorContainer = Color(0xFF25100F),
-    onErrorContainer = Color(0xFFFFDAD7),
-)
-
-private val AtlasAmber = Color(0xFFE2B96A)
-
-private val AtlasShapes = Shapes(
-    extraSmall = RoundedCornerShape(6.dp),
-    small = RoundedCornerShape(8.dp),
-    medium = RoundedCornerShape(12.dp),
-    large = RoundedCornerShape(16.dp),
-    extraLarge = RoundedCornerShape(20.dp),
-)
-
-private val BaseTypography = Typography()
-private val AtlasTypography = Typography(
-    headlineLarge = BaseTypography.headlineLarge.copy(fontWeight = FontWeight.Bold, letterSpacing = (-.7).sp),
-    titleLarge = BaseTypography.titleLarge.copy(fontWeight = FontWeight.SemiBold, letterSpacing = (-.2).sp),
-    titleMedium = BaseTypography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-    labelLarge = BaseTypography.labelLarge.copy(fontFamily = FontFamily.Monospace, letterSpacing = .7.sp),
-    labelMedium = BaseTypography.labelMedium.copy(fontFamily = FontFamily.Monospace, letterSpacing = .6.sp),
-    labelSmall = BaseTypography.labelSmall.copy(fontFamily = FontFamily.Monospace, letterSpacing = .5.sp),
-)
-
-@Composable
-private fun AtlasTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = AtlasColors, typography = AtlasTypography, shapes = AtlasShapes, content = content)
-}
-
-@Composable
-private fun TurnDiagnosticsCard(report: com.grinningfrog.atlas.runtime.TurnDiagnostics) {
-    var nowMs by remember(report.turn.id) { mutableStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(report.turn.id, report.terminal) {
-        while (!report.terminal) { kotlinx.coroutines.delay(1000); nowMs = System.currentTimeMillis() }
-    }
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text(report.headline, fontWeight = FontWeight.Bold)
-            Text("${if (report.terminal) "Historical slice" else "Current slice"} ${report.turn.id.take(8)} · started ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.MEDIUM).format(java.util.Date(report.turn.createdAtMs))}", style = MaterialTheme.typography.labelSmall)
-            if (report.terminal) Text("Ended ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(report.turn.updatedAtMs))}. This card reports this slice only; current blockers appear on the task card.", style = MaterialTheme.typography.bodySmall)
-            Text("Elapsed: ${"%.1f".format(java.util.Locale.US, report.elapsedMs(nowMs) / 1000.0)} s · inference: ${"%.1f".format(java.util.Locale.US, report.inferenceMs / 1000.0)} s${if (report.inferencePending) " + generating" else ""}", style = MaterialTheme.typography.bodySmall)
-            Text("Steps: ${report.turn.stepCount}/${com.grinningfrog.atlas.runtime.AgentLoopPolicy.MAX_STEPS} · tool calls: ${report.toolCalls}/${com.grinningfrog.atlas.runtime.AgentLoopPolicy.MAX_TOOL_CALLS}", style = MaterialTheme.typography.bodySmall)
-            report.runningTool?.let { Text("Running: $it", style = MaterialTheme.typography.bodySmall) }
-            Text("Schema: ${report.schema} · migration: ${report.migration}", style = MaterialTheme.typography.bodySmall)
-            Text("Tests: ${report.tests}", style = MaterialTheme.typography.bodySmall)
-            Text(if (report.revisionIds.isEmpty()) "Apply revision: NOT COMMITTED" else "Apply revision: COMMITTED (${report.revisionIds.last().take(8)})", style = MaterialTheme.typography.bodySmall)
-            report.turn.error?.let { Text("Reason: $it", style = MaterialTheme.typography.bodySmall) }
+                return store.finish(lease,SliceOutcome.WAITING_PROVIDER,now()-started)
+            } catch(error: Exception) { store.finish(lease,SliceOutcome.BLOCKED,now()-started);throw error }
+            val result=store.finish(lease,outcome,now()-started) ?: return null
+            if(result.state!=ExecutionState.READY) return result
+            store.nextTurn(taskId)
+            sleep(1) // A cooperative boundary, not an additional inference or a user interaction.
         }
     }
 }

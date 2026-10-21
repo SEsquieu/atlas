@@ -17,7 +17,11 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 | AF-007 | Support pointer dragging and classify test limitations | implemented | [#44](https://github.com/SEsquieu/atlas/issues/44); [PR #37](https://github.com/SEsquieu/atlas/pull/37) |
 
 | AF-008 | Cancel superseded validation without interrupting manual delivery | proposed | [#46](https://github.com/SEsquieu/atlas/issues/46) |
-| AF-009 | Bound hung UI checks and recover workspace rendering | in progress | [#48](https://github.com/SEsquieu/atlas/issues/48) |
+| AF-009 | Bound hung UI checks and recover workspace rendering | verified | [#48](https://github.com/SEsquieu/atlas/issues/48); [PR #49](https://github.com/SEsquieu/atlas/pull/49) |
+| AF-010 | Keep blocker replies available and retire approval turns | in progress | [#50](https://github.com/SEsquieu/atlas/issues/50) |
+| AF-011 | Resolve obsolete acceptance failures after matching delivery | in progress | [#51](https://github.com/SEsquieu/atlas/issues/51) |
+| AF-012 | Return explicit expected and actual assertion counts | in progress | [#52](https://github.com/SEsquieu/atlas/issues/52) |
+| AF-013 | Audit and reduce model-boundary schema and identity churn | proposed | [#53](https://github.com/SEsquieu/atlas/issues/53) |
 
 ## AF-001: Reduce malformed package staging
 
@@ -94,8 +98,20 @@ AF-005 implements stronger assertion tools and explicit evidence, not an indepen
 
 ## AF-009: Bound hung UI checks and recover workspace rendering
 
-- Status: in progress; not included in alpha.29.
+- Status: verified in alpha.30; merged PR #49. Issue #48 closed.
 - Evidence: Maze generation UI could leave its exit unreachable and loop forever tracing the route. A separate pure fixture passed; it did not execute the UI algorithm. Repeated UI calls lacked terminal results. Other live-workspace failures are user reported; shared renderer involvement remains to be confirmed on the phone.
 - Scope: per-evaluation and total deadlines, active-step failure receipts, renderer interruption before disposal, content-hash suppression after execution timeout, and terminal cancellation bookkeeping without overwriting committed receipts.
 - Validation: device regression exercises a synchronous infinite-loop click, suppression despite changed test steps, corrected source and reopening an existing healthy application's surface. CI pending; local Gradle distribution download is unavailable. No physical-device recovery or semantic correctness claim.
 - Constraint: WebView renderers may be shared; termination can invalidate other surfaces. Their stored packages and records must be preserved. This is recovery, not process isolation.
+
+### AF-009 acceptance evidence
+
+Final alpha.30 source 7b77046 passed Android unit/lint, signed build 39522593617, and all 15 device tests on API 35/36 in run 39522526541. The device regression exercises a real infinite-loop click and subsequent recovery. In session ab31192d, MazeGen activated successfully and completed UI checks in about 2.4 seconds; the user confirmed the visible solver and separately confirmed the other workspaces worked. That phone run did not trigger the watchdog itself.
+
+## AF-010–012: Alpha.30 follow-up
+
+Session ab31192d reproduced disabled text entry until pause/resume, an obsolete failed acceptance blocking delivered work, and a zero-count assertion misread as evidence of no path. Current work separates draft editing from submission gating, retires resolved authorization turns on continuation, scopes failed-acceptance supersession to the exact delivered candidate, and returns typed expected/actual counts. Unit and device checks are required before merge; phone acceptance remains separate. Unknown effects and other-candidate failures stay blockers.
+
+## AF-013: Model boundary audit
+
+Confirmed ChatGptPlanBackend serializes function tools with strict=false; OpenAiCompatibleBackend forwards parameters without a strict declaration. Workspace UI test values include JSON encoded inside strings. Do not globally enable strict mode until tool schemas have been made compatible and the transport is tested. Follow-up must measure first-attempt validity, model calls, cumulative input and elapsed activation time against fixed tasks. No measured latency improvement is claimed by AF-010–012.

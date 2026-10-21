@@ -401,6 +401,10 @@ class WorkspaceDeviceTest {
             val fixed=repo.stage(w.id,w.realmId,w.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,turn.id)
             val healthy=withTimeout(15_000) {WorkspaceUiSimulation(context,db).test(w.id,w.realmId,fixed.getString("candidate_id"),JSONArray().put(JSONObject().put("action","click").put("selector","#go")).put(JSONObject().put("action","assert_text_exact").put("selector","#status").put("value","Recovered")))}
             assertTrue(healthy.toString(),healthy.getBoolean("passed"))
+            val wrongCount=WorkspaceUiSimulation(context,db).test(w.id,w.realmId,fixed.getString("candidate_id"),JSONArray().put(JSONObject().put("action","assert_count").put("selector","#go").put("value","0")))
+            val count=wrongCount.getJSONArray("steps").getJSONObject(0)
+            assertFalse(wrongCount.getBoolean("passed"));assertEquals(0,count.getInt("expected_count"));assertEquals(1,count.getInt("actual_count"))
+            assertEquals("Expected 0 matching elements; found 1",count.getString("message"))
             val principal=WorkspacePrincipal("test",existing.id,existingRevision,UUID.randomUUID().toString(),1,WorkspaceInstanceMode.PREVIEW)
             surface(existingBundle,principal) { presentation ->
                 assertTrue(presentation.diagnostics().getBoolean("ready"))
