@@ -2,10 +2,15 @@ name: Public readiness
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
+
+concurrency:
+  group: public-readiness-${{ github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || format('validation-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   source-boundary:
