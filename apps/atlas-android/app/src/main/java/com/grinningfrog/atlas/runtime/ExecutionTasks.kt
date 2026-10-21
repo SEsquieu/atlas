@@ -49,6 +49,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
     fun forTurn(turnId: String): ExecutionTask? = database.readableDatabase.rawQuery("SELECT task_id FROM execution_slices WHERE turn_id=?", arrayOf(turnId)).use { c -> if(c.moveToFirst()) get(c.getString(0)) else null }
     /** Resolve only from this durable task, never the currently browsed workspace. */
     internal fun bindWorkspaceArguments(turnId: String, proposal: ToolCallProposal): ToolCallProposal {
+        if (!WorkspaceArgumentBinding.supports(proposal.name)) return proposal
         val task = forTurn(turnId) ?: return proposal
         val binding = task.document.optJSONObject("workspace_target") ?: return proposal
         val workspace = binding.optString("workspace_id")

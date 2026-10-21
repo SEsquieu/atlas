@@ -11,6 +11,8 @@ internal object WorkspaceArgumentBinding {
     private val navigationTools = setOf("workspace_package_stage", "workspace_package_activate", "workspace_accept_unverified")
     private val tools = candidateTools + navigationTools
 
+    fun supports(name: String) = name in tools
+
     fun definition(definition: ToolDefinition): ToolDefinition {
         if (definition.name !in tools) return definition
         val schema = JSONObject(definition.parametersJson)

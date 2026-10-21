@@ -22,9 +22,9 @@ class ContextAssemblerTest {
         val source = "const retainedSource = 1;".repeat(100)
         val body = org.json.JSONObject().put("workspace_id", "w").put("revision_id", "r").put("path", "ui/app.js").put("content", source).toString()
         val messages = (1..2).flatMap { n -> listOf(
-            message(n * 2, "turn", MessageRole.ASSISTANT, "").copy(toolCallsJson =
+            message(n * 2L, "turn", MessageRole.ASSISTANT, "").copy(toolCallsJson =
                 """[{"id":"read-$n","name":"workspace_package_read_file","arguments":"{}"}]"""),
-            message(n * 2 + 1, "turn", MessageRole.TOOL, body, MessageKind.TOOL_RESULT).copy(toolCallId="read-$n")) }
+            message(n * 2L + 1, "turn", MessageRole.TOOL, body, MessageKind.TOOL_RESULT).copy(toolCallId="read-$n")) }
         val context = ContextAssembler().assemble(session(), messages, emptyList(), null, null, 1)
         assertEquals(4, context.messages.size)
         assertTrue(context.messages[1].content.contains("duplicate_of_message_id"))
