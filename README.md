@@ -45,9 +45,9 @@ Changing from an on-device model to a LAN server or cloud API changes a capabili
 
 ## Current alpha
 
-The current Android source baseline is **0.1.0-alpha.29** (release preparation). Atlas can author contained HTML/CSS/JavaScript workspace apps during a session, retain their data, and continue durable tasks across bounded execution slices. This remains an experimental alpha: automated checks do not guarantee that a generated app satisfies a live user request.
+The latest delivered Android test build is **0.1.0-alpha.30**. Main may contain later unreleased fixes; APK generation is a separate manual workflow. Atlas can author contained HTML/CSS/JavaScript workspace apps during a session, retain their data, and continue durable tasks across bounded execution slices. This remains an experimental alpha: automated checks do not guarantee that a generated app satisfies a live user request.
 
-Alpha.28 live testing demonstrated app activation and isolated save/reload verification. Alpha.29 addresses the observed authoring/completion failures and adds candidate-scoped manual acceptance and pointer testing; fresh phone qualification remains pending. See the [alpha.29 notes](./docs/releases/v0.1.0-alpha.29.md) and [alpha.28 baseline](./docs/alpha28-live-assessment.md).
+Alpha.30 phone testing confirmed MazeGen activation and its visible solution; the user also confirmed the existing workspaces worked. Input/blocker reconciliation and tool-schema follow-ups are tracked separately from delivered builds. See the [alpha.30 notes](./docs/releases/v0.1.0-alpha.30.md), [active fixes](./docs/active-fixes.md), and [alpha.29 notes](./docs/releases/v0.1.0-alpha.29.md).
 
 See the [current implementation and verification status](./docs/current-status.md) for supported behavior, evidence, limitations, and distribution details.
 
