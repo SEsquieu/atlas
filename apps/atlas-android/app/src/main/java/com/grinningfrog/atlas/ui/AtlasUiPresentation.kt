@@ -26,6 +26,13 @@ object AtlasUiPresentation {
         (snapshot.pendingClarification?.let { it.blocking && it.status == com.grinningfrog.atlas.model.ClarificationStatus.WAITING } == true ||
             snapshot.pendingToolCalls.any { it.status == com.grinningfrog.atlas.model.ToolCallStatus.WAITING_FOR_CONFIRMATION } || attentionTasks(snapshot).isNotEmpty())
 
+    fun canSubmitMessage(snapshot: RuntimeSnapshot, hasProvider: Boolean): Boolean =
+        snapshot.session?.status == SessionStatus.ACTIVE && hasProvider &&
+            (snapshot.activeTurn == null || snapshot.pendingClarification != null || needsUserAction(snapshot) ||
+                snapshot.activeTurn?.status in setOf(com.grinningfrog.atlas.model.TurnStatus.SOFT_TIMED_OUT,
+                    com.grinningfrog.atlas.model.TurnStatus.WAITING_FOR_CONFIRMATION,
+                    com.grinningfrog.atlas.model.TurnStatus.WAITING_FOR_USER_CLARIFICATION))
+
     fun runtimeLabel(snapshot: RuntimeSnapshot): String = when {
         snapshot.listeningState == ListeningState.PREPARING -> "getting the microphone ready"
         snapshot.listeningState == ListeningState.READY -> "speak now"

@@ -602,9 +602,8 @@ private fun AtlasControls(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot
     var actionError by remember(session.id) { mutableStateOf<String?>(null) }
     val active = session.status == SessionStatus.ACTIVE
     val needsUser = AtlasUiPresentation.needsUserAction(snapshot)
-    val available = snapshot.activeTurn == null || snapshot.pendingClarification != null ||
-        snapshot.activeTurn?.status == com.grinningfrog.atlas.model.TurnStatus.SOFT_TIMED_OUT
-    val canSend = active && hasProvider && available
+    val canSend = AtlasUiPresentation.canSubmitMessage(snapshot, hasProvider)
+    val available = canSend
     fun runAction(block: suspend () -> Unit) {
         actionScope.launch { runCatching { block() }.onFailure { actionError = it.message ?: "Action failed" } }
     }
@@ -622,7 +621,7 @@ private fun AtlasControls(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot
         }
         VoiceDock(snapshot, active, active && hasProvider && (available || snapshot.phase == RuntimePhase.SPEAKING),
             { runAction { runtime.listenAndAsk() } }, { runAction { runtime.captureNow() } }, { showText = !showText }, needsUser)
-        if (showText) OutlinedTextField(prompt, { prompt = it }, label = { Text("Message Atlas") }, enabled = canSend, modifier = Modifier.fillMaxWidth(), maxLines = 3,
+        if (showText) OutlinedTextField(prompt, { prompt = it }, label = { Text("Message Atlas") }, enabled = active && hasProvider, modifier = Modifier.fillMaxWidth(), maxLines = 3,
             trailingIcon = { IconButton(enabled = canSend && prompt.isNotBlank(), onClick = { send() }) { Icon(Icons.AutoMirrored.Filled.Send, "Send") } },
             keyboardActions = KeyboardActions(onSend = { send() }), keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Send))
         actionError?.let { error -> Row(verticalAlignment = Alignment.CenterVertically) {

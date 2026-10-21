@@ -15,6 +15,16 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class AtlasUiPresentationTest {
+    @Test fun blockerRepliesRemainAvailableButOrdinaryBusySubmissionDoesNot() {
+        val base=activeSnapshot()
+        val turn=AgentTurn("turn","id",TurnStatus.EXECUTING_TOOL,"text",0,0)
+        assertFalse(AtlasUiPresentation.canSubmitMessage(base.copy(activeTurn=turn),true))
+        assertTrue(AtlasUiPresentation.canSubmitMessage(base.copy(activeTurn=turn.copy(status=TurnStatus.WAITING_FOR_CONFIRMATION)),true))
+        assertTrue(AtlasUiPresentation.canSubmitMessage(base.copy(activeTurn=turn,executionTasks=listOf(task("unresolved_tool_failure"))),true))
+        assertFalse(AtlasUiPresentation.canSubmitMessage(base.copy(session=base.session!!.copy(status=SessionStatus.PAUSED)),true))
+        assertFalse(AtlasUiPresentation.canSubmitMessage(base,false))
+    }
+
     @Test fun candidateStatusNeverClaimsStagingIsLive() {
         val t=task("",ExecutionState.RUNNING)
         val work=JSONObject().put("delivery_status","verification_failed").put("latest_candidate",JSONObject().put("candidate_id","candidate-123"))

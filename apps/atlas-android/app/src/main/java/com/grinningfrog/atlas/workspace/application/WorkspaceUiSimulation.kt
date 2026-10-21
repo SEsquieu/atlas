@@ -41,9 +41,10 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
         require(steps.length() in 1..32)
         for(i in 0 until steps.length()) {
             val step=steps.getJSONObject(i)
+            WorkspaceUiStepSchema.normalize(step,i)
             WorkspaceApplicationContract.exactKeys(step,setOf("action","selector","value","criterion"),setOf("action","selector"))
             require(step.getString("action") in setOf("click","input","select","assert_text","wait_text","assert_value","assert_visible","assert_hidden","assert_absent","assert_count","reload","assert_record","set_checked","drag","drag_cancel","assert_attribute","assert_text_exact"))
-            if(step.has("criterion"))require(step.getString("criterion").trim().length in 1..200 && step.getString("action") in setOf("assert_text","wait_text","assert_value","assert_visible","assert_hidden","assert_absent","assert_count","assert_record","assert_attribute","assert_text_exact")) { "Criteria require an assertion, not merely a click/input" }
+            if(step.has("criterion"))require(step.getString("criterion").trim().length in 1..200 && step.getString("action") in setOf("assert_text","wait_text","assert_value","assert_visible","assert_hidden","assert_absent","assert_count","assert_record","assert_attribute","assert_text_exact")) { "steps[$i].criterion requires an assertion, not merely a click/input" }
             require(step.getString("selector").length in 0..128 && step.optString("value").length<=2000)
             if(step.getString("action")=="assert_attribute") {
                 val attribute=JSONObject(step.getString("value"))
@@ -51,7 +52,7 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
                 require(attribute.getString("name").matches(Regex("[A-Za-z][A-Za-z0-9_-]{0,63}")) && attribute.get("equals") is String) { "ATTRIBUTE_ASSERTION_INVALID" }
             }
             if(step.getString("action")=="set_checked")require(step.optString("value") in setOf("true","false")) { "set_checked value must be true or false" }
-            require(step.has("value") || step.getString("action") in setOf("click","reload","assert_visible","assert_hidden","assert_absent")) { "This action requires value" }
+            require(step.has("value") || step.getString("action") in setOf("click","reload","assert_visible","assert_hidden","assert_absent")) { "steps[$i].value is required for ${step.getString("action")}" }
         }
         val repository=WorkspacePackageRepository(database)
         val candidate=repository.inspect(workspaceId,realmId,candidateId)
@@ -113,7 +114,7 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
                 for(i in 0 until steps.length()) {
                     activeStep=i
                     val step=steps.getJSONObject(i);val action=step.getString("action");val selector=JSONObject.quote(step.getString("selector"));val value=JSONObject.quote(step.optString("value"))
-                    val script="""(()=>{const matches=document.querySelectorAll($selector);const e=matches[0];if(${"\"$action\""}==='assert_absent')return matches.length===0?'ok':'present';if(${"\"$action\""}==='assert_count')return matches.length===Number($value)?'ok':'count_mismatch';if(!e)return 'missing';if(${"\"$action\""}==='set_checked'){if(e.disabled)return 'disabled';if(e.tagName!=='INPUT'||!['checkbox','radio'].includes(e.type))return 'not_checkable';e.checked=($value==='true');e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return 'ok';}if(${"\"$action\""}==='click'){if(e.disabled)return 'disabled';if(typeof e.click==='function')e.click();else e.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));return 'ok';}if(${"\"$action\""}==='input'||${"\"$action\""}==='select'){if(e.disabled)return 'disabled';if(${"\"$action\""}==='select'&&e.tagName!=='SELECT')return 'not_select';e.value=$value;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return e.value===$value?'ok':'value_mismatch';}if(${"\"$action\""}==='assert_value')return e.value===$value?'ok':'value_mismatch';if(${"\"$action\""}==='assert_visible'||${"\"$action\""}==='assert_hidden'){const shown=!e.hidden&&e.getClientRects().length>0&&getComputedStyle(e).visibility!=='hidden';return shown===(${"\"$action\""}==='assert_visible')?'ok':'visibility_mismatch';}if(${"\"$action\""}==='assert_text_exact')return (e.textContent||'').trim()===$value?'ok':'mismatch';if(${"\"$action\""}==='assert_attribute'){const a=JSON.parse($value);return e.getAttribute(a.name)===a.equals?'ok':'attribute_mismatch';}return (e.textContent||'').includes($value)?'ok':'mismatch';})()"""
+                    val script="""(()=>{const matches=document.querySelectorAll($selector);const e=matches[0];if(${"\"$action\""}==='assert_absent')return matches.length===0?'ok':'present';if(${"\"$action\""}==='assert_count')return JSON.stringify({status:matches.length===Number($value)?'ok':'count_mismatch',expected_count:Number($value),actual_count:matches.length});if(!e)return 'missing';if(${"\"$action\""}==='set_checked'){if(e.disabled)return 'disabled';if(e.tagName!=='INPUT'||!['checkbox','radio'].includes(e.type))return 'not_checkable';e.checked=($value==='true');e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return 'ok';}if(${"\"$action\""}==='click'){if(e.disabled)return 'disabled';if(typeof e.click==='function')e.click();else e.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));return 'ok';}if(${"\"$action\""}==='input'||${"\"$action\""}==='select'){if(e.disabled)return 'disabled';if(${"\"$action\""}==='select'&&e.tagName!=='SELECT')return 'not_select';e.value=$value;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return e.value===$value?'ok':'value_mismatch';}if(${"\"$action\""}==='assert_value')return e.value===$value?'ok':'value_mismatch';if(${"\"$action\""}==='assert_visible'||${"\"$action\""}==='assert_hidden'){const shown=!e.hidden&&e.getClientRects().length>0&&getComputedStyle(e).visibility!=='hidden';return shown===(${"\"$action\""}==='assert_visible')?'ok':'visibility_mismatch';}if(${"\"$action\""}==='assert_text_exact')return (e.textContent||'').trim()===$value?'ok':'mismatch';if(${"\"$action\""}==='assert_attribute'){const a=JSON.parse($value);return e.getAttribute(a.name)===a.equals?'ok':'attribute_mismatch';}return (e.textContent||'').includes($value)?'ok':'mismatch';})()"""
                     var outcome=when(action) {
                         "drag", "drag_cancel" -> WorkspacePointerGesture.drag(presentation!!.view,step.getString("selector"),step.getString("value"),action=="drag_cancel")
                         "reload" -> {collect();presentation?.dispose();presentation=null;reloads++;open();"\"ok\""}
@@ -128,8 +129,13 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
                         else -> evaluate(script)
                     }
                     if(action=="wait_text") { val end=android.os.SystemClock.elapsedRealtime()+3_000;while(outcome!="\"ok\"" && android.os.SystemClock.elapsedRealtime()<end) { delay(100);outcome=evaluate(script) } }
-                    val passed=outcome=="\"ok\""
+                    val countEvidence=if(action=="assert_count") runCatching {JSONObject(JSONArray("[$outcome]").getString(0))}.getOrNull() else null
+                    val passed=outcome=="\"ok\"" || countEvidence?.optString("status")=="ok"
                     reports.put(JSONObject().put("index",i).put("action",action).put("selector",step.getString("selector")).put("passed",passed).put("outcome",outcome.take(100)))
+                    countEvidence?.let { evidence ->
+                        reports.getJSONObject(reports.length()-1).put("expected_count",evidence.getInt("expected_count")).put("actual_count",evidence.getInt("actual_count"))
+                        if(!passed) reports.getJSONObject(reports.length()-1).put("message","Expected ${evidence.getInt("expected_count")} matching elements; found ${evidence.getInt("actual_count")}")
+                    }
                     if(!passed) {
                         val report=reports.getJSONObject(reports.length()-1)
                         report.put("actual_text",evaluate("(()=>{if(!$selector)return 'No matching isolated record';return document.querySelector($selector)?.textContent?.slice(0,500)||'';})()"))
