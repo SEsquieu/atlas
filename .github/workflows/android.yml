@@ -16,6 +16,7 @@ on:
         type: boolean
         default: false
   push:
+    branches: [main]
     paths:
       - "apps/atlas-android/**"
       - ".github/workflows/android.yml"
@@ -30,6 +31,10 @@ env:
 
 permissions:
   contents: read
+
+concurrency:
+  group: android-${{ github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || format('validation-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   build:

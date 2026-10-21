@@ -6,6 +6,7 @@ on:
       - "apps/atlas-android/**"
       - ".github/workflows/workspace-device.yml"
   push:
+    branches: [main]
     paths:
       - "apps/atlas-android/**"
       - "!apps/atlas-android/RELEASE"
@@ -13,8 +14,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: workspace-device-${{ github.ref }}
-  cancel-in-progress: false
+  group: workspace-device-${{ github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || format('validation-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 jobs:
   device:
     runs-on: ubuntu-latest
