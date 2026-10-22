@@ -54,7 +54,7 @@ class ExecutionTasksTest {
         assertEquals(ToolCallStatus.FAILED,db.loadToolCall(failed.id)!!.status)
     }
     @Test fun failedRuntimeProposalRetiresAfterApprovedReplacementButUnknownDoesNot() {
-        val t=task()
+        val t=task();val lease=store.claim(t.id,"runner")!!
         val failed=call(t,"atlas_runtime_stage","""{"parent_runtime_id":"parent"}""")
         db.insertToolCall(failed);db.updateToolCall(failed.id,ToolCallStatus.FAILED,error="Bad proposal")
         assertEquals(1,store.outstanding(t.id).length())
@@ -63,7 +63,10 @@ class ExecutionTasksTest {
         db.updateToolCall(activated.id,ToolCallStatus.COMPLETED,resultJson="""{"selected_for_new_tasks":true,"current_task_changed":false,"parent_runtime_id":"parent"}""")
         assertEquals(0,store.outstanding(t.id).length())
         db.updateToolCall(failed.id,ToolCallStatus.UNKNOWN,error="Unknown operation")
-        assertEquals(1,store.outstanding(t.id).length())
+        assertTrue(store.pending(t.id).any {it.id==failed.id && it.status==ToolCallStatus.UNKNOWN})
+        val blocked=store.finish(lease,SliceOutcome.RESPONDED,1)!!
+        assertEquals(ExecutionState.WAITING,blocked.state)
+        assertEquals("unknown_operation_outcome",blocked.waitReason)
     }
     @Test fun runtimePinSurvivesSelectionChangeSliceAndStoreRecreation() {
         val t = task()

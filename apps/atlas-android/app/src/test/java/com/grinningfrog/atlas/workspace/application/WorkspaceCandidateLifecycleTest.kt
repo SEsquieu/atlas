@@ -121,7 +121,8 @@ class WorkspaceCandidateLifecycleTest {
         val session=db.createSession("Recovery","Improve existing app",workspaceId=c.getString("realm_id"))
         val turn=db.createTurn(session.id,"text")
         val tasks=com.grinningfrog.atlas.runtime.ExecutionTaskStore(db)
-        tasks.create(session,"Improve existing app",turn.id,com.grinningfrog.atlas.runtime.ExecutionBudget())
+        val task=tasks.create(session,"Improve existing app",turn.id,com.grinningfrog.atlas.runtime.ExecutionBudget())
+        tasks.claim(task.id,"runner")!!
         tasks.bindWorkspace(turn.id,c.getString("workspace_id"),"activation")
         val create=WorkspaceLiveTools.create(db,RuntimeEnvironment.getApplication()).first {it.definition.name=="workspace_package_create"}
         val call=com.grinningfrog.atlas.model.AtlasToolCall("create-conflict",session.id,turn.id,"workspace_package_create","""{"name":"Replacement"}""",com.grinningfrog.atlas.model.ToolCallStatus.PROPOSED,com.grinningfrog.atlas.model.ToolRisk.SESSION_WRITE,false,"recovery-test",createdAtMs=0,updatedAtMs=0)
