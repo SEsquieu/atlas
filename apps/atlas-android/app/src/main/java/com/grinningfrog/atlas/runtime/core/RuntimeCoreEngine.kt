@@ -6,7 +6,9 @@ import androidx.javascriptengine.JavaScriptSandbox
 import androidx.javascriptengine.IsolateStartupParameters
 import androidx.javascriptengine.JavaScriptIsolate
 import com.google.common.util.concurrent.ListenableFuture
-import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -56,6 +58,10 @@ class RuntimeCoreEngine(private val context: Context) {
                 isolate?.close(); isolate = null; loaded = null
                 // Closing the sandbox also terminates any orphaned evaluation after cancellation or timeout.
                 sandbox?.close(); sandbox = null
+                if (e is TimeoutCancellationException) {
+                    currentCoroutineContext().ensureActive()
+                    throw IllegalStateException("Agent runtime exceeded its deadline. Cancel this task and select Native for a new task.", e)
+                }
                 throw e
             }
         }

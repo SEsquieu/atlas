@@ -19,7 +19,7 @@ fun RuntimeCoreSettings() {
     val context = LocalContext.current
     val store = (context.applicationContext as AtlasApplication).runtimeBundles
     val scope = rememberCoroutineScope()
-    var status by remember { mutableStateOf(store.status().toString()) }
+    var status by remember { mutableStateOf(store.selectionLabel()) }
     var key by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -45,7 +45,7 @@ fun RuntimeCoreSettings() {
             confirmButton = { TextButton(enabled = !busy, onClick = {
                 scope.launch {
                     busy = true
-                    try { withContext(Dispatchers.IO) { store.install(raw, key) }; status = store.status().toString(); pending = null; message = "Runtime selected for new tasks" }
+                    try { withContext(Dispatchers.IO) { store.install(raw, key) }; status = store.selectionLabel(); pending = null; message = "Runtime selected for new tasks" }
                     catch (e: Exception) { message = e.message; pending = null }
                     finally { busy = false }
                 }
@@ -57,8 +57,8 @@ fun RuntimeCoreSettings() {
             Text("Compare portable orchestration with native execution. Changes apply to new tasks; existing tasks remain pinned.")
             Text(status, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(enabled = !busy, onClick = { store.selectNative(); status = store.status().toString() }) { Text("Native") }
-                OutlinedButton(enabled = !busy, onClick = { store.selectBuiltin(); status = store.status().toString() }) { Text("Bundled core") }
+                OutlinedButton(enabled = !busy, onClick = { store.selectNative(); status = store.selectionLabel() }) { Text("Native") }
+                OutlinedButton(enabled = !busy, onClick = { store.selectBuiltin(); status = store.selectionLabel() }) { Text("Bundled core") }
             }
             OutlinedTextField(value = key, onValueChange = { key = it }, enabled = !busy && pending == null,
                 label = { Text("Trusted publisher public key (SPKI base64)") }, modifier = Modifier.fillMaxWidth())
@@ -79,4 +79,11 @@ private fun java.io.InputStream.readBytesBounded(): ByteArray {
         output.write(buffer, 0, count)
     }
     return output.toByteArray()
+}
+
+private fun RuntimeBundleStore.selectionLabel(): String {
+    val selection = selected()
+    if (selection == "native") return "New tasks: Native runtime"
+    return runCatching { "New tasks: ${resolve(selection).version} (${selection.take(12)})" }
+        .getOrDefault("Selected runtime unavailable. Choose Native to recover new tasks.")
 }

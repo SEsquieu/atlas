@@ -483,7 +483,9 @@ class AtlasMobileRuntime(
         val priorTask = pending?.let { executionTasks.forTurn(it.sourceTurnId) }
         return if (priorTask?.state == ExecutionState.WAITING && priorTask.waitReason == "clarification") executionTasks.attachReply(priorTask.id, turn.id).id
         else executionTasks.followUpTask(session.id)?.let { executionTasks.attachReply(it.id,turn.id).id }
-            ?: executionTasks.create(session, text, turn.id, ExecutionBudget(), toolHarness.atomicLocalTools()).id
+            ?: executionTasks.create(session, text, turn.id, ExecutionBudget(), toolHarness.atomicLocalTools()).also {
+                executionTasks.pinRuntime(it.id, runtimeBundles?.selected() ?: "native")
+            }.id
     }
 
     private suspend fun runTurnLoopLocked(session: AtlasSession, turnId: String, startingObservation: VisualObservation?, voice: Boolean) {
@@ -492,7 +494,7 @@ class AtlasMobileRuntime(
         var uiObservation: VisualObservation? = null
         var step = database.loadTurn(turnId)?.stepCount ?: 0
         val lease = activeExecutionLease ?: error("Missing execution lease")
-        val runtimeId = executionTasks.pinRuntime(lease.taskId, runtimeBundles?.selected() ?: "native")
+        val runtimeId = executionTasks.pinRuntime(lease.taskId, "native")
         val runtimeBundle = if (runtimeId == "native") null else requireNotNull(runtimeBundles).resolve(runtimeId)
         var sliceTools = 0
         val sliceToolsByName = mutableMapOf<String, Int>()
@@ -538,7 +540,10 @@ class AtlasMobileRuntime(
                         .put("action", decision.action).put("elapsed_us", decision.elapsedUs).put("cold", decision.cold))
                 }
             }
-            if (coreDecision?.action == "yield") break
+            if (coreDecision?.action == "yield") {
+                check(step > 0 || sliceTools > 0) { "Runtime yielded an empty slice; task stopped to prevent a busy loop" }
+                break
+            }
             val turnSession = database.loadSession(session.id) ?: session
             step += 1
             database.updateTurn(turnId, TurnStatus.ASSEMBLING_CONTEXT, stepCount = step)
