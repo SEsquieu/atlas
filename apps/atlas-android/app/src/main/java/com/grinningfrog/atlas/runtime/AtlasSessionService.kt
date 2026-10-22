@@ -99,7 +99,7 @@ class AtlasSessionService : LifecycleService() {
                 IntentInferenceWorkHandler(InferenceLocation.CLOUD, app.database, router),
             ),
         )
-        coreEngine = com.grinningfrog.atlas.runtime.core.RuntimeCoreEngine(this)
+        coreEngine = app.runtimeCore.also { it.retain() }
         runtime = AtlasMobileRuntime(
             app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope, idleRuntime,
             runtimeBundles = app.runtimeBundles, runtimeCore = coreEngine,
@@ -131,7 +131,7 @@ class AtlasSessionService : LifecycleService() {
     override fun onDestroy() {
         runtime.close()
         serviceScope.cancel()
-        if (::coreEngine.isInitialized) CoroutineScope(Dispatchers.IO).launch { coreEngine.close() }
+        if (::coreEngine.isInitialized) CoroutineScope(Dispatchers.IO).launch { coreEngine.release() }
         super.onDestroy()
     }
 

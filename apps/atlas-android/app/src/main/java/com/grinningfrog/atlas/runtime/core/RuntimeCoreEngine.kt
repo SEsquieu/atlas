@@ -24,6 +24,12 @@ import kotlin.coroutines.resumeWithException
 /** One warm sandbox per host. No token-level bridge, network, or disk operations in JavaScript. */
 class RuntimeCoreEngine(private val context: Context) {
     private val gate = Mutex()
+    private val services = java.util.concurrent.atomic.AtomicInteger(0)
+    fun retain() { services.incrementAndGet() }
+    suspend fun release() {
+        check(services.decrementAndGet() >= 0) { "Unbalanced runtime service ownership" }
+        gate.withLock { if (services.get() == 0) closeLocked() }
+    }
     private var sandbox: JavaScriptSandbox? = null
     private var isolate: JavaScriptIsolate? = null
     private var loaded: String? = null
@@ -66,7 +72,8 @@ class RuntimeCoreEngine(private val context: Context) {
             }
         }
     }
-    suspend fun close() = gate.withLock {
+    suspend fun close() = gate.withLock { closeLocked() }
+    private fun closeLocked() {
         isolate?.close(); isolate = null; sandbox?.close(); sandbox = null; loaded = null
     }
 }

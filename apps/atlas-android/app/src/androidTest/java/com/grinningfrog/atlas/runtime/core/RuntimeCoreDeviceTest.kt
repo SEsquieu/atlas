@@ -26,6 +26,19 @@ class RuntimeCoreDeviceTest {
             assertEquals("yield", engine.decide(bundle, 8, 0).action)
         } finally { engine.close() }
     }
+    @Test fun replacementServiceRetainsWarmEngineWhenOldServiceReleases() = runBlocking {
+        val engine = RuntimeCoreEngine(context)
+        try {
+            engine.retain()
+            val b = bundle()
+            engine.decide(b, 0, 0)
+            engine.retain() // Replacement service attaches before old teardown completes.
+            engine.release()
+            assertFalse(engine.decide(b, 0, 0).cold)
+            engine.release()
+            assertTrue(engine.decide(b, 0, 0).cold)
+        } finally { engine.close() }
+    }
     @Test fun cancellationTerminatesRunawayAndNextRequestRecovers() = runBlocking {
         val engine = RuntimeCoreEngine(context)
         try {
