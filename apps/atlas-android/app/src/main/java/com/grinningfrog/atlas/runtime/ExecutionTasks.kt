@@ -415,9 +415,16 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
             return all.drop(all.indexOf(call) + 1).any { success -> success.name == "atlas_runtime_activate" && success.status == ToolCallStatus.COMPLETED &&
                 runCatching { val r = JSONObject(success.resultJson.orEmpty()); r.optBoolean("selected_for_new_tasks") && !r.optBoolean("current_task_changed", true) && r.optString("parent_runtime_id") == parent }.getOrDefault(false) }
         }
-        if (call.name in setOf("workspace_package_test", "workspace_package_ui_test") && call.status == ToolCallStatus.FAILED &&
-            runCatching { JSONObject(call.resultJson.orEmpty()).optString("error_code") == "CANDIDATE_BASE_CONFLICT" }.getOrDefault(false)) {
-            val workspace = runCatching { JSONObject(call.argumentsJson).getString("workspace_id") }.getOrNull() ?: return false
+        val recoveryWorkspace = if (call.status == ToolCallStatus.FAILED) runCatching {
+            val result = JSONObject(call.resultJson.orEmpty())
+            when {
+                call.name in setOf("workspace_package_test", "workspace_package_ui_test") && result.optString("error_code") == "CANDIDATE_BASE_CONFLICT" -> JSONObject(call.argumentsJson).getString("workspace_id")
+                call.name == "workspace_package_create" && result.optString("error_code") == "EXISTING_TARGET_BOUND" -> result.getJSONObject("recovery").getString("workspace_id")
+                else -> null
+            }
+        }.getOrNull() else null
+        if (recoveryWorkspace != null) {
+            val workspace = recoveryWorkspace
             return workspace == task.document.optJSONObject("workspace_target")?.optString("workspace_id") &&
                 all.drop(all.indexOf(call) + 1).any { success -> success.name == "workspace_package_activate" && success.status == ToolCallStatus.COMPLETED &&
                     runCatching { val r = receipt(success)?.let(::JSONObject) ?: return@runCatching false
