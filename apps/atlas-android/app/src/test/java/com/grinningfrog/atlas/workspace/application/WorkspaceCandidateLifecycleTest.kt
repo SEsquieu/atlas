@@ -119,6 +119,7 @@ class WorkspaceCandidateLifecycleTest {
         assertTrue(error is com.grinningfrog.atlas.runtime.StructuredToolRejection)
         assertEquals("CANDIDATE_BASE_CONFLICT",(error as com.grinningfrog.atlas.runtime.StructuredToolRejection).code)
         val session=db.createSession("Recovery","Improve existing app",workspaceId=c.getString("realm_id"))
+        db.updateSessionStatus(session.id,com.grinningfrog.atlas.model.SessionStatus.ACTIVE)
         val turn=db.createTurn(session.id,"text")
         val tasks=com.grinningfrog.atlas.runtime.ExecutionTaskStore(db)
         val task=tasks.create(session,"Improve existing app",turn.id,com.grinningfrog.atlas.runtime.ExecutionBudget())
