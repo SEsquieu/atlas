@@ -54,10 +54,10 @@ The service holds scoped repository credentials; the app holds only its connecti
 
 | Gate | Current state |
 | --- | --- |
-| Portable bounded bridge and signed local import | Implemented; qualification pending |
-| Durable task version pins and explicit future-task rollback | Implemented; qualification pending |
+| Portable bounded bridge and signed local import | Implemented; unit/lint and device qualification passed in PR #66; phone import acceptance pending |
+| Durable task version pins and explicit future-task rollback | Implemented; unit qualification passed; phone update/continuation acceptance pending |
 | Native parity, cancelled/stale decisions and adversarial bundles | Automated coverage started; full replay matrix outstanding |
-| API35/36 engine execution, cancellation/recovery and latency | Device tests added; results pending |
+| API35/36 engine execution, cancellation/recovery and latency | Passed run 39713932151: 18 tests each; warm p95 2.348ms / 2.921ms for small bridge inputs, excluding queue wait |
 | Full context assembly and response orchestration extraction | Not implemented |
 | Stateful runtime migration, command journal and crash reconciliation | Not implemented; required before effect-bearing commands |
 | Runtime health history, actionable failure UI and automatic safe rollback policy | Not implemented |
