@@ -53,6 +53,24 @@ class ExecutionTasksTest {
         assertEquals(0,store.outstanding(t.id).length())
         assertEquals(ToolCallStatus.FAILED,db.loadToolCall(failed.id)!!.status)
     }
+    @Test fun refusedReplacementCreationRetiresOnlyAfterDeliveryToItsBoundTarget() {
+        val workspace=db.createComposableWorkspace("Original","")
+        val other=db.createComposableWorkspace("Other","")
+        val t=task();val lease=store.claim(t.id,"runner")!!
+        store.bindWorkspace(store.currentTurn(t.id),workspace.id,"activation")
+        val failed=call(t,"workspace_package_create","""{"name":"Replacement"}""")
+        db.insertToolCall(failed)
+        db.updateToolCall(failed.id,ToolCallStatus.FAILED,error="EXISTING_TARGET_BOUND",resultJson=JSONObject()
+            .put("error_code","EXISTING_TARGET_BOUND").put("recovery",JSONObject().put("workspace_id",workspace.id)).toString())
+        assertEquals(1,store.outstanding(t.id).length())
+        delivered(t,lease,other.id,other.liveRevisionId)
+        assertEquals(1,store.outstanding(t.id).length())
+        delivered(t,lease,workspace.id,workspace.liveRevisionId)
+        assertEquals(0,store.outstanding(t.id).length())
+        assertEquals(ToolCallStatus.FAILED,db.loadToolCall(failed.id)!!.status)
+        db.updateToolCall(failed.id,ToolCallStatus.UNKNOWN,error="Unknown outcome")
+        assertEquals("unknown_operation_outcome",store.finish(lease,SliceOutcome.RESPONDED,1)!!.waitReason)
+    }
     @Test fun failedRuntimeProposalRetiresAfterApprovedReplacementButUnknownDoesNot() {
         val t=task();val lease=store.claim(t.id,"runner")!!
         val failed=call(t,"atlas_runtime_stage","""{"parent_runtime_id":"parent"}""")
