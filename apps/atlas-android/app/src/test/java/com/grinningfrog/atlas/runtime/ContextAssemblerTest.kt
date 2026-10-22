@@ -36,6 +36,22 @@ class ContextAssemblerTest {
         assertFalse(distinct.messages.any { it.content.contains("duplicate_of_message_id") })
     }
 
+    @Test fun retainedSourceSurvivesSummaryWithoutDuplicatingVisibleBytesOrUnboundingContext() {
+        val receipt=org.json.JSONObject().put("workspace_id","w").put("candidate_id","c").put("path","ui/app.js")
+            .put("source_sha256","hash").put("start_char",0).put("source","retained-source".repeat(100)).put("read_operation_id","old-read")
+        val summary=SessionSummary("session","Earlier work summarized",100,1)
+        val assembler=ContextAssembler(ContextBudget(maxSourceCharacters=2000))
+        val fresh=assembler.assemble(session(),listOf(message(101,"new",MessageRole.USER,"Continue")),emptyList(),summary,null,10,retainedSourceReads=listOf(receipt))
+        assertTrue(fresh.systemPrompt.contains("retained-source"));assertTrue(fresh.systemPrompt.contains("untrusted data"))
+        val calls="""[{"id":"read","name":"workspace_package_read_file","arguments":"{}"}]"""
+        val visible=assembler.assemble(session(),listOf(message(101,"new",MessageRole.ASSISTANT,"").copy(toolCallsJson=calls),
+            message(102,"new",MessageRole.TOOL,receipt.toString(),MessageKind.TOOL_RESULT).copy(toolCallId="read")),emptyList(),null,null,10,retainedSourceReads=listOf(receipt))
+        assertFalse(visible.systemPrompt.contains("RETAINED WORKSPACE SOURCE"))
+        val baseline=assembler.assemble(session(),emptyList(),emptyList(),null,null,10)
+        val huge=assembler.assemble(session(),emptyList(),emptyList(),null,null,10,retainedSourceReads=listOf(org.json.JSONObject(receipt.toString()).put("source","\\\"".repeat(10000))))
+        assertTrue(huge.systemPrompt.length-baseline.systemPrompt.length<2400)
+    }
+
     @Test fun discoveryPolicyIsSuppliedOnlyWhenCoreToolsAreAvailable() {
         val available = ContextAssembler().assemble(session(), emptyList(), emptyList(), null, null, 1, toolsAvailable = true)
         val unavailable = ContextAssembler().assemble(session(), emptyList(), emptyList(), null, null, 1, toolsAvailable = false)

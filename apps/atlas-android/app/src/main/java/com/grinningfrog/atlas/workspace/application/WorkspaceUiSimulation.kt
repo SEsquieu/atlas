@@ -39,17 +39,26 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
     }
     suspend fun test(workspaceId: String, realmId: String, candidateId: String, steps: JSONArray, verifyStorage: Boolean = false, randomValues: List<Double>? = null, committed: (JSONObject)->Unit = {}): JSONObject = coroutineScope {
         require(steps.length() in 1..32)
+        val snapshotNames=linkedMapOf<String,String>()
         for(i in 0 until steps.length()) {
             val step=steps.getJSONObject(i)
             WorkspaceUiStepSchema.normalize(step,i)
             WorkspaceApplicationContract.exactKeys(step,setOf("action","selector","value","criterion"),setOf("action","selector"))
-            require(step.getString("action") in setOf("click","input","select","assert_text","wait_text","assert_value","assert_visible","assert_hidden","assert_absent","assert_count","reload","assert_record","set_checked","drag","drag_cancel","assert_attribute","assert_text_exact"))
-            if(step.has("criterion"))require(step.getString("criterion").trim().length in 1..200 && step.getString("action") in setOf("assert_text","wait_text","assert_value","assert_visible","assert_hidden","assert_absent","assert_count","assert_record","assert_attribute","assert_text_exact")) { "steps[$i].criterion requires an assertion, not merely a click/input" }
+            require(step.getString("action") in setOf("click","input","select","assert_text","wait_text","assert_value","assert_visible","assert_hidden","assert_absent","assert_count","reload","assert_record","set_checked","drag","drag_cancel","assert_attribute","assert_text_exact","capture_dom","assert_dom_equal","assert_dom_not_equal"))
+            if(step.has("criterion"))require(step.getString("criterion").trim().length in 1..200 && step.getString("action") in setOf("assert_text","wait_text","assert_value","assert_visible","assert_hidden","assert_absent","assert_count","assert_record","assert_attribute","assert_text_exact","assert_dom_equal","assert_dom_not_equal")) { "steps[$i].criterion requires an assertion, not merely a click/input" }
             require(step.getString("selector").length in 0..128 && step.optString("value").length<=2000)
             if(step.getString("action")=="assert_attribute") {
                 val attribute=JSONObject(step.getString("value"))
                 WorkspaceApplicationContract.exactKeys(attribute,setOf("name","equals"),setOf("name","equals"))
                 require(attribute.getString("name").matches(Regex("[A-Za-z][A-Za-z0-9_-]{0,63}")) && attribute.get("equals") is String) { "ATTRIBUTE_ASSERTION_INVALID" }
+            }
+            if(step.getString("action") in setOf("capture_dom","assert_dom_equal","assert_dom_not_equal")) {
+                val key=step.optString("value");val selector=step.getString("selector")
+                require(key.matches(Regex("[A-Za-z][A-Za-z0-9_-]{0,39}")) && selector.isNotBlank()) { "DOM_SNAPSHOT_INVALID: supply a named key and nonempty selector" }
+                if(step.getString("action")=="capture_dom") {
+                    require(key !in snapshotNames && snapshotNames.size<8) { "DOM_SNAPSHOT_INVALID: use at most eight unique capture keys" }
+                    snapshotNames[key]=selector
+                } else require(snapshotNames[key]==selector) { "DOM_SNAPSHOT_INVALID: capture this key and exact selector earlier in the same test" }
             }
             if(step.getString("action")=="set_checked")require(step.optString("value") in setOf("true","false")) { "set_checked value must be true or false" }
             require(step.has("value") || step.getString("action") in setOf("click","reload","assert_visible","assert_hidden","assert_absent")) { "steps[$i].value is required for ${step.getString("action")}" }
@@ -71,7 +80,7 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
         val bundle=candidate.getJSONObject("bundle")
         val requested=WorkspaceCapabilityRegistry.requested(bundle.getJSONObject("manifest"))[WorkspaceBleContract.CAPABILITY].orEmpty()
         var terminalFailure: String? = null
-        val reports=JSONArray();val radio=Radio();var runtimeEvidence:JSONObject?=null
+        val reports=JSONArray();val snapshots=linkedMapOf<String,String>();val radio=Radio();var runtimeEvidence:JSONObject?=null
         val succeeded=linkedMapOf<String,Int>();val failed=JSONArray()
         val isolated=withContext(Dispatchers.IO) {WorkspaceTestStorage(context,bundle)}
         val bridgeFailures=JSONArray();var hostFailureCount=0;var reloads=0;var recordAfterReload=false;var commits=0
@@ -115,9 +124,23 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
                 for(i in 0 until steps.length()) {
                     activeStep=i
                     val step=steps.getJSONObject(i);val action=step.getString("action");val selector=JSONObject.quote(step.getString("selector"));val value=JSONObject.quote(step.optString("value"))
-                    val script="""(()=>{const matches=document.querySelectorAll($selector);const e=matches[0];if(${"\"$action\""}==='assert_absent')return matches.length===0?'ok':'present';if(${"\"$action\""}==='assert_count')return JSON.stringify({status:matches.length===Number($value)?'ok':'count_mismatch',expected_count:Number($value),actual_count:matches.length});if(!e)return 'missing';if(${"\"$action\""}==='set_checked'){if(e.disabled)return 'disabled';if(e.tagName!=='INPUT'||!['checkbox','radio'].includes(e.type))return 'not_checkable';e.checked=($value==='true');e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return 'ok';}if(${"\"$action\""}==='click'){if(e.disabled)return 'disabled';if(typeof e.click==='function')e.click();else e.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));return 'ok';}if(${"\"$action\""}==='input'||${"\"$action\""}==='select'){if(e.disabled)return 'disabled';if(${"\"$action\""}==='select'&&e.tagName!=='SELECT')return 'not_select';e.value=$value;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return e.value===$value?'ok':'value_mismatch';}if(${"\"$action\""}==='assert_value')return e.value===$value?'ok':'value_mismatch';if(${"\"$action\""}==='assert_visible'||${"\"$action\""}==='assert_hidden'){const shown=!e.hidden&&e.getClientRects().length>0&&getComputedStyle(e).visibility!=='hidden';return shown===(${"\"$action\""}==='assert_visible')?'ok':'visibility_mismatch';}if(${"\"$action\""}==='assert_text_exact')return (e.textContent||'').trim()===$value?'ok':'mismatch';if(${"\"$action\""}==='assert_attribute'){const a=JSON.parse($value);return e.getAttribute(a.name)===a.equals?'ok':'attribute_mismatch';}return (e.textContent||'').includes($value)?'ok':'mismatch';})()"""
+                    val script="""(()=>{const matches=document.querySelectorAll($selector);const e=matches[0];if(${"\"$action\""}==='assert_absent')return matches.length===0?'ok':'present';if(${"\"$action\""}==='assert_count')return JSON.stringify({status:matches.length===Number($value)?'ok':'count_mismatch',expected_count:Number($value),actual_count:matches.length});if(!e)return 'missing';if(${"\"$action\""}==='set_checked'){if(e.disabled)return 'disabled';if(e.tagName!=='INPUT'||!['checkbox','radio'].includes(e.type))return 'not_checkable';e.checked=($value==='true');e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return 'ok';}if(${"\"$action\""}==='click'){if(e.disabled)return 'disabled';if(typeof e.click==='function')e.click();else e.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));return 'ok';}if(${"\"$action\""}==='input'||${"\"$action\""}==='select'){if(e.disabled)return 'disabled';if(${"\"$action\""}==='select'&&e.tagName!=='SELECT')return 'not_select';e.value=$value;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return JSON.stringify({status:e.value===$value?'ok':'value_mismatch',requested_value:$value,actual_value:e.value,input_type:e.type||e.tagName,min:e.min||null,max:e.max||null,step:e.step||null,valid:e.validity?e.validity.valid:null});}if(${"\"$action\""}==='assert_value')return e.value===$value?'ok':'value_mismatch';if(${"\"$action\""}==='assert_visible'||${"\"$action\""}==='assert_hidden'){const shown=!e.hidden&&e.getClientRects().length>0&&getComputedStyle(e).visibility!=='hidden';return shown===(${"\"$action\""}==='assert_visible')?'ok':'visibility_mismatch';}if(${"\"$action\""}==='assert_text_exact')return (e.textContent||'').trim()===$value?'ok':'mismatch';if(${"\"$action\""}==='assert_attribute'){const a=JSON.parse($value);return e.getAttribute(a.name)===a.equals?'ok':'attribute_mismatch';}return (e.textContent||'').includes($value)?'ok':'mismatch';})()"""
                     var outcome=when(action) {
                         "drag", "drag_cancel" -> WorkspacePointerGesture.drag(presentation!!.view,step.getString("selector"),step.getString("value"),action=="drag_cancel")
+                        "capture_dom", "assert_dom_equal", "assert_dom_not_equal" -> {
+                            val raw=evaluate("""JSON.stringify((()=>{const nodes=Array.from(document.querySelectorAll($selector));if(!nodes.length)return {status:'snapshot_missing'};if(nodes.length>256)return {status:'snapshot_too_large'};let size=0;const html=[];for(const node of nodes){const text=node.outerHTML;size+=text.length;if(size>65536)return {status:'snapshot_too_large'};html.push(text)}return {status:'ok',html,nodes:nodes.length}})())""")
+                            val evidence=JSONObject(JSONArray("[$raw]").getString(0))
+                            val result=JSONObject().put("snapshot_key",step.getString("value")).put("scope","Exact serialized DOM outerHTML in document order; excludes canvas pixels, JS-only state and computed styles")
+                            if(evidence.optString("status")!="ok")result.put("status",evidence.optString("status"))
+                            else {
+                                val html=evidence.getJSONArray("html").toString();val digest=WorkspaceApplicationContract.hash(html)
+                                val key=step.getString("value");val expected=snapshots[key]
+                                if(action=="capture_dom")snapshots[key]=digest
+                                result.put("status",if(action=="capture_dom" || action=="assert_dom_equal" && digest==expected || action=="assert_dom_not_equal" && digest!=expected)"ok" else "snapshot_mismatch")
+                                    .put("expected_sha256",expected).put("actual_sha256",digest).put("dom_characters",html.length).put("matched_nodes",evidence.getInt("nodes"))
+                            }
+                            JSONObject.quote(result.toString())
+                        }
                         "reload" -> {collect();presentation?.dispose();presentation=null;reloads++;open();"\"ok\""}
                         "assert_record" -> {
                             val expected=JSONObject(step.getString("value"))
@@ -130,9 +153,11 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
                         else -> evaluate(script)
                     }
                     if(action=="wait_text") { val end=android.os.SystemClock.elapsedRealtime()+3_000;while(outcome!="\"ok\"" && android.os.SystemClock.elapsedRealtime()<end) { delay(100);outcome=evaluate(script) } }
-                    val countEvidence=if(action=="assert_count") runCatching {JSONObject(JSONArray("[$outcome]").getString(0))}.getOrNull() else null
-                    val passed=outcome=="\"ok\"" || countEvidence?.optString("status")=="ok"
+                    val structuredEvidence=if(action in setOf("assert_count","input","select","capture_dom","assert_dom_equal","assert_dom_not_equal")) runCatching {JSONObject(JSONArray("[$outcome]").getString(0))}.getOrNull() else null
+                    val countEvidence=if(action=="assert_count") structuredEvidence?.takeIf {it.opt("expected_count") is Number && it.opt("actual_count") is Number} else null
+                    val passed=outcome=="\"ok\"" || structuredEvidence?.optString("status")=="ok"
                     reports.put(JSONObject().put("index",i).put("action",action).put("selector",step.getString("selector")).put("passed",passed).put("outcome",outcome.take(100)))
+                    structuredEvidence?.let {reports.getJSONObject(reports.length()-1).put("evidence",it)}
                     countEvidence?.let { evidence ->
                         reports.getJSONObject(reports.length()-1).put("expected_count",evidence.getInt("expected_count")).put("actual_count",evidence.getInt("actual_count"))
                         if(!passed) reports.getJSONObject(reports.length()-1).put("message","Expected ${evidence.getInt("expected_count")} matching elements; found ${evidence.getInt("actual_count")}")
@@ -140,10 +165,10 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
                     if(!passed) {
                         val report=reports.getJSONObject(reports.length()-1)
                         report.put("actual_text",evaluate("(()=>{if(!$selector)return 'No matching isolated record';return document.querySelector($selector)?.textContent?.slice(0,500)||'';})()"))
-                        val snapshot=evaluate("""JSON.stringify({controls:Array.from(document.querySelectorAll('button,input,select')).slice(0,32).map(e=>({tag:e.tagName,id:e.id,label:(e.getAttribute('aria-label')||e.textContent||e.getAttribute('placeholder')||'').slice(0,120),disabled:!!e.disabled,value:(e.value||'').slice(0,100),options:e.tagName==='SELECT'?Array.from(e.options).slice(0,8).map(o=>({value:o.value,label:o.text.slice(0,80)})):undefined})),status:(document.querySelector('[role=status]')?.textContent||'').slice(0,300)})""")
+                        val snapshot=evaluate("""JSON.stringify({controls:Array.from(document.querySelectorAll('button,input,select')).slice(0,32).map(e=>({tag:e.tagName,id:e.id,label:(e.getAttribute('aria-label')||e.textContent||e.getAttribute('placeholder')||'').slice(0,120),disabled:!!e.disabled,type:e.type||null,min:e.min||null,max:e.max||null,step:e.step||null,value:(e.value||'').slice(0,100),options:e.tagName==='SELECT'?Array.from(e.options).slice(0,8).map(o=>({value:o.value,label:o.text.slice(0,80)})):undefined})),status:(document.querySelector('[role=status]')?.textContent||'').slice(0,300)})""")
                         runCatching { report.put("ui_state",JSONObject(JSONArray("[$snapshot]").getString(0))) }
                         report.put("failure_kind",if(outcome in setOf("null","\"not_select\"","\"not_checkable\"","\"outside_viewport\"","\"unsupported_pointer_events\""))"unsupported_interaction" else "assertion_or_precondition_failed")
-                        report.put("recovery_guidance","Compare the failed action with controls and prerequisite selection/input state. A disabled control is not a radio failure. Correct the test or implementation, then rerun; assert requested behavior, not merely generic success labels.")
+                        report.put("recovery_guidance","Compare the failed action with controls and prerequisite selection/input state. A disabled control is not a radio failure. input/select report requested and actual values plus HTML constraints; range inputs clamp and number inputs cannot retain arbitrary text. Choose a representable invalid value or test the pure validator. Use capture_dom then assert_dom_equal/not_equal for repeatability or preservation, not counts/status text alone. Correct the test or implementation, then rerun.")
                         break
                     }
                     // Let asynchronous UI handlers dispatch their host requests before the next assertion/action.
@@ -189,7 +214,7 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
         val result=JSONObject().put("check_id",id).put("candidate_id",candidateId).put("content_hash",hash).put("base_revision_id",base).put("data_version",version)
             .put("storage_verified",storageVerified).put("storage_scope","isolated_test_database").put("storage_evidence",JSONObject().put("commits",commits).put("reloads",reloads).put("record_asserted_after_reload",recordAfterReload)).put("host_failure_count",hostFailureCount).put("host_failures",JSONArray(hostFailures)).put("random_values",randomValues?.let(::JSONArray)).put("runtime",runtimeEvidence ?: JSONObject.NULL).put("kind","ui_simulation").put("passed",passed).put("steps",reports).put("operation_counts",JSONObject(radio.calls as Map<*,*>)).put("missing_operations",JSONArray(missing))
             .put("successful_operation_counts",JSONObject(succeeded as Map<*,*>)).put("failed_operations",failed)
-            .put("criterion_evidence",JSONArray((0 until reports.length()).mapNotNull {i -> steps.optJSONObject(i)?.optString("criterion")?.takeIf(String::isNotBlank)?.let {JSONObject().put("criterion",it).put("assertion",JSONObject().put("action",steps.getJSONObject(i).getString("action")).put("selector",steps.getJSONObject(i).getString("selector")).put("expected_preview",steps.getJSONObject(i).optString("value").take(200)).put("expected_sha256",WorkspaceApplicationContract.hash(steps.getJSONObject(i).optString("value")))).put("passed",reports.getJSONObject(i).optBoolean("passed"))}}))
+            .put("criterion_evidence",JSONArray((0 until reports.length()).mapNotNull {i -> steps.optJSONObject(i)?.optString("criterion")?.takeIf(String::isNotBlank)?.let {JSONObject().put("criterion",it).put("assertion",JSONObject().put("action",steps.getJSONObject(i).getString("action")).put("selector",steps.getJSONObject(i).getString("selector")).put("expected_preview",steps.getJSONObject(i).optString("value").take(200)).put("expected_sha256",WorkspaceApplicationContract.hash(steps.getJSONObject(i).optString("value")))).put("passed",reports.getJSONObject(i).optBoolean("passed")).put("comparison_evidence",reports.getJSONObject(i).optJSONObject("evidence"))}}))
             .put("failure_kind",if(terminalFailure!=null)terminalFailure else if(hostFailureCount>0)"application_host_error" else if((0 until reports.length()).any {reports.getJSONObject(it).optString("failure_kind")=="unsupported_interaction"})"unsupported_interaction" else if(!passed)"assertion_or_coverage_failed" else JSONObject.NULL).put("gesture_scope","synthetic_dom_pointer_events_with_simulated_capture; physical touch unverified").put("semantic_correctness_verified",false).put("verified_criteria",JSONArray(verified)).put("verification_version",3).put("notification_verified",notificationVerified).put("notification_delivered",radio.delivered)
             .put("evidence_scope","DOM controls, isolated SQLite storage when exercised, and simulated BLE responses. storage_verified requires commit, page reload and exact record assertion. No live phone records, physical device, Android/native consent dialog or painted pixels were verified.")
         currentCoroutineContext().ensureActive()

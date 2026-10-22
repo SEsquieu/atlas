@@ -565,6 +565,7 @@ class AtlasMobileRuntime(
             val context = contextAssembler.assemble(
                 turnSession, messages, memories, summary, observation, System.currentTimeMillis(), toolsAvailable, pendingClarification,
                 database.workspaceContextForSession(session.id), listOfNotNull(database.archiveContextNotice(session.id), database.contextHistoryNotice(session.id, summary?.throughMessageSequence ?: 0, messages.size)).joinToString("\n").takeIf { it.isNotBlank() },
+                retainedSourceReads = WorkspaceSourceContext.load(database, executionTasks, lease.taskId),
             )
             val spoken = voice || turnSession.permissions.speakResponses
             val latestUserText = messages.lastOrNull { it.role == MessageRole.USER && it.turnId in taskTurnIds }?.content ?: task.objective
@@ -608,6 +609,7 @@ class AtlasMobileRuntime(
             database.appendEvent(session.id, "context.assembled", JSONObject().apply {
                 put("turnId", turnId); put("step", step); put("messageIds", org.json.JSONArray(context.includedMessageIds)); put("projectedMessageIds", org.json.JSONArray(context.projectedMessageIds))
                 put("omittedMessages", context.omittedMessageCount); put("approximateCharacters", context.approximateCharacters)
+                put("retainedSourceCharacters", context.retainedSourceCharacters)
                 put("memoryCount", memories.size); put("summaryThrough", summary?.throughMessageSequence); put("toolsAvailable", request.tools.size)
             })
             val estimatedInput = (request.systemPrompt.length + request.messages.sumOf { it.content.length } + request.tools.sumOf { it.parametersJson.length } + 3L) / 4 + if (request.image != null) 4096L else 0L

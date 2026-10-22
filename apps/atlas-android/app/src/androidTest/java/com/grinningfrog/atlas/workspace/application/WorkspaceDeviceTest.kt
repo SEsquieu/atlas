@@ -468,6 +468,39 @@ class WorkspaceDeviceTest {
         } finally { db.deleteComposableWorkspace(w.id) }
     }
 
+    @Test fun hostDomComparisonsDetectChangedGeometryDespiteEqualCountsAndExplainInputCoercion() = runBlocking {
+        val db=(context.applicationContext as AtlasApplication).database
+        val session=db.createSession("Comparison evidence","Verify repeatability")
+        val turn=db.createTurn(session.id,"test");val w=db.createComposableWorkspace("Comparison evidence","")
+        try {
+            val bundle=WorkspaceApplicationContract.example()
+            bundle.getJSONObject("files").put("ui/index.html","<!doctype html><html><body><input id=seed type=number value=17><input id=size type=range min=5 max=50 value=10><button id=generate>Generate</button><div id=maze></div><p id=status></p><script type=module src=./app.js></script></body></html>")
+            bundle.getJSONObject("files").put("ui/app.js","""import {host} from '/atlas/host.js';const q=s=>document.querySelector(s);q('#generate').onclick=()=>{if(!q('#seed').value){q('#status').textContent='Invalid seed';return}q('#maze').innerHTML='<i style="border-right:'+((Number(q('#seed').value)%2)?'1px':'2px')+' solid green">cell</i>';q('#status').textContent='Generated'};await host.ready();""")
+            val c=WorkspacePackageRepository(db).stage(w.id,w.realmId,w.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,turn.id)
+            fun step(action:String,selector:String,value:Any="")=JSONObject().put("action",action).put("selector",selector).put("value",value)
+            suspend fun check(steps:JSONArray)=WorkspaceUiSimulation(context,db).test(w.id,w.realmId,c.getString("candidate_id"),steps)
+            val good=check(JSONArray().put(step("click","#generate")).put(step("capture_dom","#maze","original"))
+                .put(step("click","#generate")).put(step("assert_dom_equal","#maze","original").put("criterion","Same seed repeats geometry"))
+                .put(step("reload","")).put(step("click","#generate")).put(step("assert_dom_equal","#maze","original"))
+                .put(step("input","#seed","")).put(step("click","#generate")).put(step("assert_dom_equal","#maze","original").put("criterion","Invalid input preserves output"))
+                .put(step("input","#seed","18")).put(step("click","#generate")).put(step("assert_dom_not_equal","#maze","original"))
+                .put(step("assert_count","#maze i",1)))
+            assertTrue(good.toString(),good.getBoolean("passed"))
+            val proof=good.getJSONArray("steps").getJSONObject(3).getJSONObject("evidence")
+            assertEquals(proof.getString("expected_sha256"),proof.getString("actual_sha256"))
+            val wrong=check(JSONArray().put(step("click","#generate")).put(step("capture_dom","#maze","before"))
+                .put(step("input","#seed","18")).put(step("click","#generate")).put(step("assert_count","#maze i",1)).put(step("assert_dom_equal","#maze","before")))
+            assertFalse(wrong.getBoolean("passed"));assertTrue(wrong.getJSONArray("steps").getJSONObject(4).getBoolean("passed"))
+            assertEquals("snapshot_mismatch",wrong.getJSONArray("steps").getJSONObject(5).getJSONObject("evidence").getString("status"))
+            val clamped=check(JSONArray().put(step("input","#size","0"))).getJSONArray("steps").getJSONObject(0).getJSONObject("evidence")
+            assertEquals("0",clamped.getString("requested_value"));assertEquals("5",clamped.getString("actual_value"));assertEquals("range",clamped.getString("input_type"))
+            val sanitized=check(JSONArray().put(step("input","#seed","oops"))).getJSONArray("steps").getJSONObject(0).getJSONObject("evidence")
+            assertEquals("",sanitized.getString("actual_value"))
+            val invalid=runCatching {WorkspaceUiSimulation(context,db).test("missing","missing","missing",JSONArray().put(step("assert_count","#maze","at least one")))}.exceptionOrNull()
+            assertTrue(invalid is com.grinningfrog.atlas.runtime.StructuredToolRejection)
+        } finally {db.deleteComposableWorkspace(w.id)}
+    }
+
     @Test fun candidateUiSimulationFindsMissingNotificationsAndVerifiesManagedWatcher() = runBlocking {
         val db=(context.applicationContext as AtlasApplication).database
         val session=db.createSession("UI simulation","test");val turn=db.createTurn(session.id,"user")
