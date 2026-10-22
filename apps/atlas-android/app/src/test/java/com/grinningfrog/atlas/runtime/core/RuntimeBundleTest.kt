@@ -21,6 +21,11 @@ class RuntimeBundleTest {
         }.sign()
         return b.put("signature", Base64.getEncoder().encodeToString(signature))
     }
+    @Test fun untrustedJsonNestingIsBoundedBeforePlatformParsing() {
+        assertThrows(IllegalArgumentException::class.java) { boundedRuntimeObject("[".repeat(10000) + "]".repeat(10000), 32768) }
+        val source = """{["\}[]"""
+        assertEquals(source, boundedRuntimeObject(JSONObject().put("source", source).toString(), 100).getString("source"))
+    }
     @Test fun signedArtifactAndTamperRejection() {
         val b = bundle()
         assertEquals("test-1", RuntimeBundle.parse(b.toString(), trusted).version)

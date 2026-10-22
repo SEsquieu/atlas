@@ -10,7 +10,10 @@ class RuntimeBundleStore(context: Context) {
     private val root = File(context.filesDir, "runtime-core").apply { mkdirs() }
     private val stateFile = AtomicFile(File(root, "selection.json"))
     private val builtin = context.assets.open("runtime/builtin.json").bufferedReader().use { it.readText() }
-    @Synchronized private fun state(): JSONObject = if (stateFile.baseFile.exists()) JSONObject(stateFile.openRead().bufferedReader().use { it.readText() }) else JSONObject()
+    @Synchronized private fun state(): JSONObject = try {
+        boundedRuntimeObject(stateFile.openRead().use { it.readBounded(4096) }, 4096)
+    } catch (_: java.io.FileNotFoundException) { JSONObject() }
+      catch (_: Exception) { JSONObject().put("selected", "native").put("selection_error", "Runtime selection could not be read; Native is selected for new tasks") }
     private fun write(file: AtomicFile, text: String) {
         val stream = file.startWrite()
         try { stream.write(text.toByteArray(Charsets.UTF_8)); file.finishWrite(stream) }
@@ -37,7 +40,19 @@ class RuntimeBundleStore(context: Context) {
     }
     @Synchronized fun resolve(id: String): RuntimeBundle {
         require(id.matches(Regex("[a-f0-9]{64}"))) { "Invalid pinned runtime" }
-        val record = JSONObject(File(root, "$id.json").readText())
+        val record = File(root, "$id.json").inputStream().use { boundedRuntimeObject(it.readBounded(RuntimeBundle.MAX_BYTES * 2), RuntimeBundle.MAX_BYTES * 2) }
         return RuntimeBundle.parse(record.getJSONObject("bundle").toString(), record.optString("trusted_key"), builtin = record.optBoolean("bundled")).also { require(it.id == id) }
     }
+}
+
+private fun java.io.InputStream.readBounded(limit: Int): String {
+    val output = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(8192)
+    while (true) {
+        val count = read(buffer)
+        if (count < 0) break
+        require(output.size() + count <= limit) { "Stored runtime record too large" }
+        output.write(buffer, 0, count)
+    }
+    return output.toString("UTF-8")
 }

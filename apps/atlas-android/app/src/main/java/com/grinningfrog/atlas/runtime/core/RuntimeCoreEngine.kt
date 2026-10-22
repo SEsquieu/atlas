@@ -82,7 +82,7 @@ data class CoreDecision(val action: String, val guidance: String, val elapsedUs:
     companion object {
         fun parse(raw: String, requestId: String): CoreDecision {
             require(raw.toByteArray(Charsets.UTF_8).size <= 32_768) { "Oversized runtime response" }
-            val result = JSONObject(raw)
+            val result = boundedRuntimeObject(raw, 32_768)
             require(result.keys().asSequence().toSet() == setOf("bridge", "request_id", "action", "guidance")) { "Unknown runtime command fields" }
             require(result.get("bridge") == 1 && result.getString("request_id") == requestId) { "Stale or incompatible runtime response" }
             val action = result.getString("action")
