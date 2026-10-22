@@ -43,6 +43,16 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         private fun hash(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
     }
     private fun <T> atomic(block: () -> T): T = database.writeTransaction { block() }
+    fun pinRuntime(taskId: String, selected: String): String = atomic {
+        val task = requireNotNull(get(taskId))
+        val pinned = task.document.optString("runtime_core_id").takeIf { it.isNotBlank() }
+        if (pinned != null) return@atomic pinned
+        task.document.put("runtime_core_id", selected)
+        save(task)
+        event(task, "execution.runtime_pinned", JSONObject().put("runtime_core_id", selected))
+        selected
+    }
+
     fun get(id: String): ExecutionTask? = database.readableDatabase.rawQuery("SELECT task_id,session_id,state,generation,lease_owner,lease_until,next_run_at,document_json FROM execution_tasks WHERE task_id=?", arrayOf(id)).use { c ->
         if (!c.moveToFirst()) null else ExecutionTask(c.getString(0), c.getString(1), ExecutionState.valueOf(c.getString(2)), c.getLong(3), if(c.isNull(4)) null else c.getString(4), c.getLong(5), c.getLong(6), JSONObject(c.getString(7)))
     }

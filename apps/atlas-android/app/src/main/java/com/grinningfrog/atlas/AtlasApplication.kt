@@ -13,6 +13,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 class AtlasApplication : Application() {
+    val runtimeBundles by lazy { com.grinningfrog.atlas.runtime.core.RuntimeBundleStore(this) }
     val database by lazy { AtlasDatabase(this) }
     val settings by lazy { SecureSettings(this) }
     val mediaRepository by lazy { MediaRepository(this) }

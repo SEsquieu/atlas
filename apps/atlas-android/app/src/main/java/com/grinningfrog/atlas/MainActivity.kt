@@ -1646,6 +1646,7 @@ private fun EventsPage(runtime: AtlasMobileRuntime, snapshot: RuntimeSnapshot, s
             Text("Your session stays on this phone except for content sent to your chosen inference and speech services.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(6.dp))
         }
+        item { com.grinningfrog.atlas.runtime.core.RuntimeCoreSettings() }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {

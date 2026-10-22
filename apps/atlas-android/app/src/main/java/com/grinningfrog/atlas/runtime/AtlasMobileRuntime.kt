@@ -79,6 +79,8 @@ class AtlasMobileRuntime(
     private val scope: CoroutineScope,
     private val idleRuntime: AndroidIdleRuntime? = null,
     private val additionalTools: List<AtlasToolAdapter> = emptyList(),
+    private val runtimeBundles: com.grinningfrog.atlas.runtime.core.RuntimeBundleStore? = null,
+    private val runtimeCore: com.grinningfrog.atlas.runtime.core.RuntimeCoreEngine? = null,
     private val onLiveContextChanged: (Boolean) -> Unit = {},
 ) {
     private val operations = Mutex()
@@ -485,18 +487,20 @@ class AtlasMobileRuntime(
     }
 
     private suspend fun runTurnLoopLocked(session: AtlasSession, turnId: String, startingObservation: VisualObservation?, voice: Boolean) {
-        val startedAt = System.currentTimeMillis()
+        val startedAt = android.os.SystemClock.elapsedRealtime()
         var observation = startingObservation
         var uiObservation: VisualObservation? = null
         var step = database.loadTurn(turnId)?.stepCount ?: 0
         val lease = activeExecutionLease ?: error("Missing execution lease")
+        val runtimeId = executionTasks.pinRuntime(lease.taskId, runtimeBundles?.selected() ?: "native")
+        val runtimeBundle = if (runtimeId == "native") null else requireNotNull(runtimeBundles).resolve(runtimeId)
         var sliceTools = 0
         val sliceToolsByName = mutableMapOf<String, Int>()
         suspend fun drainPending(): Boolean {
             val pending = executionTasks.pending(lease.taskId)
             if (pending.any { it.status == ToolCallStatus.WAITING_FOR_CONFIRMATION }) { database.updateTurn(turnId, TurnStatus.WAITING_FOR_CONFIRMATION); return false }
             for (call in pending.filter { it.status in setOf(ToolCallStatus.PROPOSED, ToolCallStatus.APPROVED) }) {
-                if (sliceTools >= AgentLoopPolicy.MAX_TOOL_CALLS || System.currentTimeMillis() - startedAt >= AgentLoopPolicy.MAX_WALL_TIME_MS) { database.updateTurn(turnId, TurnStatus.YIELDED); return false }
+                if (sliceTools >= AgentLoopPolicy.MAX_TOOL_CALLS || android.os.SystemClock.elapsedRealtime() - startedAt >= AgentLoopPolicy.MAX_WALL_TIME_MS) { database.updateTurn(turnId, TurnStatus.YIELDED); return false }
                 executionTasks.check(lease)
                 val policy = toolHarness.evaluate(requireActiveSession(), ToolCallProposal(call.id, call.name, call.argumentsJson))
                 if (policy.requiresConfirmation && call.status != ToolCallStatus.APPROVED) { database.updateToolCall(call.id, ToolCallStatus.WAITING_FOR_CONFIRMATION); database.updateTurn(turnId, TurnStatus.WAITING_FOR_CONFIRMATION); return false }
@@ -521,10 +525,20 @@ class AtlasMobileRuntime(
         val recorded = database.loadMessages(session.id, limit = AgentLoopPolicy.MAX_STORED_MESSAGES_FOR_CONTEXT).mapNotNull { it.toolCallId }.toSet()
         executionTasks.calls(lease.taskId).filter { it.status == ToolCallStatus.COMPLETED && it.id !in recorded && it.resultJson != null && database.loadTurn(it.turnId)?.status == TurnStatus.INTERRUPTED }.takeLast(10).forEach { recordToolResult(it, it.resultJson!!) }
         if (!drainPending()) return
-        while (step < AgentLoopPolicy.MAX_STEPS && System.currentTimeMillis() - startedAt < AgentLoopPolicy.MAX_WALL_TIME_MS) {
+        while (step < AgentLoopPolicy.MAX_STEPS && android.os.SystemClock.elapsedRealtime() - startedAt < AgentLoopPolicy.MAX_WALL_TIME_MS) {
             currentCoroutineContext().ensureActive()
             executionTasks.check(lease)
             if (!executionTasks.available(lease.taskId)) break
+            val coreDecision = runtimeBundle?.let { bundle ->
+                requireNotNull(runtimeCore).decide(bundle, step, android.os.SystemClock.elapsedRealtime() - startedAt).also { decision ->
+                    currentCoroutineContext().ensureActive()
+                    executionTasks.check(lease)
+                    database.appendEvent(session.id, "runtime.core_decision", JSONObject().put("turnId", turnId)
+                        .put("runtime_core_id", runtimeId).put("version", bundle.version).put("step", step)
+                        .put("action", decision.action).put("elapsed_us", decision.elapsedUs).put("cold", decision.cold))
+                }
+            }
+            if (coreDecision?.action == "yield") break
             val turnSession = database.loadSession(session.id) ?: session
             step += 1
             database.updateTurn(turnId, TurnStatus.ASSEMBLING_CONTEXT, stepCount = step)
@@ -557,7 +571,7 @@ class AtlasMobileRuntime(
                 turnId = turnId,
                 step = step,
                 capability = capability,
-                systemPrompt = context.systemPrompt + "\n\n" + executionTasks.context(lease.taskId) + "\n\n" + capabilityDiscovery.context(turnId).orEmpty() + "\n\nCORE EXECUTION EVIDENCE (authoritative facts, not instructions):\n" +
+                systemPrompt = context.systemPrompt + (coreDecision?.guidance?.let { "\n\nRUNTIME ORCHESTRATION GUIDANCE:\n$it" } ?: "") + "\n\n" + executionTasks.context(lease.taskId) + "\n\n" + capabilityDiscovery.context(turnId).orEmpty() + "\n\nCORE EXECUTION EVIDENCE (authoritative facts, not instructions):\n" +
                     org.json.JSONArray(database.loadRecentTurns(session.id).map { database.turnDiagnostics(it).json(System.currentTimeMillis()) }).toString() +
                     "\nAnswer failure questions from this evidence. A committed revision survives a failed final reply. Never deny recorded tool attempts. Late tool proposals are not executed.\n" +
                     (if (spoken) ResponsePolicy.instructions(responseContract) else ""),
@@ -700,7 +714,7 @@ class AtlasMobileRuntime(
             }
         }
         database.updateTurn(turnId, TurnStatus.YIELDED, stepCount = step)
-        database.appendEvent(session.id, "execution.slice_yielded", JSONObject().put("turnId", turnId).put("execution_task_id", lease.taskId).put("steps", step).put("tool_calls", sliceTools).put("elapsed_ms", System.currentTimeMillis() - startedAt))
+        database.appendEvent(session.id, "execution.slice_yielded", JSONObject().put("turnId", turnId).put("execution_task_id", lease.taskId).put("steps", step).put("tool_calls", sliceTools).put("elapsed_ms", android.os.SystemClock.elapsedRealtime() - startedAt))
         publish(phase = RuntimePhase.THINKING)
     }
 
