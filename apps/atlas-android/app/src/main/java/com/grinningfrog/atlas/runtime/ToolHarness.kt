@@ -10,6 +10,7 @@ import com.grinningfrog.atlas.model.MemoryKind
 import com.grinningfrog.atlas.model.MemoryStatus
 import com.grinningfrog.atlas.model.MemoryScope
 import com.grinningfrog.atlas.model.ToolCallProposal
+import com.grinningfrog.atlas.model.ToolCallStatus
 import com.grinningfrog.atlas.model.ToolDefinition
 import com.grinningfrog.atlas.model.ToolRisk
 import com.grinningfrog.atlas.model.VisualObservation
