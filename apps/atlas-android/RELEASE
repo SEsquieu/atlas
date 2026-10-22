@@ -1,2 +1,2 @@
-0.1.0-alpha.32
-Exact source edits, truthful UI and hosted-search evidence, and explicit ChatGPT reasoning effort with usage telemetry.
+0.1.0-alpha.33
+Experimental replaceable-runtime bridge with signed bundle import, task version pins, cancellation isolation and latency qualification. Native execution remains the default.
