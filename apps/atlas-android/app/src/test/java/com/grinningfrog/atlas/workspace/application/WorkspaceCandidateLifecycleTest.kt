@@ -107,6 +107,32 @@ class WorkspaceCandidateLifecycleTest {
         assertEquals(result.getString("revision_id"), replay.getString("revision_id"))
         assertEquals(1L, replay.getLong("epoch"))
     }
+    @Test fun liveCandidateReceiptsRequireNewLiveBaseWithoutRetestingOrCreatingDrafts() = runTest {
+        val c=candidate(); val checked=checks(c);val active=activate(c,checked) {_,_->true}
+        val repo=WorkspacePackageRepository(db)
+        val stored=repo.inspect(c.getString("workspace_id"),c.getString("realm_id"),c.getString("candidate_id"))
+        assertEquals("live_content",stored.getString("candidate_state"))
+        assertFalse(stored.getBoolean("testable_against_current_base"))
+        assertEquals(active.getString("revision_id"),stored.getString("live_revision_id"))
+        assertTrue(stored.getString("next_step").contains("same workspace"))
+        val error=runCatching { checks(c) {_,_,_->error("Stale candidate must not execute") } }.exceptionOrNull()
+        assertTrue(error is com.grinningfrog.atlas.runtime.StructuredToolRejection)
+        assertEquals("CANDIDATE_BASE_CONFLICT",(error as com.grinningfrog.atlas.runtime.StructuredToolRejection).code)
+        val session=db.createSession("Recovery","Improve existing app",workspaceId=c.getString("realm_id"))
+        db.updateSessionStatus(session.id,com.grinningfrog.atlas.model.SessionStatus.ACTIVE)
+        val turn=db.createTurn(session.id,"text")
+        val tasks=com.grinningfrog.atlas.runtime.ExecutionTaskStore(db)
+        val task=tasks.create(session,"Improve existing app",turn.id,com.grinningfrog.atlas.runtime.ExecutionBudget())
+        tasks.claim(task.id,"runner")!!
+        tasks.bindWorkspace(turn.id,c.getString("workspace_id"),"activation")
+        val create=WorkspaceLiveTools.create(db,RuntimeEnvironment.getApplication()).first {it.definition.name=="workspace_package_create"}
+        val call=com.grinningfrog.atlas.model.AtlasToolCall("create-conflict",session.id,turn.id,"workspace_package_create","""{"name":"Replacement"}""",com.grinningfrog.atlas.model.ToolCallStatus.PROPOSED,com.grinningfrog.atlas.model.ToolRisk.SESSION_WRITE,false,"recovery-test",createdAtMs=0,updatedAtMs=0)
+        val failure=runCatching {create.execute(call)}.exceptionOrNull()
+        assertTrue(failure is com.grinningfrog.atlas.runtime.StructuredToolRejection)
+        assertEquals("EXISTING_TARGET_BOUND",(failure as com.grinningfrog.atlas.runtime.StructuredToolRejection).code)
+        assertEquals(c.getString("workspace_id"),tasks.forTurn(turn.id)!!.document.getJSONObject("workspace_target").getString("workspace_id"))
+        assertEquals(1,db.listComposableWorkspaces().count { it.realmId == c.getString("realm_id") })
+    }
     @Test fun compatibleReplacementPreservesRecordsAndFencesOldPrincipal() = runTest {
         val first = candidate(); val original = activate(first, checks(first)) { _, _ -> true }
         val id = first.getString("workspace_id"); val realm = first.getString("realm_id")

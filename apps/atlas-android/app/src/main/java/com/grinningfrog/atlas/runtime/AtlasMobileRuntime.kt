@@ -599,8 +599,10 @@ class AtlasMobileRuntime(
                 name == ToolHarness.CLARIFICATION_TOOL || !toolHarness.evaluate(turnSession, turnCalls.last { it.name == name }.let { ToolCallProposal(it.id, it.name, it.argumentsJson) }).allowed
             }.toSet()
             if (suppressed.isNotEmpty()) database.appendEvent(session.id, "tool.retry_suppressed", JSONObject().put("turnId", turnId).put("tools", org.json.JSONArray(suppressed.toList())).put("reason", "Repeated deterministic rejection; current policy unchanged"))
+            val runtimeDevelopment = executionTasks.calls(lease.taskId).any { it.name == "atlas_runtime_status" && it.status == ToolCallStatus.COMPLETED }
             val request = baseRequest.copy(
-                tools = if (toolsAvailable) toolHarness.definitions.filter { it.name !in suppressed }.map(WorkspaceArgumentBinding::definition) else emptyList(),
+                tools = if (toolsAvailable) toolHarness.definitions.filter { it.name !in suppressed &&
+                    (runtimeDevelopment || it.name !in setOf("atlas_runtime_read", "atlas_runtime_stage", "atlas_runtime_activate")) }.map(WorkspaceArgumentBinding::definition) else emptyList(),
                 systemPrompt = baseRequest.systemPrompt + if (suppressed.isEmpty()) "" else "\nCORE RETRY LIMIT: ${suppressed.joinToString()} repeatedly rejected. Do not repeat these calls. Correct a different control or report the unresolved blocker honestly; discovery resume_local only restores installed local mutations under ordinary policy.",
             )
             database.appendEvent(session.id, "context.assembled", JSONObject().apply {

@@ -147,3 +147,13 @@ Alpha.32 delivery: PR #63 merged; signed main source `1466bea`, run `39673414889
 ## Major milestone: replaceable runtime and development connection
 
 Tracking [#65](https://github.com/SEsquieu/atlas/issues/65). First opt-in bridge merged in [PR #66](https://github.com/SEsquieu/atlas/pull/66), with automated qualification; full milestone remains in progress and phone acceptance is pending. See [architecture, invariants and completion gates](./replaceable-runtime.md). First bridge is not full orchestration extraction; issue/PR automation remains outstanding.
+
+## AF-017: Revision recovery and native approval after discovery
+
+Tracking [#68](https://github.com/SEsquieu/atlas/issues/68). Status: implemented locally for alpha.34; automated and phone qualification pending.
+
+Alpha.33 phone evidence showed an already-live candidate being retested against its historical base, a candidate source hash used without its parent candidate, an unnecessary replacement draft, and discovery rejecting a user-requested native confirmation before the dialog appeared. The revision and source guards were correct; lifecycle guidance and discovery routing were not.
+
+The fix returns explicit live/pending/stale candidate state, current live identity and exact source ancestry; rejects stale tests before worker execution; prevents ordinary creation from replacing an installed task target; and permits resumed installed local work to reach its normal native confirmation gate. Discovery does not grant permission. Obsolete pre-execution candidate-base failures retire only after receipt-backed delivery on the same bound workspace; unknown outcomes remain blockers. Runtime proposal failures can retire after a later successful selection from the same installed parent, without rewriting their audit status.
+
+See [the sanitized phone assessment](./alpha33-live-assessment.md). User-requested behavioral acceptance remains exact-candidate and explicitly unverified; no test pass is invented.

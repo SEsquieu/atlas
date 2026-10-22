@@ -56,6 +56,7 @@ internal class WorkspaceUiSimulation(private val context: Context, private val d
         }
         val repository=WorkspacePackageRepository(database)
         val candidate=repository.inspect(workspaceId,realmId,candidateId)
+        WorkspaceCandidateState.requireTestable(candidate)
         val base=candidate.getString("base_revision_id");val hash=candidate.getString("content_hash");val version=WorkspaceApplicationData(database).version(workspaceId)
         // A changed test cannot repair hung application bytes. Require a new content hash.
         database.readableDatabase.rawQuery("SELECT result_json FROM workspace_application_checks WHERE workspace_id=? AND content_hash=? AND kind='ui_simulation' ORDER BY created_at DESC",arrayOf(workspaceId,hash)).use { cursor ->

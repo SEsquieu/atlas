@@ -72,6 +72,46 @@ class RuntimeCoreEngine(private val context: Context) {
             }
         }
     }
+    /** Probes get a separate isolate; candidate code cannot alter the active task's JS globals. */
+    suspend fun qualify(bundle: RuntimeBundle): JSONObject = gate.withLock {
+        withContext(Dispatchers.IO) {
+            var probe: JavaScriptIsolate? = null
+            try {
+                withTimeout(5_000L) {
+                    if (sandbox == null) {
+                        check(JavaScriptSandbox.isSupported()) { "JavaScript runtime unavailable on this device" }
+                        sandbox = JavaScriptSandbox.createConnectedInstanceAsync(context).awaitCore()
+                    }
+                    check(sandbox!!.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_ISOLATE_TERMINATION) &&
+                        sandbox!!.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_ISOLATE_MAX_HEAP_SIZE)) { "Runtime isolation limits unsupported" }
+                    probe = sandbox!!.createIsolate(IsolateStartupParameters().apply { maxHeapSizeBytes = 16L * 1024 * 1024 })
+                    probe!!.evaluateJavaScriptAsync(bundle.source + "\n;'loaded';").awaitCore()
+                    val fixtures = listOf(0 to 0L, 7 to 0L, 8 to 0L, 0 to 180_000L)
+                    val reports = org.json.JSONArray()
+                    for ((step, elapsed) in fixtures) {
+                        val id = UUID.randomUUID().toString()
+                        val event = JSONObject().put("bridge", 1).put("request_id", id).put("type", "before_inference")
+                            .put("snapshot", JSONObject().put("step", step).put("elapsed_ms", elapsed))
+                        val expression = "JSON.stringify(globalThis.atlasRuntime.reduce(JSON.parse(" + JSONObject.quote(event.toString()) + ")))"
+                        val decision = CoreDecision.parse(probe!!.evaluateJavaScriptAsync(expression).awaitCore(), id)
+                        require((step != 0 || elapsed != 0L || decision.action == "infer") &&
+                            ((step < 8 && elapsed < 180_000L) || decision.action == "yield")) { "Runtime violates empty-slice or host-ceiling contract" }
+                        reports.put(JSONObject().put("step", step).put("elapsed_ms", elapsed).put("action", decision.action))
+                    }
+                    JSONObject().put("passed", true).put("runtime_id", bundle.id).put("verification_version", 1).put("probes", reports)
+                        .put("evidence_scope", "Four isolated bridge/ceiling probes only; not general behavior, task correctness or semantic equivalence")
+                }
+            } catch (e: Exception) {
+                // A failed proposal never changes selection or task pins; reset a possibly poisoned connection.
+                probe?.close(); probe = null; closeLocked()
+                if (e is TimeoutCancellationException) {
+                    currentCoroutineContext().ensureActive()
+                    throw IllegalStateException("Runtime proposal qualification timed out; selection unchanged", e)
+                }
+                throw e
+            } finally { probe?.close() }
+        }
+    }
     suspend fun close() = gate.withLock { closeLocked() }
     private fun closeLocked() {
         isolate?.close(); isolate = null; sandbox?.close(); sandbox = null; loaded = null

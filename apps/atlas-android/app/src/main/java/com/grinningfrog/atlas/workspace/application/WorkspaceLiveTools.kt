@@ -23,6 +23,14 @@ internal object WorkspaceLiveTools {
         override fun executeLocal(call: AtlasToolCall): ToolExecutionResult {
             val a = JSONObject(call.argumentsJson); WorkspaceApplicationContract.exactKeys(a, setOf("name", "description","new_draft","delivery","acceptance_criteria","require_persistence"), setOf("name"))
             val s = session(call); val name = a.getString("name").trim(); require(name.length in 1..120)
+            val boundId = ExecutionTaskStore(db).forTurn(call.turnId)?.document?.optJSONObject("workspace_target")?.optString("workspace_id")
+            val bound = boundId?.let(db::loadComposableWorkspace)
+            if (!a.optBoolean("new_draft") && bound != null && bound.realmId == s.workspaceId &&
+                WorkspaceApplicationData.isApplication(JSONObject(db.loadLiveWorkspaceRevision(bound.id)!!.definitionJson))) {
+                throw StructuredToolRejection("EXISTING_TARGET_BOUND: this task already targets an installed app", "EXISTING_TARGET_BOUND",
+                    JSONObject().put("workspace_id", bound.id).put("live_revision_id", bound.liveRevisionId)
+                        .put("next_step", "Stage changes from this live revision in the existing workspace. Creation is not recovery from revision or schema errors. Use new_draft only when the user explicitly requested a separate app."))
+            }
             val drafts=if(a.optBoolean("new_draft"))emptyList() else sessionDrafts(s.id,name)
             if(drafts.size>1)return ToolExecutionResult(JSONObject().put("ok",false).put("error","DRAFT_AMBIGUOUS").put("candidates",org.json.JSONArray(drafts)).put("recovery","Choose an exact existing workspace with workspace_target; do not create another replacement draft.").toString())
             val recovered=drafts.singleOrNull()?.let(db::loadComposableWorkspace)
@@ -136,7 +144,10 @@ internal object WorkspaceLiveTools {
             require(start == source.length || !source[start].isLowSurrogate()) { "Offset splits a surrogate pair" }
             var end = minOf(source.length, start + limit)
             if (end < source.length && end > start && source[end - 1].isHighSurrogate()) end--
-            return ToolExecutionResult(JSONObject().put("workspace_id", w.id).put("path", a.getString("path")).put("revision_id", if (a.has("candidate_id")) JSONObject.NULL else revision.id).put("candidate_id", a.optString("candidate_id").ifBlank { null }).put("source_sha256", WorkspaceApplicationContract.hash(source)).put("source", source.substring(start, end)).put("start_char", start).put("next_char", if (end < source.length) end else JSONObject.NULL).put("total_chars", source.length).toString())
+            return ToolExecutionResult(JSONObject().put("workspace_id", w.id).put("path", a.getString("path")).put("revision_id", if (a.has("candidate_id")) JSONObject.NULL else revision.id).put("candidate_id", a.optString("candidate_id").ifBlank { null }).put("source_basis", if (a.has("candidate_id")) "candidate" else "revision")
+                .put("stage_parent_candidate_id", a.optString("candidate_id").ifBlank { null })
+                .put("edit_guidance", if (a.has("candidate_id")) "Stage edits with parent_candidate_id equal to this candidate_id and its base_revision_id. The source hash belongs to the candidate, not the live revision." else "Stage edits against this revision_id; omit parent_candidate_id to copy current live source. A historical revision is not automatically rebased.")
+                .put("source_sha256", WorkspaceApplicationContract.hash(source)).put("source", source.substring(start, end)).put("start_char", start).put("next_char", if (end < source.length) end else JSONObject.NULL).put("total_chars", source.length).toString())
         }
     }
 }

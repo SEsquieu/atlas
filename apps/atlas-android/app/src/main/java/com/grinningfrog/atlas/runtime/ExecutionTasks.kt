@@ -410,6 +410,19 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         }
     }
     private fun nonBlockingAuditFailure(call: AtlasToolCall, task: ExecutionTask, all: List<AtlasToolCall>): Boolean {
+        if (call.name == "atlas_runtime_stage" && call.status in setOf(ToolCallStatus.FAILED, ToolCallStatus.REJECTED)) {
+            val parent = runCatching { JSONObject(call.argumentsJson).getString("parent_runtime_id") }.getOrNull() ?: return false
+            return all.drop(all.indexOf(call) + 1).any { success -> success.name == "atlas_runtime_activate" && success.status == ToolCallStatus.COMPLETED &&
+                runCatching { val r = JSONObject(success.resultJson.orEmpty()); r.optBoolean("selected_for_new_tasks") && !r.optBoolean("current_task_changed", true) && r.optString("parent_runtime_id") == parent }.getOrDefault(false) }
+        }
+        if (call.name in setOf("workspace_package_test", "workspace_package_ui_test") && call.status == ToolCallStatus.FAILED &&
+            runCatching { JSONObject(call.resultJson.orEmpty()).optString("error_code") == "CANDIDATE_BASE_CONFLICT" }.getOrDefault(false)) {
+            val workspace = runCatching { JSONObject(call.argumentsJson).getString("workspace_id") }.getOrNull() ?: return false
+            return workspace == task.document.optJSONObject("workspace_target")?.optString("workspace_id") &&
+                all.drop(all.indexOf(call) + 1).any { success -> success.name == "workspace_package_activate" && success.status == ToolCallStatus.COMPLETED &&
+                    runCatching { val r = receipt(success)?.let(::JSONObject) ?: return@runCatching false
+                        r.optBoolean("activated") && r.optString("workspace_id") == workspace && database.loadComposableWorkspace(workspace)?.liveRevisionId == r.optString("revision_id") }.getOrDefault(false) }
+        }
         if(call.name=="atlas_task_handoff_pixels" && call.status in setOf(ToolCallStatus.FAILED,ToolCallStatus.REJECTED)) {
             val requirement=task.document.optJSONObject("completion_requirement")
             if(requirement?.optBoolean("require_pixels")==true)return false
