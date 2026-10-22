@@ -41,6 +41,15 @@ class ExecutionTasksTest {
         db.insertToolCall(c)
         store.localOperation(c,lease) {ToolExecutionResult(JSONObject().put("workspace_id",workspaceId).put("candidate_id","candidate").put("revision_id",revisionId).put("activated",true).toString())}
     }
+    @Test fun runtimePinSurvivesSelectionChangeSliceAndStoreRecreation() {
+        val t = task()
+        assertEquals("core-a", store.pinRuntime(t.id, "core-a"))
+        assertEquals("core-a", store.pinRuntime(t.id, "core-b"))
+        val lease = store.claim(t.id, "runner")!!
+        store.finish(lease, SliceOutcome.YIELDED, 1)
+        assertEquals("core-a", ExecutionTaskStore(db).pinRuntime(t.id, "native"))
+        assertEquals("core-b", store.pinRuntime(task().id, "core-b"))
+    }
     @Test fun unavailableOptionalCaptureDoesNotBlockCommittedDeliveryButRequiredCaptureDoes() {
         for(required in listOf(false,true)) {
             val w=db.createComposableWorkspace("Capture $required", "")

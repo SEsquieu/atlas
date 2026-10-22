@@ -143,3 +143,7 @@ Alpha.31 delivery: PR #58 merged; signed main build `39534360360` delivered with
 PR #63 implements exact hash/preimage-checked stage edits, pending verification guidance, matching non-BLE UI activation evidence, and request-bound hosted search availability. Phone performance and broad-goal decision quality remain separate acceptance in #53. Alpha.32 adds an explicit ChatGPT effort selector and optional provider reasoning/cache telemetry; the on-device thinking checkbox does not control ChatGPT. See the [alpha.32 test cycle](./releases/v0.1.0-alpha.32.md).
 
 Alpha.32 delivery: PR #63 merged; signed main source `1466bea`, run `39673414889`, version code `1333`. APK/provenance hashes, signing identity and Drive metadata were verified. Issues #60–62 are closed against implemented code and automated regression evidence; #53 retains phone benchmarks and broad-goal decision quality. The ChatGPT effort selector is independent of the on-device thinking checkbox and defaults to the provider's choice until explicitly changed. See the alpha.32 release notes for the two-round autonomy test.
+
+## Major milestone: replaceable runtime and development connection
+
+Tracking [#65](https://github.com/SEsquieu/atlas/issues/65). In progress, opt-in. See [architecture, invariants and completion gates](./replaceable-runtime.md). First bridge is not full orchestration extraction; issue/PR automation remains outstanding.

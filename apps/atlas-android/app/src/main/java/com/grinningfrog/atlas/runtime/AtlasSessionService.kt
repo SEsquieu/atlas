@@ -46,6 +46,8 @@ class AtlasSessionService : LifecycleService() {
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    private lateinit var coreEngine: com.grinningfrog.atlas.runtime.core.RuntimeCoreEngine
+
     lateinit var runtime: AtlasMobileRuntime
         private set
 
@@ -97,8 +99,10 @@ class AtlasSessionService : LifecycleService() {
                 IntentInferenceWorkHandler(InferenceLocation.CLOUD, app.database, router),
             ),
         )
+        coreEngine = app.runtimeCore.also { it.retain() }
         runtime = AtlasMobileRuntime(
             app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope, idleRuntime,
+            runtimeBundles = app.runtimeBundles, runtimeCore = coreEngine,
             additionalTools = AndroidContextTools.create(this, app.database, app.settings) + WorkspaceTools.create(app.database, app.mediaRepository, this),
         )
         serviceScope.launch {
@@ -127,6 +131,7 @@ class AtlasSessionService : LifecycleService() {
     override fun onDestroy() {
         runtime.close()
         serviceScope.cancel()
+        if (::coreEngine.isInitialized) CoroutineScope(Dispatchers.IO).launch { coreEngine.release() }
         super.onDestroy()
     }
 
