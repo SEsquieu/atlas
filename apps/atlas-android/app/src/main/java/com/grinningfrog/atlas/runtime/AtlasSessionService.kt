@@ -103,7 +103,7 @@ class AtlasSessionService : LifecycleService() {
         runtime = AtlasMobileRuntime(
             app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope, idleRuntime,
             runtimeBundles = app.runtimeBundles, runtimeCore = coreEngine,
-            additionalTools = AndroidContextTools.create(this, app.database, app.settings) + WorkspaceTools.create(app.database, app.mediaRepository, this),
+            additionalTools = com.grinningfrog.atlas.runtime.core.RuntimeCoreTools.create(app.database, app.runtimeBundles, coreEngine) + AndroidContextTools.create(this, app.database, app.settings) + WorkspaceTools.create(app.database, app.mediaRepository, this),
         )
         serviceScope.launch {
             runCatching { runtime.initialize() }.onFailure { error ->

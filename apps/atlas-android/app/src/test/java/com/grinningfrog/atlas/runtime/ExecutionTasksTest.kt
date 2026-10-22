@@ -41,6 +41,30 @@ class ExecutionTasksTest {
         db.insertToolCall(c)
         store.localOperation(c,lease) {ToolExecutionResult(JSONObject().put("workspace_id",workspaceId).put("candidate_id","candidate").put("revision_id",revisionId).put("activated",true).toString())}
     }
+    @Test fun obsoletePreExecutionBaseConflictRetiresOnlyAfterDeliveryOnSameWorkspace() {
+        val w=db.createComposableWorkspace("Fresh delivery","")
+        val t=task();val lease=store.claim(t.id,"runner")!!
+        store.bindWorkspace(store.currentTurn(t.id),w.id,"activation")
+        val failed=call(t,"workspace_package_ui_test",JSONObject().put("workspace_id",w.id).put("candidate_id","historical").toString())
+        db.insertToolCall(failed)
+        db.updateToolCall(failed.id,ToolCallStatus.FAILED,error="REVISION_CONFLICT",resultJson="""{"ok":false,"error_code":"CANDIDATE_BASE_CONFLICT"}""")
+        assertEquals(1,store.outstanding(t.id).length())
+        delivered(t,lease,w.id,w.liveRevisionId)
+        assertEquals(0,store.outstanding(t.id).length())
+        assertEquals(ToolCallStatus.FAILED,db.loadToolCall(failed.id)!!.status)
+    }
+    @Test fun failedRuntimeProposalRetiresAfterApprovedReplacementButUnknownDoesNot() {
+        val t=task()
+        val failed=call(t,"atlas_runtime_stage","""{"parent_runtime_id":"parent"}""")
+        db.insertToolCall(failed);db.updateToolCall(failed.id,ToolCallStatus.FAILED,error="Bad proposal")
+        assertEquals(1,store.outstanding(t.id).length())
+        val activated=call(t,"atlas_runtime_activate")
+        db.insertToolCall(activated)
+        db.updateToolCall(activated.id,ToolCallStatus.COMPLETED,resultJson="""{"selected_for_new_tasks":true,"current_task_changed":false,"parent_runtime_id":"parent"}""")
+        assertEquals(0,store.outstanding(t.id).length())
+        db.updateToolCall(failed.id,ToolCallStatus.UNKNOWN,error="Unknown operation")
+        assertEquals(1,store.outstanding(t.id).length())
+    }
     @Test fun runtimePinSurvivesSelectionChangeSliceAndStoreRecreation() {
         val t = task()
         assertEquals("core-a", store.pinRuntime(t.id, "core-a"))

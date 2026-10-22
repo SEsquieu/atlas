@@ -13,6 +13,10 @@ data class RuntimeBundle(val version: String, val sha256: String, val source: St
         JSONArray().put("atlas.runtime.v1").put(version).put(1).put(sha256).toString().toByteArray(Charsets.UTF_8)
     ).joinToString("") { "%02x".format(it) }
     companion object {
+        fun local(version: String, source: String): RuntimeBundle {
+            val hash = MessageDigest.getInstance("SHA-256").digest(source.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+            return parse(JSONObject().put("format", "atlas.runtime.v1").put("version", version).put("bridge", 1).put("source", source).put("sha256", hash).toString(), builtin = true)
+        }
         const val MAX_BYTES = 256 * 1024
         fun parse(raw: String, trustedKey: String? = null, builtin: Boolean = false): RuntimeBundle {
             require(raw.toByteArray(Charsets.UTF_8).size <= MAX_BYTES) { "Runtime bundle too large" }

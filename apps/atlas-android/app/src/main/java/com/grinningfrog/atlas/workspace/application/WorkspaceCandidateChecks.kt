@@ -19,6 +19,7 @@ internal class WorkspaceCandidateChecks(
         val repository = WorkspacePackageRepository(database)
         val data = WorkspaceApplicationData(database)
         val stored = repository.inspect(workspaceId, realmId, candidateId)
+        WorkspaceCandidateState.requireTestable(stored)
         val base = stored.getString("base_revision_id")
         require(database.loadComposableWorkspace(workspaceId)!!.liveRevisionId == base) { "REVISION_CONFLICT" }
         val version = data.version(workspaceId)

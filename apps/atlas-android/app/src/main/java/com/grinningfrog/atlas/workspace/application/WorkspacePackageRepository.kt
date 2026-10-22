@@ -70,7 +70,14 @@ class WorkspacePackageRepository(private val database: AtlasDatabase) {
             }
             manifest?.let { bundle.put("manifest", JSONObject(it.toString())) }
             val files = bundle.getJSONObject("files")
-            val resolvedChanges = WorkspaceSourceEdits.changes(files, changes, edits)
+            val resolvedChanges = try { WorkspaceSourceEdits.changes(files, changes, edits) }
+            catch (error: IllegalArgumentException) {
+                throw com.grinningfrog.atlas.runtime.StructuredToolRejection(error.message.orEmpty(), if (error.message.orEmpty().startsWith("SOURCE_EDIT_CONFLICT")) "SOURCE_EDIT_CONFLICT" else "SOURCE_EDIT_INVALID",
+                    JSONObject().put("workspace_id", workspaceId).put("base_revision_id", baseRevisionId)
+                        .put("source_basis", if (parentCandidateId == null) "live_revision" else "parent_candidate")
+                        .put("parent_candidate_id", parentCandidateId ?: JSONObject.NULL)
+                        .put("next_step", "Use the file hash and preimage from the same source basis. If the read returned candidate_id, supply that exact parent_candidate_id. For live edits read base_revision_id. No candidate was created; do not create another workspace."))
+            }
             require(resolvedChanges.length() <= WorkspaceApplicationContract.MAX_FILES) { "Too many file changes" }
             resolvedChanges.keys().asSequence().forEach { path ->
                 require(WorkspaceApplicationContract.validPath(path)) { "Invalid package path: $path" }
@@ -121,7 +128,9 @@ class WorkspacePackageRepository(private val database: AtlasDatabase) {
                 }
             }).also { result ->
                 result.put("executed", result.getJSONArray("checks").length() > 0)
-                result.put("activated", database.loadLiveWorkspaceRevision(workspaceId)?.contentHash == cursor.getString(2))
+                val live = requireNotNull(database.loadLiveWorkspaceRevision(workspaceId))
+                result.put("activated", live.contentHash == cursor.getString(2))
+                WorkspaceCandidateState.annotate(result, live.id, live.contentHash)
             }
     }
 }

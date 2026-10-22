@@ -1,2 +1,2 @@
-0.1.0-alpha.33
-Experimental replaceable-runtime bridge with signed bundle import, task version pins, cancellation isolation and latency qualification. Native execution remains the default.
+0.1.0-alpha.34
+Lifecycle-aware workspace recovery, resumed native confirmation, and agent-authored local JavaScript runtime proposals with isolated checks and native approval for new tasks.

@@ -106,6 +106,26 @@ class CapabilityDiscoveryTest {
         assertEquals(1, executions)
         assertTrue(db.loadRecentEvents(session.id).any { it.type == "capability.local_work_resumed" })
     }
+    @Test fun resumedLocalConfirmationReachesNativeGateButDoesNotGrantApproval() = runTest {
+        val local = object : AtlasToolAdapter {
+            override val supportsLocalMutation = true
+            override val definition = ToolDefinition("confirm_local", "Local approval", "{}", ToolRisk.SESSION_WRITE, requiresConfirmation=true)
+            override suspend fun execute(call: AtlasToolCall): ToolExecutionResult { executions++; return ToolExecutionResult("{}") }
+        }
+        val h=harness(local)
+        h.execute(call(CapabilityDiscovery.TOOL,blocked))
+        h.execute(call(CapabilityDiscovery.TOOL,"""{"stage":"resume_local","reason":"Use installed local tool under its ordinary approval policy"}"""))
+        val decision=h.evaluate(session,ToolCallProposal("proposal","confirm_local","{}"))
+        assertTrue(decision.allowed);assertTrue(decision.requiresConfirmation)
+        assertTrue(runCatching { h.execute(call("confirm_local")) }.isFailure)
+        h.execute(call("confirm_local").copy(status=ToolCallStatus.APPROVED,requiresConfirmation=true))
+        assertEquals(1,executions)
+        h.execute(call(CapabilityDiscovery.TOOL,JSONObject(blocked).put("missing_capability","New blocker").toString()))
+        assertFalse(h.evaluate(session,ToolCallProposal("proposal","confirm_local","{}")).allowed)
+        assertTrue(runCatching {h.execute(call("confirm_local").copy(status=ToolCallStatus.APPROVED,requiresConfirmation=true))}.isFailure)
+        assertEquals(1,executions)
+        assertEquals(session.permissions,db.loadSession(session.id)!!.permissions)
+    }
     @Test fun resumeCannotUsePriorTurnBlockerOrGrantAuthorization() = runTest {
         val h = harness()
         h.execute(call(CapabilityDiscovery.TOOL, blocked))
