@@ -1,6 +1,6 @@
 # Current Atlas implementation status
 
-Source baseline: **0.1.0-alpha.33**, Android database version 18. Alpha.33 adds an experimental, opt-in replaceable orchestration bridge. Native execution remains the default. This page describes current behavior; earlier release notes retain historical qualification evidence.
+Source baseline: **0.1.0-alpha.34**, Android database version 18. Alpha.34 adds native-confirmed local runtime proposals and repairs workspace revision/approval recovery. Native execution remains the default. This page describes current behavior; earlier release notes retain historical qualification evidence.
 
 ## Available in the Android alpha
 
@@ -18,23 +18,22 @@ The app supports Android 9+, but isolated workspace JavaScript execution require
 
 The first slice is merged in [PR #66](https://github.com/SEsquieu/atlas/pull/66). Data & activity offers Native, Bundled core and signed-runtime import. The portable core supplies bounded orchestration guidance and infer/yield decisions. The host retains context projection, response handling, provider transport/streaming, execution leases, permissions and tool effects. Tasks pin an immutable runtime artifact at creation; changing defaults or importing an update does not change an existing task. Legacy tasks stay native.
 
-External bundles require an independently trusted publisher public key and native activation confirmation. There is no remote feed, automatic issue submission, GitHub credential, coding executor or autonomous runtime activation in this build. A failed pinned runtime cannot be silently replaced; cancel the task and start a new task on Native if necessary. See [architecture, update behavior and remaining gates](./replaceable-runtime.md). [Milestone #65](https://github.com/SEsquieu/atlas/issues/65) remains open.
+External bundles require an independently trusted publisher public key and native activation confirmation. The model can inspect runtime status, read installed JavaScript source, propose exact source edits and request native-confirmed selection after isolated contract probes. Editing schemas are advertised only after status inspection. This does not edit Kotlin or migrate an active task. There is no remote feed, automatic issue submission, GitHub credential, coding executor or autonomous runtime activation in this build. A failed pinned runtime cannot be silently replaced; cancel the task and start a new task on Native if necessary. See [architecture, update behavior and remaining gates](./replaceable-runtime.md). [Milestone #65](https://github.com/SEsquieu/atlas/issues/65) remains open.
 
 ## Current automated qualification
 
 | Scope | Evidence |
 | --- | --- |
-| Final alpha.33 application unit tests and lint | [Android run 39713932019](https://github.com/SEsquieu/atlas/actions/runs/39713932019) |
-| Core build, typecheck and tests | [Core run 39713932023](https://github.com/SEsquieu/atlas/actions/runs/39713932023) |
-| Eighteen instrumented tests each on API35/36; zero failures/errors/skips | [Device run 39713932151](https://github.com/SEsquieu/atlas/actions/runs/39713932151) |
-| Signed APK, persistent signing and package checks | [Manual build 39714968508](https://github.com/SEsquieu/atlas/actions/runs/39714968508) |
-| Source boundary and history checks | [Public-readiness run 39713932059](https://github.com/SEsquieu/atlas/actions/runs/39713932059) |
+| Alpha.34 application unit tests and lint | [Android run 39727482265](https://github.com/SEsquieu/atlas/actions/runs/39727482265) |
+| Twenty instrumented tests each on API35/36; zero failures/errors/skips | [Device run 39727482231](https://github.com/SEsquieu/atlas/actions/runs/39727482231) |
+| Signed APK, persistent signing and package checks | [Manual build 39727994082](https://github.com/SEsquieu/atlas/actions/runs/39727994082) |
+| Source boundary and history checks | [Public-readiness run 39727482169](https://github.com/SEsquieu/atlas/actions/runs/39727482169) |
 
-Qualified PR source: `6e9ad1d74e9b79b633e51455c66affb39bd29267`. Merged application source: `ac5d1b3e0a779423b644a159d445e224162bf865`. Bridge tests cover concurrent request isolation, runaway cancellation/recovery and overlapping service ownership. Forty warm samples per emulator measured p95 2.348ms on API35 and 2.921ms on API36, excluding mutex queue wait. These small bridge inputs do not establish full-context migration costs, fresh-boot behavior, phone responsiveness or model-turn latency.
+Qualified head `eee3d1c4460badf091e180eefa06942dfe10e21c`; merged application source `ad5587cbdbe3c3d020b83ef32f7894b7e88d9afc`. Core build/typecheck/tests passed locally; portable source is unchanged from alpha.33. Runtime proposal tests exercise actual isolated execution, approval rejection, approved selection and pin preservation. Warm evaluation p95 was 2.290ms/2.188ms over 40 samples per emulator, excluding mutex queue wait and provider latency. See [alpha.34 evidence and phone acceptance](./releases/v0.1.0-alpha.34.md).
 
 ## Phone evidence and limits
 
-Alpha.31's MazeGen updates activated successfully on the original workspace with passing pure and UI checks, but its follow-up made six stage attempts and five valid candidates before testing, with substantial provider/output churn. Alpha.32 implemented exact source edits, truthful UI activation receipts, hosted-search evidence and explicit ChatGPT reasoning effort. Alpha.32 and alpha.33 phone testing remain pending. See [alpha.32](./releases/v0.1.0-alpha.32.md), [alpha.33](./releases/v0.1.0-alpha.33.md), and [active fixes](./active-fixes.md).
+Alpha.31's MazeGen updates activated successfully on the original workspace with passing pure and UI checks, but its follow-up made six stage attempts and five valid candidates before testing, with substantial provider/output churn. Alpha.32 implemented exact source edits, truthful UI activation receipts, hosted-search evidence and explicit ChatGPT reasoning effort. The alpha.33 phone run found historical-candidate and approval-routing dead ends; the bridge itself contributed 454ms across 85 decisions while cumulative provider latency was 461 seconds. Alpha.34 addresses those host recovery defects; its phone acceptance remains pending. See [the sanitized assessment](./alpha33-live-assessment.md). See [alpha.32](./releases/v0.1.0-alpha.32.md), [alpha.33](./releases/v0.1.0-alpha.33.md), and [active fixes](./active-fixes.md).
 
 Automated checks do not establish live-model convergence, hours-long phone endurance, every process-restart path, physical BLE interoperability or general semantic correctness. The alpha.33 bridge is the first independently replaceable policy surface, not the complete orchestration migration.
 
