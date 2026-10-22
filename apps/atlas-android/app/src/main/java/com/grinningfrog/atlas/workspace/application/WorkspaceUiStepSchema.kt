@@ -5,8 +5,8 @@ import org.json.JSONObject
 
 /** Model-facing shapes mirror the executor; historical string values remain readable. */
 internal object WorkspaceUiStepSchema {
-    private val actions = listOf("click","input","select","set_checked","drag","drag_cancel","reload")
-    private val assertions = listOf("assert_attribute","assert_text_exact","assert_text","wait_text","assert_value","assert_visible","assert_hidden","assert_absent","assert_count","assert_record")
+    private val actions = listOf("click","input","select","set_checked","drag","drag_cancel","reload","capture_dom")
+    private val assertions = listOf("assert_attribute","assert_text_exact","assert_text","wait_text","assert_value","assert_visible","assert_hidden","assert_absent","assert_count","assert_record","assert_dom_equal","assert_dom_not_equal")
     fun parameters(): JSONObject {
         fun shape(action: String): JSONObject {
             val properties = JSONObject().put("action", JSONObject().put("type", "string").put("enum", JSONArray(listOf(action))))
@@ -34,7 +34,10 @@ internal object WorkspaceUiStepSchema {
                         .put("required", JSONArray(required)).put("additionalProperties", false))))
             } else if (action !in setOf("click", "reload", "assert_visible", "assert_hidden", "assert_absent")) {
                 if (action == "set_checked") stringValue.put("enum", JSONArray(listOf("true", "false")))
-                properties.put("value", stringValue)
+                if(action=="assert_count") properties.put("value",JSONObject().put("anyOf",JSONArray()
+                    .put(JSONObject().put("type","integer").put("minimum",0).put("maximum",1000000))
+                    .put(JSONObject().put("type","string").put("pattern","^[0-9]{1,7}$").put("description","Exact nonnegative count, at most 1000000; use assert_visible for existence."))))
+                else properties.put("value", stringValue)
             }
             if (action in assertions) properties.put("criterion", JSONObject().put("type", "string").put("minLength", 1).put("maxLength", 200))
             val required = mutableListOf("action", "selector")
@@ -54,6 +57,13 @@ internal object WorkspaceUiStepSchema {
     }
     fun normalize(step: JSONObject, index: Int) {
         val value=step.opt("value")
+        if(step.optString("action")=="assert_count") {
+            val text=when(value) {is String->value;is Number->value.toDouble().let {if(it.isFinite() && it in 0.0..1000000.0 && it%1.0==0.0)it.toInt().toString() else ""};else->""}
+            if(!text.matches(Regex("[0-9]{1,7}")) || (text.toIntOrNull() ?: -1) !in 0..1000000)
+                throw com.grinningfrog.atlas.runtime.StructuredToolRejection("UI_TEST_ARGUMENT_INVALID: steps[$index].value must be an exact nonnegative integer count", "UI_TEST_ARGUMENT_INVALID",
+                    JSONObject().put("step_index",index).put("action","assert_count").put("next_step","Use an integer count (for example value=1), or assert_visible for at least one matching element. No candidate was executed."))
+            step.put("value",text.toInt().toString())
+        }
         if(value is JSONObject) {
             require(step.optString("action") in setOf("drag","drag_cancel","assert_attribute","assert_record")) {
                 "steps[$index].value: object values are supported only for drag, drag_cancel, assert_attribute and assert_record"

@@ -86,6 +86,20 @@ class ExecutionTasksTest {
         assertEquals(ExecutionState.WAITING,blocked.state)
         assertEquals("unknown_operation_outcome",blocked.waitReason)
     }
+    @Test fun sourceReadRecoveryUsesDurableOperationsAndExcludesChangedCandidateBytes() {
+        val bundle=com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.example()
+        val w=db.createComposableWorkspace("Source cache","",bundle.toString(),realmId=session.workspaceId)
+        val t=task();store.claim(t.id,"runner")!!;store.bindWorkspace(store.currentTurn(t.id),w.id,"activation")
+        val source=bundle.getJSONObject("files").getString("ui/app.js")
+        val read=call(t,"workspace_package_read_file")
+        db.insertToolCall(read);db.updateToolCall(read.id,ToolCallStatus.COMPLETED,resultJson=JSONObject().put("workspace_id",w.id).put("revision_id",w.liveRevisionId)
+            .put("path","ui/app.js").put("start_char",0).put("source",source).put("source_sha256",com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract.hash(source)).toString())
+        assertEquals(source,WorkspaceSourceContext.load(db,ExecutionTaskStore(db),t.id).single().getString("source"))
+        val staged=com.grinningfrog.atlas.workspace.application.WorkspacePackageRepository(db).stage(w.id,w.realmId,w.liveRevisionId,null,null,
+            JSONObject().put("ui/app.js",source+"\n// changed"),session.id,store.currentTurn(t.id))
+        val stage=call(t,"workspace_package_stage");db.insertToolCall(stage);db.updateToolCall(stage.id,ToolCallStatus.COMPLETED,resultJson=staged.toString())
+        assertTrue(WorkspaceSourceContext.load(db,store,t.id).isEmpty())
+    }
     @Test fun runtimePinSurvivesSelectionChangeSliceAndStoreRecreation() {
         val t = task()
         assertEquals("core-a", store.pinRuntime(t.id, "core-a"))

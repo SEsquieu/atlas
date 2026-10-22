@@ -313,3 +313,7 @@ No sidecar runs without:
 4. permission to be ignored
 
 MVP implication: leave room in the event model for async enrichment results, but do not let sidecars become required for the first response path.
+
+## Workspace source retention (alpha.35)
+
+Active task read receipts can outlive lossy transcript compaction. Before inference, the host revalidates their full file hash and exact range against the latest pending candidate or current live revision of the bound workspace. Missing ranges enter a separately bounded source-data block with offsets and operation provenance. Already-visible ranges are omitted; changed/foreign/failed reads cannot enter the cache. No executable authority or candidate-base waiver is recovered. Source is untrusted data. The default extra cap is 8000 characters, including JSON escaping, and context telemetry records retainedSourceCharacters. This is bounded retention, not complete recall or a measured token saving.

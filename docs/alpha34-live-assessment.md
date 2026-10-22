@@ -1,0 +1,11 @@
+# Alpha.34 phone assessment
+
+The October 22 test completed the original MazeGen workspace update, activated revision 5fc9ce7d, and ended its task without unresolved failures. No replacement workspace was created. The app gained a seed input, seed validation and generation-error handling that preserves the existing maze. Source inspection supports those changes; broad semantic correctness is not established by the test labels.
+
+The task took 428.852 seconds wall time, 46 model steps, 51 tool calls and 1,155,090 cumulative input tokens. Twenty source reads repeatedly covered unchanged files; the first twelve covered only four files before a successful stage. One attempted rewrite contained NUL characters and was correctly rejected. Six UI test attempts included wrong initial assumptions, values HTML controls cannot retain, and a nonnumeric exact-count value that exposed a host null/integer exception.
+
+The final passing UI test labeled a status message as deterministic regeneration and a constant cell count as preservation. Those assertions do not compare geometry or prove unchanged content. Alpha.35 supplies bounded named DOM comparisons, input constraint evidence and pre-execution count validation. These tools provide stronger evidence primitives, not an independent semantic oracle.
+
+A separate runtime development task read the installed core, proposed core-0.1.1 and passed four isolated bridge/ceiling probes in a 106ms stage call. It correctly left selection unchanged. No activation or user approval occurred; this run therefore does not establish runtime activation acceptance or fewer reads from the proposed guidance.
+
+Across the entire session, 63 completed provider responses consumed 498.752 seconds cumulative provider latency, 1,425,870 input tokens and 12,865 output tokens. Seven compactions consumed 75.422 seconds and 67,505 input tokens. All 63 usage reports showed Medium requested/served. Fifty-six core decisions consumed 516.937ms total; the first was 171.186ms and 55 warm samples had p50 5.792ms and nearest-rank p95 10.464ms, excluding queue wait. These cumulative provider measurements differ from end-to-end task time. No controlled comparison or phone improvement claim follows from one run. Raw logs remain private.

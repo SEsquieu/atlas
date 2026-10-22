@@ -159,3 +159,9 @@ Alpha.33 phone evidence showed an already-live candidate being retested against 
 The fix returns explicit live/pending/stale candidate state, current live identity and exact source ancestry; rejects stale tests before worker execution; prevents ordinary creation from replacing an installed task target; and permits resumed installed local work to reach its normal native confirmation gate. Discovery does not grant permission. Obsolete pre-execution candidate-base failures and refused replacement-creation attempts retire only after receipt-backed delivery on the same bound workspace; unknown outcomes remain blockers. Runtime proposal failures can retire after a later successful selection from the same installed parent, without rewriting their audit status.
 
 See [the sanitized phone assessment](./alpha33-live-assessment.md). User-requested behavioral acceptance remains exact-candidate and explicitly unverified; no test pass is invented.
+
+## AF-018: Host verification and source retention
+
+Tracking [#72](https://github.com/SEsquieu/atlas/issues/72). Status: implementation prepared for alpha.35; qualification and phone acceptance pending.
+
+Alpha.34 completed delivery but exposed malformed exact-count handling, repeated impossible input attempts, weak determinism/preservation assertions and source rereads through compaction. Scope: bounded preflight count rejection, native constraint diagnostics, named DOM comparison evidence, and durable task read recovery with hash/identity/budget checks. Keep checks candidate-specific, retain original audit/protocol pairs, and do not promote status/count evidence to semantic proof. See [assessment](./alpha34-live-assessment.md) and [alpha.35 acceptance](./releases/v0.1.0-alpha.35.md).
