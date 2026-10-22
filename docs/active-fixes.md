@@ -25,6 +25,8 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 | AF-015 | Include matching non-BLE UI activation evidence | implemented; phone verification pending | [#61](https://github.com/SEsquieu/atlas/issues/61); [PR #63](https://github.com/SEsquieu/atlas/pull/63) |
 | AF-016 | Distinguish hosted research from missing local adapters | implemented; phone verification pending | [#62](https://github.com/SEsquieu/atlas/issues/62); [PR #63](https://github.com/SEsquieu/atlas/pull/63) |
 
+AF-017 tracks the alpha.33 revision/approval regressions below: implemented and delivered in alpha.34, with phone verification pending ([#68](https://github.com/SEsquieu/atlas/issues/68), [PR #69](https://github.com/SEsquieu/atlas/pull/69)).
+
 ## AF-001: Reduce malformed package staging
 
 - Status: implemented. Related work: AF-003 (coordination, not a hard dependency).
@@ -150,10 +152,10 @@ Tracking [#65](https://github.com/SEsquieu/atlas/issues/65). First opt-in bridge
 
 ## AF-017: Revision recovery and native approval after discovery
 
-Tracking [#68](https://github.com/SEsquieu/atlas/issues/68). Status: implemented locally for alpha.34; automated and phone qualification pending.
+Tracking [#68](https://github.com/SEsquieu/atlas/issues/68). Status: merged in [PR #69](https://github.com/SEsquieu/atlas/pull/69) and [PR #70](https://github.com/SEsquieu/atlas/pull/70), delivered in alpha.34; unit/lint and API35/36 qualification passed. Phone acceptance pending.
 
 Alpha.33 phone evidence showed an already-live candidate being retested against its historical base, a candidate source hash used without its parent candidate, an unnecessary replacement draft, and discovery rejecting a user-requested native confirmation before the dialog appeared. The revision and source guards were correct; lifecycle guidance and discovery routing were not.
 
-The fix returns explicit live/pending/stale candidate state, current live identity and exact source ancestry; rejects stale tests before worker execution; prevents ordinary creation from replacing an installed task target; and permits resumed installed local work to reach its normal native confirmation gate. Discovery does not grant permission. Obsolete pre-execution candidate-base failures retire only after receipt-backed delivery on the same bound workspace; unknown outcomes remain blockers. Runtime proposal failures can retire after a later successful selection from the same installed parent, without rewriting their audit status.
+The fix returns explicit live/pending/stale candidate state, current live identity and exact source ancestry; rejects stale tests before worker execution; prevents ordinary creation from replacing an installed task target; and permits resumed installed local work to reach its normal native confirmation gate. Discovery does not grant permission. Obsolete pre-execution candidate-base failures and refused replacement-creation attempts retire only after receipt-backed delivery on the same bound workspace; unknown outcomes remain blockers. Runtime proposal failures can retire after a later successful selection from the same installed parent, without rewriting their audit status.
 
 See [the sanitized phone assessment](./alpha33-live-assessment.md). User-requested behavioral acceptance remains exact-candidate and explicitly unverified; no test pass is invented.

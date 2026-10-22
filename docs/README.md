@@ -4,9 +4,12 @@ Atlas is easiest to understand by following ownership from the persistent runtim
 
 ## Current implementation
 
+- [Alpha.34 release and test cycle](./releases/v0.1.0-alpha.34.md) — workspace recovery and native-confirmed local runtime proposals.
+- [Alpha.33 phone assessment](./alpha33-live-assessment.md) — revision/approval blockers and separate bridge/provider measurements.
+
 - [Alpha.28 live assessment](./alpha28-live-assessment.md) — observed delivery, persistence, authoring churn, completion failures, and next implementation priorities.
 
-- [Current status](./current-status.md) — alpha.28 capabilities, verification evidence, limits, and distribution.
+- [Current status](./current-status.md) — current capabilities, verification evidence, limits, and distribution.
 - [Durable execution](../apps/atlas-android/DURABLE_EXECUTION.md) — slice continuation, task ownership, receipts, recovery, and allowances.
 - [Workspace application host](./workspace-application-host.md) — implementation chronology and qualification evidence.
 - [Import and export](./import-export.md) — session/workspace recovery and authority reset.

@@ -4,6 +4,20 @@ Notable user-visible changes will be recorded here. Atlas follows semantic versi
 
 ## Unreleased
 
+## 0.1.0-alpha.34 — delivered test build
+
+- Signed main build 39727994082 from ad5587c, version code 1352. APK/provenance verified and delivered to App Builds with the persistent signing identity.
+
+- Add local JavaScript runtime inspection, exact source proposals, isolated qualification and native-confirmed selection for new tasks. Existing task pins remain unchanged; native code and repository automation remain outside this surface.
+- Return candidate lifecycle and exact source ancestry, preserve installed targets during recovery, and let resumed installed local work reach native confirmation after discovery.
+- Retire narrowly matched obsolete pre-execution failures after successful delivery; unknown outcomes remain blocking.
+- Unit/lint, public readiness and 20 device tests each on API35/36 passed. See [release evidence and phone test cycle](./docs/releases/v0.1.0-alpha.34.md).
+
+## 0.1.0-alpha.33 — delivered test build
+
+- Introduce an opt-in isolated JavaScript orchestration bridge, signed imports, immutable artifacts and durable task pins. Native remains the default; full orchestration extraction and development-service integration remain open in #65.
+- Signed main build 39714968508, source ac5d1b3, version code 1342. See [qualification and delivery](./docs/releases/v0.1.0-alpha.33.md).
+
 ## 0.1.0-alpha.32 — delivered test build
 
 - Signed main build 39673414889 from source 1466bea, version code 1333; APK/provenance verified and delivered to App Builds. Unit/lint, public readiness and API 35/36 checks passed.
