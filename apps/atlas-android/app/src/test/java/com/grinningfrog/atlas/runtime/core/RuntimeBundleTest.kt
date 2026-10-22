@@ -39,6 +39,8 @@ class RuntimeBundleTest {
     @Test fun commandsCannotExpandHostAuthorityOrUseStaleRequest() {
         fun response(action: String = "infer") = JSONObject().put("bridge", 1).put("request_id", "a").put("action", action).put("guidance", "test")
         assertEquals("infer", CoreDecision.parse(response().toString(), "a").action)
+        assertThrows(Exception::class.java) { CoreDecision.parse(response().put("guidance", 123).toString(), "a") }
+        assertThrows(Exception::class.java) { CoreDecision.parse(response().put("bridge", 1.5).toString(), "a") }
         assertThrows(Exception::class.java) { CoreDecision.parse(response().toString(), "b") }
         assertThrows(Exception::class.java) { CoreDecision.parse(response("execute_tool").toString(), "a") }
         assertThrows(Exception::class.java) { CoreDecision.parse(response().put("permissions", "all").toString(), "a") }

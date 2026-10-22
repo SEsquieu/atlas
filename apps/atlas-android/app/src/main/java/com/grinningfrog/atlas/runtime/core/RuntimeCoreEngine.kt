@@ -85,6 +85,7 @@ data class CoreDecision(val action: String, val guidance: String, val elapsedUs:
             val result = boundedRuntimeObject(raw, 32_768)
             require(result.keys().asSequence().toSet() == setOf("bridge", "request_id", "action", "guidance")) { "Unknown runtime command fields" }
             require(result.get("bridge") == 1 && result.getString("request_id") == requestId) { "Stale or incompatible runtime response" }
+            require(listOf("request_id", "action", "guidance").all { result.get(it) is String }) { "Runtime command fields must be strings" }
             val action = result.getString("action")
             require(action in setOf("infer", "yield")) { "Unauthorized runtime command" }
             val guidance = result.getString("guidance")

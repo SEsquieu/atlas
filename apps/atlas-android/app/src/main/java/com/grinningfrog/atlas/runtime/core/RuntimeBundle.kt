@@ -17,6 +17,7 @@ data class RuntimeBundle(val version: String, val sha256: String, val source: St
         fun parse(raw: String, trustedKey: String? = null, builtin: Boolean = false): RuntimeBundle {
             require(raw.toByteArray(Charsets.UTF_8).size <= MAX_BYTES) { "Runtime bundle too large" }
             val b = boundedRuntimeObject(raw, MAX_BYTES)
+            require(listOf("format", "version", "sha256", "source").all { b.get(it) is String }) { "Runtime manifest fields must be strings" }
             require(b.getString("format") == "atlas.runtime.v1" && b.get("bridge") == 1) { "Incompatible runtime bridge" }
             val version = b.getString("version")
             require(version.matches(Regex("[A-Za-z0-9._-]{1,80}"))) { "Invalid runtime version" }
