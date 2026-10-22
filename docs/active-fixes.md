@@ -146,4 +146,4 @@ Alpha.32 delivery: PR #63 merged; signed main source `1466bea`, run `39673414889
 
 ## Major milestone: replaceable runtime and development connection
 
-Tracking [#65](https://github.com/SEsquieu/atlas/issues/65). In progress, opt-in. See [architecture, invariants and completion gates](./replaceable-runtime.md). First bridge is not full orchestration extraction; issue/PR automation remains outstanding.
+Tracking [#65](https://github.com/SEsquieu/atlas/issues/65). First opt-in bridge merged in [PR #66](https://github.com/SEsquieu/atlas/pull/66), with automated qualification; full milestone remains in progress and phone acceptance is pending. See [architecture, invariants and completion gates](./replaceable-runtime.md). First bridge is not full orchestration extraction; issue/PR automation remains outstanding.
