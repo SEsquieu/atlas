@@ -1,6 +1,6 @@
 # Current Atlas implementation status
 
-Source baseline: **0.1.0-alpha.34**, Android database version 18. Alpha.34 adds native-confirmed local runtime proposals and repairs workspace revision/approval recovery. Native execution remains the default. This page describes current behavior; earlier release notes retain historical qualification evidence.
+Source baseline: **0.1.0-alpha.35**, Android database version 18. Alpha.35 adds bounded DOM comparison evidence, preflight count validation, HTML input diagnostics and durable task source retention across compaction. Native execution remains the default. This page describes current behavior; earlier release notes retain historical qualification evidence.
 
 ## Available in the Android alpha
 
@@ -24,18 +24,18 @@ External bundles require an independently trusted publisher public key and nativ
 
 | Scope | Evidence |
 | --- | --- |
-| Alpha.34 application unit tests and lint | [Android run 39727482265](https://github.com/SEsquieu/atlas/actions/runs/39727482265) |
-| Twenty instrumented tests each on API35/36; zero failures/errors/skips | [Device run 39727482231](https://github.com/SEsquieu/atlas/actions/runs/39727482231) |
-| Signed APK, persistent signing and package checks | [Manual build 39727994082](https://github.com/SEsquieu/atlas/actions/runs/39727994082) |
-| Source boundary and history checks | [Public-readiness run 39727482169](https://github.com/SEsquieu/atlas/actions/runs/39727482169) |
+| Application unit tests and lint | [Android run 39800363335](https://github.com/SEsquieu/atlas/actions/runs/39800363335) |
+| Twenty-one tests each on API35/36; zero failures/errors/skips | [Device run 39800362558](https://github.com/SEsquieu/atlas/actions/runs/39800362558) |
+| Signed main APK, package and persistent signing checks | [Manual build 39801698998](https://github.com/SEsquieu/atlas/actions/runs/39801698998) |
+| Source boundary and history checks | [Public-readiness run 39800363273](https://github.com/SEsquieu/atlas/actions/runs/39800363273) |
 
-Qualified head `eee3d1c4460badf091e180eefa06942dfe10e21c`; merged application source `ad5587cbdbe3c3d020b83ef32f7894b7e88d9afc`. Core build/typecheck/tests passed locally; portable source is unchanged from alpha.33. Runtime proposal tests exercise actual isolated execution, approval rejection, approved selection and pin preservation. Warm evaluation p95 was 2.290ms/2.188ms over 40 samples per emulator, excluding mutex queue wait and provider latency. See [alpha.34 evidence and phone acceptance](./releases/v0.1.0-alpha.34.md).
+Qualified head `40ef677a7a5a15c616486e942e3ec5c9e902202f`; merged application source `f120ef0eba5b025ce3d1297e3aa308c6997af19f`. Device artifact ZIP digests and JUnit reports were verified. The new real WebView regression checks same-seed equality, changed geometry despite an unchanged count, rejected-input preservation, comparison across reload, range clamping/number sanitization, and count rejection before candidate lookup. Source retention tests cover scope, changed/forged bytes, offsets, duplicate suppression, durable operation recovery and escaped-JSON budgets. See [alpha.35 qualification and delivery](./releases/v0.1.0-alpha.35.md).
 
 ## Phone evidence and limits
 
-Alpha.31's MazeGen updates activated successfully on the original workspace with passing pure and UI checks, but its follow-up made six stage attempts and five valid candidates before testing, with substantial provider/output churn. Alpha.32 implemented exact source edits, truthful UI activation receipts, hosted-search evidence and explicit ChatGPT reasoning effort. The alpha.33 phone run found historical-candidate and approval-routing dead ends; the bridge itself contributed 454ms across 85 decisions while cumulative provider latency was 461 seconds. Alpha.34 addresses those host recovery defects; its phone acceptance remains pending. See [the sanitized assessment](./alpha33-live-assessment.md). See [alpha.32](./releases/v0.1.0-alpha.32.md), [alpha.33](./releases/v0.1.0-alpha.33.md), and [active fixes](./active-fixes.md).
+Alpha.34 completed MazeGen activation in its original workspace and finished the task, but took 428.852 seconds, 46 model steps and 51 tool calls. Twenty source reads and seven compactions showed remaining churn. The passing UI test labeled status/count assertions as repeatability/preservation without comparing maze geometry. A separate runtime proposal passed isolated probes and correctly remained unselected; no activation/approval acceptance was exercised. All 63 usage reports showed Medium requested/served. See [the alpha.34 assessment](./alpha34-live-assessment.md).
 
-Automated checks do not establish live-model convergence, hours-long phone endurance, every process-restart path, physical BLE interoperability or general semantic correctness. The alpha.33 bridge is the first independently replaceable policy surface, not the complete orchestration migration.
+Alpha.35 supplies stronger host evidence primitives, input diagnostics and bounded durable source recovery. Its phone acceptance, token/latency impact and the pending runtime proposal's behavioral benefit remain unmeasured. DOM comparison excludes painted pixels, computed styles and JavaScript-only state. Automated checks do not establish live-model convergence, hours-long endurance, every recovery path, physical BLE interoperability or general semantic correctness. The replaceable runtime remains a partial migration under #65.
 
 ## Distribution and repository use
 

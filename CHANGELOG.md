@@ -4,6 +4,15 @@ Notable user-visible changes will be recorded here. Atlas follows semantic versi
 
 ## Unreleased
 
+## 0.1.0-alpha.35 — delivered test build
+
+- Signed main build 39801698998 from f120ef0, version code 1355; APK/provenance/signing identity checked and delivered to App Builds.
+
+- Reject malformed exact counts before candidate execution, with indexed recovery; accept bounded integers and historical decimal strings.
+- Report actual HTML input values and constraints; add bounded named DOM equality/inequality comparisons across actions and reloads.
+- Recover already-read, hash-validated task source across compaction within explicit context budgets. Source grants no execution authority; telemetry records retainedSourceCharacters.
+- Unit/lint, public source/history and 21 tests each on API35/36 passed. See [qualification, limits and phone cycle](./docs/releases/v0.1.0-alpha.35.md).
+
 ## 0.1.0-alpha.34 — delivered test build
 
 - Signed main build 39727994082 from ad5587c, version code 1352. APK/provenance verified and delivered to App Builds with the persistent signing identity.
