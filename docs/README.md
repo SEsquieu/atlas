@@ -4,6 +4,9 @@ Atlas is easiest to understand by following ownership from the persistent runtim
 
 ## Current implementation
 
+- [Alpha.35 release and test cycle](./releases/v0.1.0-alpha.35.md) — host comparisons, input diagnostics and retained source.
+- [Alpha.34 phone assessment](./alpha34-live-assessment.md) — successful delivery and remaining test/source churn.
+
 - [Alpha.34 release and test cycle](./releases/v0.1.0-alpha.34.md) — workspace recovery and native-confirmed local runtime proposals.
 - [Alpha.33 phone assessment](./alpha33-live-assessment.md) — revision/approval blockers and separate bridge/provider measurements.
 
