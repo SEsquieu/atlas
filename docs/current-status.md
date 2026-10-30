@@ -1,6 +1,6 @@
 # Current Atlas implementation status
 
-Source baseline: **0.1.0-alpha.36 candidate**, Android database version 18. Alpha.36 adds optional autonomous workspace visual testing through private-display rendering, actual device profiles, persistent isolated interaction and candidate-bound evidence. Qualification and delivery are tracked in [PR #76](https://github.com/SEsquieu/atlas/pull/76); physical-device acceptance remains outstanding. Alpha.35 remains the last delivered APK until the alpha.36 delivery record is added. Native execution remains the default. This page describes current behavior; earlier release notes retain historical qualification evidence.
+Source baseline: **0.1.0-alpha.36**, Android database version 18. Alpha.36 adds optional autonomous workspace visual testing through private-display rendering, actual device profiles, persistent isolated interaction and candidate-bound evidence. Merged in [PR #76](https://github.com/SEsquieu/atlas/pull/76); 28 tests each on API35/36 and unit/lint passed. Physical-device acceptance remains outstanding. See [alpha.36 qualification and delivery](./releases/v0.1.0-alpha.36.md). Native execution remains the default. This page describes current behavior; earlier release notes retain historical qualification evidence.
 
 ## Available in the Android alpha
 
@@ -21,16 +21,16 @@ The first slice is merged in [PR #66](https://github.com/SEsquieu/atlas/pull/66)
 
 External bundles require an independently trusted publisher public key and native activation confirmation. The model can inspect runtime status, read installed JavaScript source, propose exact source edits and request native-confirmed selection after isolated contract probes. Editing schemas are advertised only after status inspection. This does not edit Kotlin or migrate an active task. There is no remote feed, automatic issue submission, GitHub credential, coding executor or autonomous runtime activation in this build. A failed pinned runtime cannot be silently replaced; cancel the task and start a new task on Native if necessary. See [architecture, update behavior and remaining gates](./replaceable-runtime.md). [Milestone #65](https://github.com/SEsquieu/atlas/issues/65) remains open.
 
-## Previous delivered build qualification (alpha.35)
+## Current automated qualification
 
 | Scope | Evidence |
 | --- | --- |
-| Application unit tests and lint | [Android run 39800363335](https://github.com/SEsquieu/atlas/actions/runs/39800363335) |
-| Twenty-one tests each on API35/36; zero failures/errors/skips | [Device run 39800362558](https://github.com/SEsquieu/atlas/actions/runs/39800362558) |
-| Signed main APK, package and persistent signing checks | [Manual build 39801698998](https://github.com/SEsquieu/atlas/actions/runs/39801698998) |
-| Source boundary and history checks | [Public-readiness run 39800363273](https://github.com/SEsquieu/atlas/actions/runs/39800363273) |
+| Application unit tests and lint | [Android run 41121101474](https://github.com/SEsquieu/atlas/actions/runs/41121101474) |
+| Twenty-eight tests each on API35/36; zero failures/errors/skips | [Device run 41121101520](https://github.com/SEsquieu/atlas/actions/runs/41121101520) |
+| Signed main build | [Manual build 41122817446](https://github.com/SEsquieu/atlas/actions/runs/41122817446) — see the delivery record for completion/distribution |
+| Source boundary and history checks | [Public-readiness run 41121101467](https://github.com/SEsquieu/atlas/actions/runs/41121101467) |
 
-Qualified head `40ef677a7a5a15c616486e942e3ec5c9e902202f`; merged application source `f120ef0eba5b025ce3d1297e3aa308c6997af19f`. Device artifact ZIP digests and JUnit reports were verified. The new real WebView regression checks same-seed equality, changed geometry despite an unchanged count, rejected-input preservation, comparison across reload, range clamping/number sanitization, and count rejection before candidate lookup. Source retention tests cover scope, changed/forged bytes, offsets, duplicate suppression, durable operation recovery and escaped-JSON budgets. See [alpha.35 qualification and delivery](./releases/v0.1.0-alpha.35.md).
+Qualified head `72dd346c0807fbc3ae0e4c689556bfa10aa63c5f`; merged application source `b1b45267b2c04ef7f811b7d765324b8f724538fc`. Both artifact ZIP digests and JUnit reports were verified. Coverage includes actual compositor/canvas pixels, native input, device-aware layout, storage/mock BLE isolation, cancellation, process death, foreground renderer survival, cross-slice agent-tool state, screenshot observations and matching activation evidence. See [alpha.36 qualification](./releases/v0.1.0-alpha.36.md). Earlier release notes retain prior qualification records.
 
 ## Phone evidence and limits
 

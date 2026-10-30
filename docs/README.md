@@ -4,6 +4,8 @@ Atlas is easiest to understand by following ownership from the persistent runtim
 
 ## Current implementation
 
+- [Alpha.36 release and phone cycle](./releases/v0.1.0-alpha.36.md) — autonomous visual testing and explicit physical-device acceptance.
+
 - [Autonomous workspace visual testing](./workspace-visual-testing.md) — optional private-display rendering, measured device profiles, interaction evidence and physical-device qualification.
 
 - [Alpha.35 release and test cycle](./releases/v0.1.0-alpha.35.md) — host comparisons, input diagnostics and retained source.
