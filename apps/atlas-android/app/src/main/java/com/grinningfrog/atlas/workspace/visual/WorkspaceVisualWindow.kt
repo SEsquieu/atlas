@@ -10,13 +10,14 @@ import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
 import android.os.Handler
 import android.os.Looper
+import android.widget.FrameLayout
 import android.view.ViewGroup
+import android.os.SystemClock
 import android.view.WindowManager
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
@@ -37,9 +38,14 @@ internal class WorkspaceVisualWindow(private val context: Context, val profile: 
     private var window: TestPresentation? = null
     private var compose: ComposeView? = null
     private var storage: WorkspaceTestStorage? = null
-    private var current by mutableStateOf<WorkspaceWebPresentation?>(null)
+    private var current: WorkspaceWebPresentation? = null
+    @Volatile private var documentToken: Any? = null
+    private var documentHost: FrameLayout? = null
+    private val mounted = CompletableDeferred<Unit>()
+    private val startup = WorkspaceVisualStartup(SystemClock::elapsedRealtime)
+    fun startupDiagnostics() = startup.snapshot()
     private var ready = CompletableDeferred<Unit>()
-    private var closed = false
+    @Volatile private var closed = false
     private var paused = false
     private var failure: String? = null
     private val width = profile.getInt("render_width_px")
@@ -52,7 +58,9 @@ internal class WorkspaceVisualWindow(private val context: Context, val profile: 
         check(Looper.myLooper() == Looper.getMainLooper())
         WorkspaceVisualLimits.dimensions(width, height, dpi)
         try {
-            reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3).also {
+            startup.begin("display_allocation")
+            reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
+            reader!!.let {
                 // Consumer must drain continuously; otherwise the compositor eventually stalls.
                 it.setOnImageAvailableListener({ source -> runCatching { source.acquireLatestImage()?.close() } }, Handler(Looper.getMainLooper()))
             }
@@ -60,9 +68,13 @@ internal class WorkspaceVisualWindow(private val context: Context, val profile: 
             display = (context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager)
                 .createVirtualDisplay("Atlas isolated workspace test", width, height, dpi, reader!!.surface, flags)
             check(display != null && displayId != android.view.Display.DEFAULT_DISPLAY) { "PRIVATE_DISPLAY_UNAVAILABLE" }
-            window = TestPresentation(context, display!!.display).also { presentation ->
+            startup.complete()
+            startup.begin("presentation_mount")
+            window = TestPresentation(context, display!!.display)
+            window!!.let { presentation ->
                 presentation.window!!.addFlags(WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
-                compose = ComposeView(presentation.context).also { view ->
+                compose = ComposeView(presentation.context)
+                compose!!.let { view ->
                     view.setViewTreeLifecycleOwner(presentation)
                     view.setViewTreeViewModelStoreOwner(presentation)
                     view.setViewTreeSavedStateRegistryOwner(presentation)
@@ -76,11 +88,12 @@ internal class WorkspaceVisualWindow(private val context: Context, val profile: 
                                     HorizontalDivider()
                                     WorkspaceRevisionLabel(revision)
                                     if(WorkspaceCapabilityRegistry.requested(bundle.getJSONObject("manifest")).isNotEmpty()) WorkspaceCapabilityBar("BLE · simulated bench device", true) {}
-                                    current?.let { app ->
-                                        val cssHeight = profile.optInt("alternative_height_css", 0)
-                                        val modifier = if(cssHeight > 0) Modifier.fillMaxWidth().height(cssHeight.dp) else Modifier.fillMaxWidth().weight(1f)
-                                        key(app) { AndroidView(factory = { app.view }, modifier = modifier) }
-                                    }
+                                    val cssHeight = profile.optInt("alternative_height_css", 0)
+                                    val modifier = if(cssHeight > 0) Modifier.fillMaxWidth().height(cssHeight.dp) else Modifier.fillMaxWidth().weight(1f)
+                                    AndroidView(factory = { FrameLayout(it).also { host ->
+                                        documentHost = host
+                                        mounted.complete(Unit)
+                                    } }, modifier = modifier)
                                 }
                             }
                         }
@@ -91,10 +104,15 @@ internal class WorkspaceVisualWindow(private val context: Context, val profile: 
                 presentation.window!!.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 presentation.resume()
             }
+            withTimeout(5_000) { mounted.await() }
+            startup.complete()
             val calibration = WorkspaceApplicationContract.example()
             calibration.getJSONObject("files").put("ui/style.css", "html,body{margin:0;width:100%;height:100%;background:#12ab34}main{display:none}")
-            load(calibration)
+            load(calibration, "calibration")
+            startup.begin("calibration_frame")
             surface.awaitCompositedFrame()
+            startup.complete()
+            startup.begin("calibration_pixelcopy")
             val image = surface.captureVisiblePixels(window!!.window)
             try {
                 val expected = Color.rgb(18,171,52)
@@ -103,27 +121,58 @@ internal class WorkspaceVisualWindow(private val context: Context, val profile: 
                     check(abs(Color.red(pixel)-Color.red(expected))<=8 && abs(Color.green(pixel)-Color.green(expected))<=8 && abs(Color.blue(pixel)-Color.blue(expected))<=8) { "COMPOSITOR_CALIBRATION_FAILED: captured pixels do not match the private display" }
                 }
             } finally { image.recycle() }
+            startup.complete()
             disposeDocument()
-            load(bundle)
+            load(bundle, "candidate")
+            startup.begin("candidate_frame")
             surface.awaitCompositedFrame()
-        } catch (error: Throwable) { close(); throw error }
+            startup.complete()
+        } catch (error: Throwable) {
+            val detail = "VISUAL_STARTUP_FAILED: ${startup.snapshot()}; ${error.message}"
+            android.util.Log.w("AtlasVisual", detail, error)
+            // A timeout does not stop Chromium JS. Retire it while the view still exists.
+            withContext(NonCancellable) { try { runCatching { terminate() } } finally { close() } }
+            if(error is CancellationException && error !is TimeoutCancellationException) throw error
+            throw IllegalStateException(detail, error)
+        }
     }
-    private suspend fun load(packageJson: JSONObject) {
-        storage = withContext(Dispatchers.IO) { WorkspaceTestStorage(context, packageJson) }
-        ready = CompletableDeferred(); failure = null
+    private suspend fun load(packageJson: JSONObject, label: String) {
+        startup.begin("${label}_storage")
+        withContext(Dispatchers.IO) { storage = WorkspaceTestStorage(context, packageJson) }
+        startup.complete()
+        startup.begin("${label}_mount")
+        val documentReady = CompletableDeferred<Unit>()
+        ready = documentReady; failure = null
+        val token = Any(); documentToken = token
         val principal = storage!!.principal()
         val requested = WorkspaceCapabilityRegistry.requested(packageJson.getJSONObject("manifest"))[WorkspaceBleContract.CAPABILITY].orEmpty()
         val broker = if(requested.isEmpty()) null else WorkspaceDeviceBroker(principal,
             listOf(WorkspaceBleCapability(requested, WorkspaceUiSimulation.Radio(), simulated = true)),
-            { !closed }, { true }, { true }, scope, isSimulation = true)
-        current = WorkspaceWebPresentation(window!!.context, packageJson, principal, { !closed }, { ready.complete(Unit) }, {
-            failure = it; ready.completeExceptionally(IllegalStateException(it))
-        }, data = storage!!.data, devices = broker)
+            { !closed && documentToken === token }, { true }, { true }, scope, isSimulation = true)
+        current = try { WorkspaceWebPresentation(window!!.context, packageJson, principal, { !closed && documentToken === token }, { if(documentToken === token && !closed)documentReady.complete(Unit) }, {
+            if(documentToken === token && !closed) { failure = it; documentReady.completeExceptionally(IllegalStateException(it)) }
+        }, data = storage!!.data, devices = broker) } catch(error:Throwable) { broker?.close(); throw error }
+        documentHost!!.addView(surface.view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        // pauseTimers is process-wide; a new document must never inherit an idle pause.
+        surface.view.resumeTimers()
+        surface.view.onResume()
         withTimeout(5_000) { while(!surface.view.isAttachedToWindow || surface.view.width <= 0 || surface.view.height <= 0) delay(16) }
+        startup.complete()
+        startup.begin("${label}_ready")
         surface.loadAttached()
-        withTimeout(8_000) { ready.await() }
+        withTimeout(8_000) { documentReady.await() }
+        startup.complete()
     }
-    private fun disposeDocument() { current?.dispose(); current = null; storage?.close(); storage = null }
+    private fun disposeDocument() {
+        documentToken = null
+        val app = current; current = null
+        val data = storage; storage = null
+        try {
+            // WebView timers outlive individual WebViews. Balance even when closing idle.
+            if(paused) { app?.view?.resumeTimers(); paused = false }
+            app?.dispose()
+        } finally { data?.close() }
+    }
     suspend fun resumeRendering() {
         check(!closed); failure?.let { error("VISUAL_RENDERER_FAILED: $it") }
         if(paused) { display!!.surface = reader!!.surface; surface.view.resumeTimers(); surface.view.onResume(); paused = false }
@@ -137,11 +186,13 @@ internal class WorkspaceVisualWindow(private val context: Context, val profile: 
     override fun close() {
         if(closed)return
         closed = true
+        ready.cancel()
+        documentHost = null
         runCatching { disposeDocument() }
         runCatching { compose?.disposeComposition() }; compose = null
-        runCatching { window?.closeLifecycle(); window?.dismiss() }; window = null
+        runCatching { window?.closeLifecycle() }; runCatching { window?.dismiss() }; window = null
         runCatching { display?.release() }; display = null
-        runCatching { reader?.setOnImageAvailableListener(null, null); reader?.close() }; reader = null
+        runCatching { reader?.setOnImageAvailableListener(null, null) }; runCatching { reader?.close() }; reader = null
         scope.cancel()
     }
     private class TestPresentation(context: Context, display: android.view.Display) : Presentation(context, display, android.R.style.Theme_Material_NoActionBar), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {

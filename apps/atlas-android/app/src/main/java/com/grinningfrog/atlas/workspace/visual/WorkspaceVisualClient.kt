@@ -30,7 +30,7 @@ internal class WorkspaceVisualClient(private val context:Context,private val dat
         override fun onServiceConnected(name:ComponentName,binder:IBinder) {remote=Messenger(binder);connected.complete(remote!!)}
         override fun onServiceDisconnected(name:ComponentName) {lost("renderer_process_disconnected")}
         override fun onBindingDied(name:ComponentName) {lost("renderer_binding_died");if(bound)runCatching {context.unbindService(this)};bound=false}
-        override fun onNullBinding(name:ComponentName) {lost("renderer_binding_unavailable")}
+        override fun onNullBinding(name:ComponentName) {resetBinding("renderer_binding_unavailable")}
     }
     private val receiver=Messenger(object:Handler(Looper.getMainLooper()) {
         override fun handleMessage(message:Message) {
@@ -63,6 +63,11 @@ internal class WorkspaceVisualClient(private val context:Context,private val dat
         pending.values.forEach {it.completeExceptionally(IllegalStateException("VISUAL_PROCESS_LOST: reopen candidate"))};pending.clear()
         live.values.toList().forEach {retire(it,reason)}
     }
+    private fun resetBinding(reason:String) {
+        if(bound)runCatching {context.unbindService(connection)}
+        bound=false
+        lost(reason)
+    }
     private suspend fun bind():Messenger=bindMutex.withLock {
         remote?.let {return@withLock it}
         if(!bound) {
@@ -70,7 +75,8 @@ internal class WorkspaceVisualClient(private val context:Context,private val dat
             bound=context.bindService(Intent(context,WorkspaceVisualService::class.java),connection,Context.BIND_AUTO_CREATE)
             check(bound) {"VISUAL_SERVICE_UNAVAILABLE"}
         }
-        withTimeout(5_000) {connected.await()}
+        try { withTimeout(5_000) {connected.await()} }
+        catch(error:Throwable) { resetBinding("renderer_bind_interrupted"); throw error }
     }
     suspend fun request(args:JSONObject,id:String=UUID.randomUUID().toString(),packageFile:File?=null):Response {
         var delivered:Response?=null
@@ -82,12 +88,24 @@ internal class WorkspaceVisualClient(private val context:Context,private val dat
             target.send(Message.obtain(null,1).apply {replyTo=receiver;data=Bundle().apply {putString("request_id",id);putString("json",args.toString());descriptor?.let {putParcelable("package",it)}}})
             withTimeout(35_000) {deferred.await().also {delivered=it}}
         } catch(error:Throwable) {
-            runCatching {target.send(Message.obtain(null,2).apply {data=Bundle().apply {putString("request_id",id);putString("owner",args.getString("owner"));putString("action",args.optString("action"));putString("instance_id",args.optString("instance_id"))}})}
-            if(error is TimeoutCancellationException) {
-                // A wedged remote UI thread cannot process cancellation. Kill only our named service process.
-                val processes=(context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).runningAppProcesses.orEmpty()
-                processes.firstOrNull {it.uid==Process.myUid() && it.processName==context.packageName+":workspace_visual" && it.pid!=Process.myPid()}?.let {Process.killProcess(it.pid)}
-                lost("renderer_rpc_timeout")
+            // Cancellation is acknowledged only after remote teardown. A wedged remote main
+            // thread cannot acknowledge: retire only the named private service process.
+            withContext(NonCancellable) {
+                val cancelId=UUID.randomUUID().toString()
+                val cancelled=CompletableDeferred<Response>();pending[cancelId]=cancelled
+                val acknowledged=try {
+                    target.send(Message.obtain(null,2).apply {replyTo=receiver;data=Bundle().apply {
+                        putString("request_id",id);putString("cancel_reply_id",cancelId)
+                        putString("owner",args.getString("owner"));putString("action",args.optString("action"));putString("instance_id",args.optString("instance_id"))
+                    }})
+                    withTimeout(4_000) {cancelled.await().image?.close()}
+                    true
+                } catch(_:Exception) {false} finally {pending.remove(cancelId);cancelled.cancel()}
+                if(!acknowledged || error is TimeoutCancellationException) {
+                    val processes=(context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).runningAppProcesses.orEmpty()
+                    processes.firstOrNull {it.uid==Process.myUid() && it.processName==context.packageName+":workspace_visual" && it.pid!=Process.myPid()}?.let {Process.killProcess(it.pid)}
+                    resetBinding("renderer_cancellation_unacknowledged_or_timeout")
+                }
             }
             throw error
         } finally {

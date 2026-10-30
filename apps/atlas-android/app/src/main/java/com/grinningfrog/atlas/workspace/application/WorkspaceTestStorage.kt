@@ -9,8 +9,11 @@ import java.util.UUID
 internal class WorkspaceTestStorage(context: Context, bundle: JSONObject) : java.io.Closeable {
     private val database=AtlasDatabase(context,null)
     val data=WorkspaceApplicationData(database)
-    private val workspace=database.createComposableWorkspace("Isolated UI test","",bundle.toString())
-    init { data.setEnabled(workspace.id,workspace.liveRevisionId,true) }
+    private val workspace=try {
+        database.createComposableWorkspace("Isolated UI test","",bundle.toString()).also {
+            data.setEnabled(it.id,it.liveRevisionId,true)
+        }
+    } catch(error:Throwable) { database.close(); throw error }
     fun principal()=WorkspacePrincipal(workspace.realmId,workspace.id,workspace.liveRevisionId,UUID.randomUUID().toString(),data.epoch(workspace.id),WorkspaceInstanceMode.TEST)
     fun version()=data.version(workspace.id)
     override fun close()=database.close()

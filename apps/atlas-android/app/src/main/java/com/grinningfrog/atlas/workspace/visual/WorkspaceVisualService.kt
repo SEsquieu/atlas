@@ -17,6 +17,7 @@ internal class WorkspaceVisualService : Service() {
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
     private val mutex=Mutex()
     private val jobs=mutableMapOf<String,Job>()
+    private val requestOwners=mutableMapOf<String,String>()
     private data class CachedReply(val argumentsHash:String,val result:JSONObject)
     private val replies=linkedMapOf<String,CachedReply>()
     private var instance: Instance?=null
@@ -26,21 +27,36 @@ internal class WorkspaceVisualService : Service() {
         override fun handleMessage(message:Message) {
             val b=message.data
             if(message.what==2) {
-                val running=jobs[b.getString("request_id")]
-                if(running!=null)running.cancel() else scope.launch {mutex.withLock {
-                    instance?.takeIf {it.owner==b.getString("owner") && (it.id==b.getString("instance_id") || b.getString("action")=="open" && it.openRequestId==b.getString("request_id"))}?.let {it.window.close();instance=null}
-                }}
+                val cancelReply=message.replyTo
+                val id=b.getString("request_id") ?: return
+                val running=jobs[id]
+                if(running!=null && requestOwners[id]!=b.getString("owner"))return
+                // Cancellation must reach the running job without first waiting for its mutex.
+                running?.cancel()
+                scope.launch {
+                    running?.join()
+                    mutex.withLock {
+                        instance?.takeIf {it.owner==b.getString("owner") &&
+                            (it.id==b.getString("instance_id") || b.getString("action")=="open" && it.openRequestId==id)}?.let {
+                            instance=null
+                            try {it.window.terminate()} finally {it.window.close()}
+                        }
+                    }
+                    runCatching {cancelReply?.send(Message.obtain(null,1).apply {data=Bundle().apply {
+                        putString("request_id",b.getString("cancel_reply_id"));putString("json","{\"cancelled\":true}")
+                    }})}
+                }
                 return
             }
             val reply=message.replyTo ?: return
             val id=b.getString("request_id") ?: return
             val fd=b.getParcelable<ParcelFileDescriptor>("package")
             if(jobs.containsKey(id)) {fd?.close();return}
-            jobs[id]=scope.launch {
+            val job=scope.launch(start=CoroutineStart.LAZY) {
                 var capture:ParcelFileDescriptor?=null
                 try {
                     val result=mutex.withLock {
-                        withTimeout(30_000) {
+                        try { withTimeout(30_000) {
                             val args=JSONObject(b.getString("json") ?: "{}").put("host_request_id",id)
                             require(args.toString().length<=96*1024)
                             // Only mutations need replay suppression. Captures are safe to repeat.
@@ -53,6 +69,10 @@ internal class WorkspaceVisualService : Service() {
                             val result=perform(args,fd) {capture=it}
                             if(args.getString("action")=="interact") { if(replies.size>=128)replies.remove(replies.keys.first());replies[cacheKey]=CachedReply(argumentsHash,JSONObject(result.toString())) }
                             result
+                        } } catch(error:Throwable) {
+                            // Cleanup retains operation ownership and finishes before the next request.
+                            withContext(NonCancellable) { retireOwned(b, id) }
+                            throw error
                         }
                     }
                     val memory=android.os.Debug.MemoryInfo();android.os.Debug.getMemoryInfo(memory)
@@ -60,14 +80,25 @@ internal class WorkspaceVisualService : Service() {
                     check(result.toString().length<=128*1024)
                     reply.send(Message.obtain(null,1).apply { data=Bundle().apply {putString("request_id",id);putString("json",result.toString());capture?.let {putParcelable("capture",it)} } })
                 } catch(error:Throwable) {
-                    // Callback/JS timeout is not evidence; retire this isolated renderer and handle.
-                    val supplied=runCatching {JSONObject(b.getString("json") ?: "{}")}.getOrDefault(JSONObject())
-                    withContext(NonCancellable) { mutex.withLock { instance?.takeIf {it.owner==supplied.optString("owner") && (it.id==supplied.optString("instance_id") || supplied.optString("action")=="open" && it.openRequestId==id)}?.let { runCatching {it.window.terminate()};it.window.close();instance=null } } }
+                    // Also cover reply delivery/serialization failures after perform returns.
+                    withContext(NonCancellable) { mutex.withLock { retireOwned(b, id) } }
                     runCatching { reply.send(Message.obtain(null,1).apply {data=Bundle().apply {putString("request_id",id);putString("error",error.message?.take(500) ?: "Visual test interrupted; reopen the candidate")}}) }
-                } finally {capture?.close();fd?.close();jobs.remove(id)}
+                } finally {capture?.close();fd?.close();jobs.remove(id);requestOwners.remove(id)}
             }
+            // Main.immediate may finish a synchronous request before launch returns.
+            requestOwners[id]=runCatching {JSONObject(b.getString("json") ?: "{}").getString("owner")}.getOrDefault("")
+            jobs[id]=job
+            job.start()
         }
     })
+    private suspend fun retireOwned(b:Bundle, id:String) {
+        val supplied=runCatching {JSONObject(b.getString("json") ?: "{}")}.getOrDefault(JSONObject())
+        instance?.takeIf {it.owner==supplied.optString("owner") &&
+            (it.id==supplied.optString("instance_id") || supplied.optString("action")=="open" && it.openRequestId==id)}?.let {
+            instance=null
+            try { it.window.terminate() } finally { it.window.close() }
+        }
+    }
     override fun onCreate() {
         super.onCreate()
         // No handles or capture files survive process death. The main-process journal records expiry.
@@ -102,8 +133,9 @@ internal class WorkspaceVisualService : Service() {
             val test=Instance(UUID.randomUUID().toString(),owner,args.getString("host_request_id"),renderer,now,now)
             instance=test
             renderer.start()
-            return metadata(test).put("layout",renderer.inspect()).put("calibration","passed_actual_window_pixelcopy")
+            return metadata(test).put("layout",renderer.inspect()).put("calibration","passed_actual_window_pixelcopy").put("startup",renderer.startupDiagnostics())
         }
+        if(action=="close" && instance==null)return JSONObject().put("closed",true).put("instance_id",args.getString("instance_id"))
         val test=instance ?: error("VISUAL_INSTANCE_EXPIRED: reopen the candidate; DOM state is not recoverable after expiry or process death")
         WorkspaceVisualLimits.owns(test.owner,owner)
         require(test.id==args.getString("instance_id")) {"VISUAL_INSTANCE_EXPIRED"}
