@@ -168,6 +168,6 @@ Alpha.34 completed delivery but exposed malformed exact-count handling, repeated
 
 ## AF-019: Autonomous workspace visual testing
 
-Tracking [#75](https://github.com/SEsquieu/atlas/issues/75), implementation [PR #76](https://github.com/SEsquieu/atlas/pull/76). Status: in progress; physical-device qualification pending.
+Tracking [#75](https://github.com/SEsquieu/atlas/issues/75), implementation [PR #76](https://github.com/SEsquieu/atlas/pull/76). Status: merged in [PR #76](https://github.com/SEsquieu/atlas/pull/76); unit/lint and 28 tests each on API35/36 passed. Signed alpha.36 bundle delivered; physical-device qualification pending. See [alpha.36 delivery](./releases/v0.1.0-alpha.36.md).
 
 Atlas could author a Snake application but the visible-workspace capture required the user to open it. Scope: app-private compositor window in a separate host process; authoritative measured device profile and shared native chrome; production WebView containment with disposable SQLite/mock BLE; persistent task-owned handles; fixed native/DOM inputs, geometry, actual screenshots and optional bound receipts; cancellation/expiry/process-death cleanup; API35/36 regression evidence and a Galaxy S22 acceptance plan. The model chooses testing by need. Activation, permission and persistence gates are not weakened. See [the implementation contract](./workspace-visual-testing.md).

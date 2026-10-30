@@ -1,6 +1,6 @@
 # Workspace application host: implementation chronology
 
-**Reading guide:** this document preserves successive implementation checkpoints. Early statements such as “not enabled” and “gates still open” describe their historical checkpoint, not the current alpha. Read [current status](./current-status.md) first; the alpha.28 qualification and delivery sections below record the latest evidence.
+**Reading guide:** this document preserves successive implementation checkpoints. Early statements such as “not enabled” and “gates still open” describe their historical checkpoint, not the current alpha. Read [current status](./current-status.md) first; the [alpha.36 release record](./releases/v0.1.0-alpha.36.md) records current automated qualification and distribution.
 
 Baseline: alpha.17, public commit `8219fd9b8121186c2dc0707b7c33cbff0fc48e0e`.
 This document supersedes the permanent-format-coexistence assumption in the original design. It does not assert that executable applications already ship.
@@ -309,3 +309,11 @@ Package commit `4dc97f952576fc3f4d68a311af20d23fb70e9c94` changes only release m
 ## Alpha.35 verification primitives
 
 UI checks add capture_dom, assert_dom_equal and assert_dom_not_equal for bounded same-selector outerHTML comparisons within one check, including reload. Fingerprints remain host-held and reports retain comparison hashes. Missing/oversized captures fail; they never compare truncated prefixes. Count values are exact bounded integers; input diagnostics report coercion and HTML constraints. These primitives help verify repeatability and preservation but cannot infer semantics from criterion labels, paint pixels or inspect JavaScript-only state. See the alpha.35 release notes for bounds and phone acceptance.
+
+## Alpha.36: autonomous visual workspace testing
+
+Merged [PR #76](https://github.com/SEsquieu/atlas/pull/76), application source `b1b45267b2c04ef7f811b7d765324b8f724538fc`. Optional private-display rendering, actual device profiles, persistent isolated interactions and candidate-bound visual receipts let the user remain in Session. The runtime/model chooses testing by need; existing activation, permission and persistence gates remain intact. See [the complete contract and phone plan](./workspace-visual-testing.md).
+
+Unit/lint [41121101474](https://github.com/SEsquieu/atlas/actions/runs/41121101474), API35/36 [41121101520](https://github.com/SEsquieu/atlas/actions/runs/41121101520) (28 tests each, zero failures/errors/skips), and public source/history [41121101467](https://github.com/SEsquieu/atlas/actions/runs/41121101467) passed. Both device artifact digests and JUnit reports were verified.
+
+Signed main [build 41122817446](https://github.com/SEsquieu/atlas/actions/runs/41122817446), Android #362, produced alpha.36 / code1362 with the persistent signer. The unchanged 20,909,396-byte installable ZIP was copied to App Builds and its destination/size read back. Extract its secure APK to install; the JSON carries CI provenance. No separate raw APK upload or additional offline APK verification was completed after the execution environment disconnected. [Release record](./releases/v0.1.0-alpha.36.md) records checksums and scope. [#75](https://github.com/SEsquieu/atlas/issues/75) / AF-019 remains open for Galaxy S22 compositor, input/focus, lifecycle, endurance and performance acceptance.
