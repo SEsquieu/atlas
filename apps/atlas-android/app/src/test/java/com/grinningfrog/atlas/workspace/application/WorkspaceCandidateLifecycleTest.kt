@@ -133,6 +133,23 @@ class WorkspaceCandidateLifecycleTest {
         assertEquals(c.getString("workspace_id"),tasks.forTurn(turn.id)!!.document.getJSONObject("workspace_target").getString("workspace_id"))
         assertEquals(1,db.listComposableWorkspaces().count { it.realmId == c.getString("realm_id") })
     }
+    @Test fun activatedContentCanBeInspectedUsingAnUnchangedCurrentBaseCandidate() = runTest {
+        val original=candidate()
+        val active=activate(original,checks(original)) {_,_->true}
+        val id=original.getString("workspace_id");val realm=original.getString("realm_id")
+        val session=db.createSession("Inspect active content","Inspect privately",workspaceId=realm)
+        val turn=db.createTurn(session.id,"user")
+        val repo=WorkspacePackageRepository(db)
+        val fresh=repo.stage(id,realm,active.getString("revision_id"),null,null,JSONObject(),session.id,turn.id)
+        val inspected=repo.inspect(id,realm,fresh.getString("candidate_id"))
+        WorkspaceCandidateState.requireTestable(inspected)
+        assertEquals(original.getString("content_hash"),inspected.getString("content_hash"))
+        assertEquals(active.getString("revision_id"),inspected.getString("base_revision_id"))
+        assertNotEquals(original.getString("candidate_id"),inspected.getString("candidate_id"))
+        assertEquals(active.getString("revision_id"),db.loadComposableWorkspace(id)!!.liveRevisionId)
+        assertTrue(inspected.getJSONArray("checks").length()==0)
+        assertTrue(runCatching {WorkspaceCandidateState.requireTestable(repo.inspect(id,realm,original.getString("candidate_id")))}.isFailure)
+    }
     @Test fun compatibleReplacementPreservesRecordsAndFencesOldPrincipal() = runTest {
         val first = candidate(); val original = activate(first, checks(first)) { _, _ -> true }
         val id = first.getString("workspace_id"); val realm = first.getString("realm_id")

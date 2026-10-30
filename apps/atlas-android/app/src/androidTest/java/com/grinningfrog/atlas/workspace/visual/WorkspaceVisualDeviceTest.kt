@@ -62,6 +62,49 @@ class WorkspaceVisualDeviceTest {
             bitmap.getPixel(cssX?.let {(it*scale).toInt()} ?: (bitmap.width-8),cssY?.let {(it*scale).toInt()} ?: (bitmap.height-8))
         } finally {bitmap.recycle();response.image.close()}
     }
+    @Test fun twentyImmediateReopensRecoverFromFailedStartupAndStaleRequests()=runBlocking {
+        val client=(context.applicationContext as AtlasApplication).workspaceVisuals
+        val owner="instrumentation:${UUID.randomUUID()}"
+        var previous:String?=null
+        repeat(20) { cycle ->
+            // A valid document which never signals host.ready deterministically hits startup timeout.
+            if(cycle==5 || cycle==15) {
+                val broken=fixture().apply {getJSONObject("files").put("ui/app.js","document.body.textContent='never ready'")}
+                val error=runCatching {open(client,owner,broken)}.exceptionOrNull()
+                assertNotNull(error)
+                assertTrue(error.toString(),error!!.message.orEmpty().contains("candidate_mount"))
+                assertTrue(error.message.orEmpty().contains("candidate_ready"))
+                assertEquals(0,client.request(JSONObject().put("action","status").put("owner",owner)).json.getInt("active_instances"))
+            }
+            val opened=open(client,owner,fixture());val id=opened.getString("instance_id")
+            try {
+                assertNotEquals(previous,id)
+                assertEquals("candidate_frame",opened.getJSONObject("startup").getString("last_completed_phase"))
+                previous?.let {stale -> assertTrue(runCatching {client.request(request("inspect",owner,stale))}.isFailure)}
+                val layout=client.request(request("inspect",owner,id)).json
+                assertEquals(360.0,layout.getJSONObject("viewport").getDouble("width"),1.0)
+                assertEquals(0x12,Color.red(pixel(client,owner,id)))
+            } finally {client.request(request("close",owner,id))}
+            client.request(request("close",owner,id))
+            // Synchronous replies must remove their jobs before the same ID is delivered again.
+            val statusId=UUID.randomUUID().toString()
+            repeat(2) {assertEquals(0,client.request(JSONObject().put("action","status").put("owner",owner),statusId).json.getInt("active_instances"))}
+            previous=id
+        }
+    }
+    @Test fun closingIdleRendererDoesNotPauseTheNextDocumentsTimers()=runBlocking {
+        val client=(context.applicationContext as AtlasApplication).workspaceVisuals
+        val owner="instrumentation:${UUID.randomUUID()}"
+        var id:String?=null
+        try {
+            id=open(client,owner,fixture()).getString("instance_id")
+            // Maintenance runs every five seconds and pauses after thirty seconds idle.
+            delay(36_000)
+            client.request(request("close",owner,id))
+            id=open(client,owner,fixture()).getString("instance_id")
+            assertEquals(0x12,Color.red(pixel(client,owner,id)))
+        } finally {id?.let {runCatching {client.request(request("close",owner,it))}}}
+    }
     @Test fun privateWindowCapturesAndInteractsWhileSessionRemainsVisible()=runBlocking {
         val app=context.applicationContext as AtlasApplication
         val client=app.workspaceVisuals
@@ -255,6 +298,31 @@ class WorkspaceVisualDeviceTest {
         try {id=open(client,owner,fixture()).getString("instance_id");assertEquals(0x12,Color.red(pixel(client,owner,id)))}
         finally {id?.let {runCatching {client.request(request("close",owner,it))}}}
     }
+    @Test fun cancelledRpcRecoversWhenTheServiceCannotProcessCancellation()=runBlocking {
+        val client=(context.applicationContext as AtlasApplication).workspaceVisuals
+        val owner="instrumentation:${UUID.randomUUID()}"
+        val opened=open(client,owner,fixture());val id=opened.getString("instance_id")
+        val pid=opened.getInt("service_pid")
+        assertNotEquals(android.os.Process.myPid(),pid)
+        var fresh:String?=null
+        try {
+            // Debug instrumentation only: freeze the native service, not just Chromium JS.
+            val output=ParcelFileDescriptor.AutoCloseInputStream(InstrumentationRegistry.getInstrumentation().uiAutomation
+                .executeShellCommand("run-as ${context.packageName} /system/bin/kill -STOP $pid")).bufferedReader().use {it.readText()}
+            assertEquals("Cannot freeze debug service: $output","",output.trim())
+            val pending=launch {client.request(request("inspect",owner,id))}
+            delay(250)
+            withTimeout(8_000) {pending.cancelAndJoin()}
+            val result=open(client,owner,fixture());fresh=result.getString("instance_id")
+            assertNotEquals(opened.getString("process_nonce"),result.getString("process_nonce"))
+            assertTrue(runCatching {client.request(request("inspect",owner,id))}.isFailure)
+            assertEquals(0x12,Color.red(pixel(client,owner,fresh)))
+        } finally {
+            // SIGKILL also works for a stopped process if an assertion fails before recovery.
+            android.os.Process.killProcess(pid)
+            fresh?.let {runCatching {client.request(request("close",owner,it))}}
+        }
+    }
     @Test fun remoteProcessDeathExpiresStateWithoutCrashingTheForegroundProcess()=runBlocking {
         val client=(context.applicationContext as AtlasApplication).workspaceVisuals
         val owner="instrumentation:${UUID.randomUUID()}"
@@ -267,6 +335,7 @@ class WorkspaceVisualDeviceTest {
         try {
             val result=open(client,owner,fixture());fresh=result.getString("instance_id")
             assertNotEquals(id,fresh);assertNotEquals(opened.getString("process_nonce"),result.getString("process_nonce"))
+            assertTrue(runCatching {client.request(request("inspect",owner,id))}.isFailure)
             assertEquals(0x12,Color.red(pixel(client,owner,fresh)))
         } finally {fresh?.let {runCatching {client.request(request("close",owner,it))}}}
     }
