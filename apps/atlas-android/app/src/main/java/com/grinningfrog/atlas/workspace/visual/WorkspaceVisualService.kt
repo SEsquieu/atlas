@@ -39,7 +39,7 @@ internal class WorkspaceVisualService : Service() {
                         instance?.takeIf {it.owner==b.getString("owner") &&
                             (it.id==b.getString("instance_id") || b.getString("action")=="open" && it.openRequestId==id)}?.let {
                             instance=null
-                            try {it.window.terminate()} finally {it.window.close()}
+                            try {runCatching {it.window.terminate()}} finally {it.window.close()}
                         }
                     }
                     runCatching {cancelReply?.send(Message.obtain(null,1).apply {data=Bundle().apply {
@@ -96,7 +96,7 @@ internal class WorkspaceVisualService : Service() {
         instance?.takeIf {it.owner==supplied.optString("owner") &&
             (it.id==supplied.optString("instance_id") || supplied.optString("action")=="open" && it.openRequestId==id)}?.let {
             instance=null
-            try { it.window.terminate() } finally { it.window.close() }
+            try { runCatching {it.window.terminate()} } finally { it.window.close() }
         }
     }
     override fun onCreate() {

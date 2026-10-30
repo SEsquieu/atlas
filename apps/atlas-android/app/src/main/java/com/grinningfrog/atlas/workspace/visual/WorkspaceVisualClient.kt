@@ -63,6 +63,10 @@ internal class WorkspaceVisualClient(private val context:Context,private val dat
         pending.values.forEach {it.completeExceptionally(IllegalStateException("VISUAL_PROCESS_LOST: reopen candidate"))};pending.clear()
         live.values.toList().forEach {retire(it,reason)}
     }
+    private fun killRendererProcess() {
+        val processes=(context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).runningAppProcesses.orEmpty()
+        processes.firstOrNull {it.uid==Process.myUid() && it.processName==context.packageName+":workspace_visual" && it.pid!=Process.myPid()}?.let {Process.killProcess(it.pid)}
+    }
     private fun resetBinding(reason:String) {
         if(bound)runCatching {context.unbindService(connection)}
         bound=false
@@ -76,7 +80,10 @@ internal class WorkspaceVisualClient(private val context:Context,private val dat
             check(bound) {"VISUAL_SERVICE_UNAVAILABLE"}
         }
         try { withTimeout(5_000) {connected.await()} }
-        catch(error:Throwable) { resetBinding("renderer_bind_interrupted"); throw error }
+        catch(error:Throwable) {
+            if(error is TimeoutCancellationException)killRendererProcess()
+            resetBinding("renderer_bind_interrupted"); throw error
+        }
     }
     suspend fun request(args:JSONObject,id:String=UUID.randomUUID().toString(),packageFile:File?=null):Response {
         var delivered:Response?=null
@@ -102,8 +109,7 @@ internal class WorkspaceVisualClient(private val context:Context,private val dat
                     true
                 } catch(_:Exception) {false} finally {pending.remove(cancelId);cancelled.cancel()}
                 if(!acknowledged || error is TimeoutCancellationException) {
-                    val processes=(context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).runningAppProcesses.orEmpty()
-                    processes.firstOrNull {it.uid==Process.myUid() && it.processName==context.packageName+":workspace_visual" && it.pid!=Process.myPid()}?.let {Process.killProcess(it.pid)}
+                    killRendererProcess()
                     resetBinding("renderer_cancellation_unacknowledged_or_timeout")
                 }
             }
