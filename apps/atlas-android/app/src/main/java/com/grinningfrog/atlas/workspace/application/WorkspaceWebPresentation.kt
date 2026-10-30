@@ -203,26 +203,29 @@ class WorkspaceWebPresentation(
         }
     }
 
-    /** Wait for Chromium visual state and a subsequent attached-window draw before PixelCopy. */
+    /** Chromium visual state plus hardware frame commit: PixelCopy must see a queued frame. */
     suspend fun awaitCompositedFrame() = withTimeout(5_000) {
         withContext(Dispatchers.Main.immediate) {
-            check(!disposed && view.isAttachedToWindow && view.isShown)
-            suspendCancellableCoroutine<Unit> { continuation ->
-                var draw: android.view.ViewTreeObserver.OnDrawListener? = null
-                fun remove() { draw?.let { if(view.viewTreeObserver.isAlive)view.viewTreeObserver.removeOnDrawListener(it) }; draw=null }
-                continuation.invokeOnCancellation { view.post { remove() } }
-                view.postVisualStateCallback(android.os.SystemClock.uptimeMillis(), object : WebView.VisualStateCallback() {
-                    override fun onComplete(requestId: Long) {
-                        if(!continuation.isActive)return
-                        draw=android.view.ViewTreeObserver.OnDrawListener {
-                            view.post { remove(); if(continuation.isActive)continuation.resumeWith(Result.success(Unit)) }
-                        }
-                        view.viewTreeObserver.addOnDrawListener(draw)
-                        view.invalidate()
+            check(!disposed && view.isAttachedToWindow && view.isShown && view.isHardwareAccelerated)
+            if(android.os.Build.VERSION.SDK_INT>=29) {
+                suspendCancellableCoroutine<Unit> { continuation ->
+                    var observer: android.view.ViewTreeObserver? = null
+                    var committed: Runnable? = null
+                    continuation.invokeOnCancellation {
+                        view.post { if(android.os.Build.VERSION.SDK_INT>=29)committed?.let {callback -> observer?.takeIf {it.isAlive}?.unregisterFrameCommitCallback(callback)} }
                     }
-                })
-                view.invalidate()
-            }
+                    view.postVisualStateCallback(android.os.SystemClock.uptimeMillis(), object : WebView.VisualStateCallback() {
+                        override fun onComplete(requestId: Long) {
+                            if(!continuation.isActive)return
+                            committed=Runnable { view.post { if(continuation.isActive)continuation.resumeWith(Result.success(Unit)) } }
+                            observer=view.viewTreeObserver
+                            if(android.os.Build.VERSION.SDK_INT>=29)observer!!.registerFrameCommitCallback(committed!!)
+                            view.invalidate()
+                        }
+                    })
+                    view.invalidate()
+                }
+            } else error("Hardware frame commit requires Android 10 or newer")
         }
     }
 

@@ -210,6 +210,40 @@ class WorkspaceVisualDeviceTest {
             assertTrue(client.request(request("interact",owner,id).put("steps",JSONArray().put(JSONObject("""{"action":"assert_text_exact","selector":"#status","value":"rows:0:guarded"}""")))).json.getBoolean("passed"))
         } finally {id?.let {runCatching {client.request(request("close",owner,it))}};app.database.setComposableWorkspaceArchived(live.id,true);app.database.deleteComposableWorkspace(live.id)}
     }
+    @Test fun hungCandidateCannotTerminateTheForegroundWorkspaceRenderer()=runBlocking {
+        val app=context.applicationContext as AtlasApplication;val db=app.database;val client=app.workspaceVisuals
+        val live=db.createComposableWorkspace("Live renderer survives","",fixture().toString())
+        val revision=db.loadLiveWorkspaceRevision(live.id)!!
+        WorkspaceApplicationData(db).setEnabled(live.id,revision.id,true)
+        val scenario=ActivityScenario.launch(MainActivity::class.java)
+        val owner="instrumentation:${UUID.randomUUID()}"
+        try {
+            scenario.onActivity {activity -> activity.setContent {com.grinningfrog.atlas.AtlasTheme {WorkspaceApplicationPanel(live,revision,db,Modifier.fillMaxSize())}}}
+            withTimeout(12_000) {while(com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(live.id,revision.id)?.optJSONObject("runtime")?.optBoolean("ready")!=true)delay(50)}
+            val hung=fixture().apply {getJSONObject("files").put("ui/app.js","while(true){}")}
+            assertTrue(withTimeout(20_000) {runCatching {open(client,owner,hung)}.isFailure})
+            val runtime=com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(live.id,revision.id)!!.getJSONObject("runtime")
+            assertTrue(runtime.getBoolean("ready"));assertFalse(runtime.getBoolean("disposed"))
+            val clicked=CompletableDeferred<Unit>()
+            scenario.onActivity {activity ->
+                fun find(view:android.view.View):android.webkit.WebView? {
+                    if(view is android.webkit.WebView)return view
+                    if(view is android.view.ViewGroup)for(i in 0 until view.childCount)find(view.getChildAt(i))?.let {return it}
+                    return null
+                }
+                requireNotNull(find(activity.findViewById(android.R.id.content))).evaluateJavascript("document.querySelector('#change').click()") {clicked.complete(Unit)}
+            }
+            withTimeout(5_000) {clicked.await()}
+            withTimeout(5_000) {while(true) {
+                val frame=com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.capture(live.id,revision.id).first
+                val changed=try {Color.red(frame.getPixel(frame.width-8,frame.height-8))==0xb2} finally {frame.recycle()}
+                if(changed)break
+                delay(50)
+            }}
+            assertEquals(revision.id,db.loadComposableWorkspace(live.id)!!.liveRevisionId)
+            assertEquals(0,client.request(JSONObject().put("action","status").put("owner",owner)).json.getInt("active_instances"))
+        } finally {scenario.close();db.setComposableWorkspaceArchived(live.id,true);db.deleteComposableWorkspace(live.id)}
+    }
     @Test fun cancelledStartupReleasesTheDisplayAndAllowsFreshOpen()=runBlocking {
         val client=(context.applicationContext as AtlasApplication).workspaceVisuals
         val owner="instrumentation:${UUID.randomUUID()}"

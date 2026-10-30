@@ -17,7 +17,8 @@ internal class WorkspaceVisualService : Service() {
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
     private val mutex=Mutex()
     private val jobs=mutableMapOf<String,Job>()
-    private val replies=linkedMapOf<String,JSONObject>()
+    private data class CachedReply(val argumentsHash:String,val result:JSONObject)
+    private val replies=linkedMapOf<String,CachedReply>()
     private var instance: Instance?=null
     private val nonce=UUID.randomUUID().toString()
     private data class Instance(val id:String,val owner:String,val openRequestId:String,val window:WorkspaceVisualWindow,val opened:Long,var touched:Long,var operations:Int=0,var generation:Int=0,var capturedGeneration:Int = -1,val assertions:JSONArray=JSONArray(),var failed:Boolean=false)
@@ -44,9 +45,13 @@ internal class WorkspaceVisualService : Service() {
                             require(args.toString().length<=96*1024)
                             // Only mutations need replay suppression. Captures are safe to repeat.
                             val cacheKey=args.getString("owner")+":"+id
-                            if(args.getString("action")=="interact" && replies.containsKey(cacheKey))return@withTimeout JSONObject(replies.getValue(cacheKey).toString())
+                            val argumentsHash=WorkspaceApplicationContract.hash(WorkspaceApplicationContract.canonical(args))
+                            if(args.getString("action")=="interact")replies[cacheKey]?.let {previous ->
+                                require(previous.argumentsHash==argumentsHash) {"VISUAL_REQUEST_ID_CONFLICT"}
+                                return@withTimeout JSONObject(previous.result.toString())
+                            }
                             val result=perform(args,fd) {capture=it}
-                            if(args.getString("action")=="interact") { if(replies.size>=128)replies.remove(replies.keys.first());replies[cacheKey]=JSONObject(result.toString()) }
+                            if(args.getString("action")=="interact") { if(replies.size>=128)replies.remove(replies.keys.first());replies[cacheKey]=CachedReply(argumentsHash,JSONObject(result.toString())) }
                             result
                         }
                     }
