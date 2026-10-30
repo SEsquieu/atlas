@@ -1,12 +1,13 @@
 # Current Atlas implementation status
 
-Source baseline: **0.1.0-alpha.35**, Android database version 18. Alpha.35 adds bounded DOM comparison evidence, preflight count validation, HTML input diagnostics and durable task source retention across compaction. Native execution remains the default. This page describes current behavior; earlier release notes retain historical qualification evidence.
+Source baseline: **0.1.0-alpha.36 candidate**, Android database version 18. Alpha.36 adds optional autonomous workspace visual testing through private-display rendering, actual device profiles, persistent isolated interaction and candidate-bound evidence. Qualification and delivery are tracked in [PR #76](https://github.com/SEsquieu/atlas/pull/76); physical-device acceptance remains outstanding. Alpha.35 remains the last delivered APK until the alpha.36 delivery record is added. Native execution remains the default. This page describes current behavior; earlier release notes retain historical qualification evidence.
 
 ## Available in the Android alpha
 
 - Native foreground sessions with voice/text, camera context, durable evidence, and replaceable inference providers.
 - Durable execution tasks that checkpoint and continue automatically across bounded slices. Clarification, authorization, ambiguous effects, repeated failures, and resource ceilings can stop progression. See [execution semantics](../apps/atlas-android/DURABLE_EXECUTION.md).
 - Contained HTML/CSS/JavaScript workspace packages, immutable candidates, controlled activation, scoped records, and isolated candidate checks. The host owns native authority; app code cannot grant itself Android permissions.
+- Optional [autonomous visual workspace testing](./workspace-visual-testing.md): private compositor rendering while Session remains visible, real screenshots, bounded geometry, fixed interactions and optional verification receipts. The model chooses testing by need; no universal activation gate is added.
 - Host-mediated BLE with workspace consent and OS permission checks. Simulated BLE checks do not prove physical peripheral interoperability.
 - Isolated save/reload verification through the real storage APIs. Persistence-required activation needs matching candidate evidence; DOM-only checks are insufficient.
 - Session-owned empty draft recovery during authoring retries, unchanged-candidate reuse, and bounded host-failure diagnostics.
@@ -20,7 +21,7 @@ The first slice is merged in [PR #66](https://github.com/SEsquieu/atlas/pull/66)
 
 External bundles require an independently trusted publisher public key and native activation confirmation. The model can inspect runtime status, read installed JavaScript source, propose exact source edits and request native-confirmed selection after isolated contract probes. Editing schemas are advertised only after status inspection. This does not edit Kotlin or migrate an active task. There is no remote feed, automatic issue submission, GitHub credential, coding executor or autonomous runtime activation in this build. A failed pinned runtime cannot be silently replaced; cancel the task and start a new task on Native if necessary. See [architecture, update behavior and remaining gates](./replaceable-runtime.md). [Milestone #65](https://github.com/SEsquieu/atlas/issues/65) remains open.
 
-## Current automated qualification
+## Previous delivered build qualification (alpha.35)
 
 | Scope | Evidence |
 | --- | --- |
@@ -32,6 +33,8 @@ External bundles require an independently trusted publisher public key and nativ
 Qualified head `40ef677a7a5a15c616486e942e3ec5c9e902202f`; merged application source `f120ef0eba5b025ce3d1297e3aa308c6997af19f`. Device artifact ZIP digests and JUnit reports were verified. The new real WebView regression checks same-seed equality, changed geometry despite an unchanged count, rejected-input preservation, comparison across reload, range clamping/number sanitization, and count rejection before candidate lookup. Source retention tests cover scope, changed/forged bytes, offsets, duplicate suppression, durable operation recovery and escaped-JSON budgets. See [alpha.35 qualification and delivery](./releases/v0.1.0-alpha.35.md).
 
 ## Phone evidence and limits
+
+Alpha.36 requires Galaxy S22 qualification of private-display compositing, canvas fidelity, input/focus isolation, lifecycle recovery and sustained resource use. Per-open calibration and emulator tests are evidence about the tested path, not a substitute for that acceptance. See the [real-device plan](./workspace-visual-testing.md#qualification-and-real-device-acceptance).
 
 Alpha.34 completed MazeGen activation in its original workspace and finished the task, but took 428.852 seconds, 46 model steps and 51 tool calls. Twenty source reads and seven compactions showed remaining churn. The passing UI test labeled status/count assertions as repeatability/preservation without comparing maze geometry. A separate runtime proposal passed isolated probes and correctly remained unselected; no activation/approval acceptance was exercised. All 63 usage reports showed Medium requested/served. See [the alpha.34 assessment](./alpha34-live-assessment.md).
 

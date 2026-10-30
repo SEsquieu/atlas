@@ -81,3 +81,7 @@ Full milestone verification must cover pause/resume, process death during infere
 - Device verification exercises the actual isolated engine on API35/36; `AtlasRuntimeBenchmark` log lines contain timings.
 
 To create an external test bundle, generate your own EC signing key, supply its public SPKI base64 through native UI, then run `ATLAS_RUNTIME_SIGNING_KEY=/path/to/private.pem node packages/atlas-runtime-core/bundle.mjs /path/to/runtime-bundle.json`. Keep private keys out of source control. The script currently uses the source-declared version; change that version deliberately for a new published artifact.
+
+## Autonomous visual workspace primitives
+
+The host exposes optional private-display rendering, device measurement, fixed input and capture primitives through `workspace_visual_status` / `workspace_visual_test`. Runtime guidance and the model choose testing by need, viewports, assertions, design interpretation and iteration. No universal visual activation gate is added. See [the visual testing contract and real-device plan](./workspace-visual-testing.md).

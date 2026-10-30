@@ -41,6 +41,8 @@ The runtime owns the things a persistent physical agent cannot safely outsource 
 
 Changing from an on-device model to a LAN server or cloud API changes a capability. It does **not** change the identity that owns the session.
 
+Workspace development includes optional [autonomous visual testing](./docs/workspace-visual-testing.md): staged apps render on a private device display while the user stays in the session. Physical-device qualification remains an explicit release gate.
+
 > **Status:** public open-source Android alpha under active development. Atlas is appropriate for development and hands-on physical-device testing, not unattended, emergency, safety-critical, or production operation.
 
 ## Current alpha

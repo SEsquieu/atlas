@@ -55,6 +55,12 @@
             android:process=":workspace_js"
             android:stopWithTask="true" />
 
+        <service
+            android:name=".workspace.visual.WorkspaceVisualService"
+            android:exported="false"
+            android:process=":workspace_visual"
+            android:stopWithTask="true" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.exports"

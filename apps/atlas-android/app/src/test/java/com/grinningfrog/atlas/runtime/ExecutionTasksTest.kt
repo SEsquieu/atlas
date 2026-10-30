@@ -278,6 +278,42 @@ class ExecutionTasksTest {
         assertEquals(ExecutionState.WAITING,store.reconcileDelivered(t.id)!!.state)
     }
 
+    @Test fun isolatedPixelsRequireNativeFinishAndMatchingCurrentActivation() {
+        val w=db.createComposableWorkspace("Isolated pixels", "")
+        val t=task();val lease=store.claim(t.id,"owner")!!
+        store.bindWorkspace(store.currentTurn(t.id),w.id,"activation",requirePixels=true)
+        val capture=call(t,"workspace_visual_test","{\"action\":\"capture\",\"instance_id\":\"handle\"}");db.insertToolCall(capture)
+        db.updateToolCall(capture.id,ToolCallStatus.COMPLETED,resultJson=JSONObject().put("workspace_id",w.id).put("candidate_id","candidate").put("observation_id","pixels").toString())
+        delivered(t,lease,w.id,w.liveRevisionId)
+        assertEquals(ExecutionState.READY,store.finish(lease,SliceOutcome.RESPONDED,1)!!.state)
+        val next=store.claim(t.id,"owner")!!
+        val finish=call(t,"workspace_visual_test","{\"action\":\"finish\",\"instance_id\":\"handle\"}");db.insertToolCall(finish)
+        val result=JSONObject().put("workspace_id",w.id).put("candidate_id","candidate").put("kind","visual_render").put("check_id","visual-check").put("passed",true).put("observation_id","pixels")
+        store.localOperation(finish,next) {ToolExecutionResult(result.toString())}
+        // A finish alone cannot attest the current active revision.
+        assertEquals(ExecutionState.READY,store.finish(next,SliceOutcome.RESPONDED,1)!!.state)
+        db.writableDatabase.insertOrThrow("workspace_application_activations",null,android.content.ContentValues().apply {
+            put("workspace_id",w.id);put("candidate_id","candidate");put("check_id","pure-check");put("created_at",clock)
+            put("result_json",JSONObject().put("revision_id",w.liveRevisionId).put("visual_check_id","other-check").toString())
+        })
+        val wrong=store.claim(t.id,"owner")!!;assertEquals(ExecutionState.READY,store.finish(wrong,SliceOutcome.RESPONDED,1)!!.state)
+        db.writableDatabase.update("workspace_application_activations",android.content.ContentValues().apply {put("result_json",JSONObject().put("revision_id",w.liveRevisionId).put("visual_check_id","visual-check").toString())},"workspace_id=?",arrayOf(w.id))
+        val matching=store.claim(t.id,"owner")!!;assertEquals(ExecutionState.COMPLETED,store.finish(matching,SliceOutcome.RESPONDED,1)!!.state)
+    }
+    @Test fun visualCloseCannotHideAnUnrepairedFailedInteraction() {
+        val w=db.createComposableWorkspace("Visual failure", "")
+        val t=task();val lease=store.claim(t.id,"owner")!!;store.bindWorkspace(store.currentTurn(t.id),w.id,"activation")
+        val failed=call(t,"workspace_visual_test",JSONObject().put("action","interact").put("workspace_id",w.id).toString());db.insertToolCall(failed)
+        db.updateToolCall(failed.id,ToolCallStatus.COMPLETED,resultJson=JSONObject().put("workspace_id",w.id).put("passed",false).toString())
+        val close=call(t,"workspace_visual_test","{\"action\":\"close\"}");db.insertToolCall(close);db.updateToolCall(close.id,ToolCallStatus.COMPLETED,resultJson="{\"closed\":true}")
+        assertEquals(1,store.outstanding(t.id).length())
+        val fixed=call(t,"workspace_visual_test","{\"action\":\"finish\"}");db.insertToolCall(fixed)
+        store.localOperation(fixed,lease) {ToolExecutionResult(JSONObject().put("kind","visual_render").put("workspace_id",w.id).put("candidate_id","fixed").put("passed",true).toString())}
+        assertEquals(0,store.outstanding(t.id).length())
+        val unknown=call(t,"workspace_visual_test","{\"action\":\"interact\"}");db.insertToolCall(unknown);db.updateToolCall(unknown.id,ToolCallStatus.UNKNOWN)
+        assertEquals(ExecutionState.WAITING,store.finish(lease,SliceOutcome.RESPONDED,1)!!.state)
+    }
+
     @Test fun declaredPersistenceCannotBeSatisfiedByPassingDomOnlyChecks() {
         val w=db.createComposableWorkspace("Saved app", "")
         val t=task();store.claim(t.id,"owner")!!

@@ -32,6 +32,8 @@ class WorkspaceWebPresentation(
     private var remainingMessages = 64
     private var messageWindow = android.os.SystemClock.elapsedRealtime()
     private val bridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val runtimeErrorCount = java.util.concurrent.atomic.AtomicInteger()
+    private val resourceErrorCount = java.util.concurrent.atomic.AtomicInteger()
     private val console = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
     @Volatile private var hostFailureCount=0
     private val hostFailures=mutableListOf<JSONObject>()
@@ -40,7 +42,7 @@ class WorkspaceWebPresentation(
     private val resources = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
     private val provider = WebViewCompat.getCurrentWebViewPackage(context)?.let { "${it.packageName}/${it.versionName}" } ?: "unknown"
     @Volatile private var ready = false
-    fun diagnostics(): JSONObject = JSONObject().put("instance_mode",principal.mode.name.lowercase()).put("simulation",devices?.isSimulation==true).put("webview_provider", provider).put("android_api", android.os.Build.VERSION.SDK_INT).put("native_canvas_fallback", "#010302").put("devices", devices?.status() ?: JSONObject.NULL).put("ready", ready).put("disposed", disposed).put("resources", org.json.JSONArray(synchronized(resources) { resources.map { JSONObject(it.toString()) } })).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } })).put("host_failure_count",hostFailureCount).put("host_failures",org.json.JSONArray(synchronized(hostCalls) {hostFailures.map {JSONObject(it.toString())}})).put("host_calls",org.json.JSONArray(synchronized(hostCalls) {hostCalls.map {JSONObject(it.toString())}}))
+    fun diagnostics(): JSONObject = JSONObject().put("instance_mode",principal.mode.name.lowercase()).put("simulation",devices?.isSimulation==true).put("webview_provider", provider).put("android_api", android.os.Build.VERSION.SDK_INT).put("runtime_error_count", runtimeErrorCount.get()).put("resource_error_count", resourceErrorCount.get()).put("native_canvas_fallback", "#010302").put("devices", devices?.status() ?: JSONObject.NULL).put("ready", ready).put("disposed", disposed).put("resources", org.json.JSONArray(synchronized(resources) { resources.map { JSONObject(it.toString()) } })).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } })).put("host_failure_count",hostFailureCount).put("host_failures",org.json.JSONArray(synchronized(hostCalls) {hostFailures.map {JSONObject(it.toString())}})).put("host_calls",org.json.JSONArray(synchronized(hostCalls) {hostCalls.map {JSONObject(it.toString())}}))
     val view: WebView
 
     init {
@@ -105,6 +107,7 @@ class WorkspaceWebPresentation(
         view.setDownloadListener { _, _, _, _, _ -> onFailure("Direct downloads are unavailable") }
         view.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                if(message.messageLevel()==ConsoleMessage.MessageLevel.ERROR)runtimeErrorCount.incrementAndGet()
                 synchronized(console) {
                     if (console.size >= 24) console.removeAt(0)
                     console.add(JSONObject().put("level", message.messageLevel().name).put("message", message.message().orEmpty().take(1000)).put("source", message.sourceId().orEmpty().take(240)).put("line", message.lineNumber()))
@@ -182,9 +185,9 @@ class WorkspaceWebPresentation(
         withContext(Dispatchers.Main.immediate) {
             check(!disposed)
             val script = """
-                (()=>{const style=e=>{if(!e)return null;const s=getComputedStyle(e),r=e.getBoundingClientRect();return {tag:e.tagName,id:e.id.slice(0,128),backgroundColor:s.backgroundColor.slice(0,100),backgroundImage:s.backgroundImage.slice(0,1000),color:s.color.slice(0,100),display:s.display.slice(0,32),width:r.width,height:r.height,x:r.x,y:r.y}};
-                return JSON.stringify({url:location.pathname,readyState:document.readyState,viewport:{width:innerWidth,height:innerHeight,devicePixelRatio},html:style(document.documentElement),body:style(document.body),
-                stylesheets:Array.from(document.querySelectorAll('link[rel=stylesheet]')).slice(0,16).map(e=>({path:new URL(e.href).pathname,loaded:!!e.sheet})),elements:Array.from(document.querySelectorAll('[id],main')).slice(0,32).map(style)});})()
+                (()=>{const style=e=>{if(!e)return null;const s=getComputedStyle(e),r=e.getBoundingClientRect();let clip={left:0,top:0,right:innerWidth,bottom:innerHeight};for(let p=e.parentElement;p;p=p.parentElement){const ps=getComputedStyle(p),pr=p.getBoundingClientRect();if(/hidden|clip|scroll|auto/.test(ps.overflowX)){clip.left=Math.max(clip.left,pr.left);clip.right=Math.min(clip.right,pr.right)}if(/hidden|clip|scroll|auto/.test(ps.overflowY)){clip.top=Math.max(clip.top,pr.top);clip.bottom=Math.min(clip.bottom,pr.bottom)}}const cx=Math.max(0,Math.min(innerWidth-1,r.x+r.width/2)),cy=Math.max(0,Math.min(innerHeight-1,r.y+r.height/2)),hit=document.elementFromPoint(cx,cy);return {tag:e.tagName,id:e.id.slice(0,128),text:(e.textContent||'').slice(0,120),backgroundColor:s.backgroundColor.slice(0,100),backgroundImage:s.backgroundImage.slice(0,1000),color:s.color.slice(0,100),display:s.display,width:r.width,height:r.height,x:r.x,y:r.y,disabled:!!e.disabled,visible:r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'&&Number(s.opacity)>0,clipped:r.left<clip.left-1||r.right>clip.right+1||r.top<clip.top-1||r.bottom>clip.bottom+1,occludedAtCenter:!!hit&&hit!==e&&!e.contains(hit),scrollWidth:e.scrollWidth,scrollHeight:e.scrollHeight,clientWidth:e.clientWidth,clientHeight:e.clientHeight}};
+                return JSON.stringify({url:location.pathname,readyState:document.readyState,viewport:{width:innerWidth,height:innerHeight,devicePixelRatio,scrollX,scrollY,visualViewport:visualViewport?{width:visualViewport.width,height:visualViewport.height,scale:visualViewport.scale}:null},html:style(document.documentElement),body:style(document.body),
+                stylesheets:Array.from(document.querySelectorAll('link[rel=stylesheet]')).slice(0,16).map(e=>({path:new URL(e.href).pathname,loaded:!!e.sheet})),elementLimit:64,elements:Array.from(document.querySelectorAll('[id],main,button,input,select,a,canvas,[role=button]')).slice(0,64).map(style),notice:'Clipping/occlusion are geometric observations, not design failures; scrollable content can be intentional.'});})()
             """.trimIndent()
             suspendCancellableCoroutine { continuation ->
                 view.evaluateJavascript(script) { raw ->
@@ -200,9 +203,35 @@ class WorkspaceWebPresentation(
         }
     }
 
+    /** Chromium visual state plus hardware frame commit: PixelCopy must see a queued frame. */
+    suspend fun awaitCompositedFrame() = withTimeout(5_000) {
+        withContext(Dispatchers.Main.immediate) {
+            check(!disposed && view.isAttachedToWindow && view.isShown && view.isHardwareAccelerated)
+            if(android.os.Build.VERSION.SDK_INT>=29) {
+                suspendCancellableCoroutine<Unit> { continuation ->
+                    var observer: android.view.ViewTreeObserver? = null
+                    var committed: Runnable? = null
+                    continuation.invokeOnCancellation {
+                        view.post { if(android.os.Build.VERSION.SDK_INT>=29)committed?.let {callback -> observer?.takeIf {it.isAlive}?.unregisterFrameCommitCallback(callback)} }
+                    }
+                    view.postVisualStateCallback(android.os.SystemClock.uptimeMillis(), object : WebView.VisualStateCallback() {
+                        override fun onComplete(requestId: Long) {
+                            if(!continuation.isActive)return
+                            committed=Runnable { view.post { if(continuation.isActive)continuation.resumeWith(Result.success(Unit)) } }
+                            observer=view.viewTreeObserver
+                            if(android.os.Build.VERSION.SDK_INT>=29)observer!!.registerFrameCommitCallback(committed!!)
+                            view.invalidate()
+                        }
+                    })
+                    view.invalidate()
+                }
+            } else error("Hardware frame commit requires Android 10 or newer")
+        }
+    }
+
     /** Copy only this viewport from its owning app window; software redraws can differ from compositor pixels. */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    suspend fun captureVisiblePixels(): android.graphics.Bitmap = withTimeout(3_000) {
+    suspend fun captureVisiblePixels(owningWindow: android.view.Window? = null): android.graphics.Bitmap = withTimeout(3_000) {
         withContext(Dispatchers.Main.immediate) {
             check(!disposed && view.isAttachedToWindow && view.isShown) { "Workspace viewport is not visible" }
             require(view.width > 0 && view.height > 0 && view.width.toLong()*view.height <= 8_000_000L)
@@ -212,7 +241,7 @@ class WorkspaceWebPresentation(
                 if (owner is android.app.Activity) activity=owner as android.app.Activity
                 else (owner as? android.content.ContextWrapper)?.baseContext?.let { owner=it }
             }
-            val window=requireNotNull(activity).window
+            val window=owningWindow ?: requireNotNull(activity).window
             val location=IntArray(2);view.getLocationInWindow(location)
             val rect=android.graphics.Rect(location[0],location[1],location[0]+view.width,location[1]+view.height)
             require(rect.left>=0 && rect.top>=0 && rect.right<=window.decorView.width && rect.bottom<=window.decorView.height) { "Workspace viewport is clipped" }
@@ -265,11 +294,22 @@ class WorkspaceWebPresentation(
     private fun denied() = WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", mapOf("Content-Security-Policy" to policy.csp), ByteArrayInputStream(ByteArray(0)))
     private fun serve(url: String, method: String): WebResourceResponse {
         if (disposed || !current()) return denied()
-        val path = policy.resource(url, method) ?: return denied()
+        // Chromium asks for this optional root icon even when the package has no icon declaration.
+        // Supply an explicit empty host response rather than report a fictitious application failure.
+        if(policy.optionalBrowserIcon(url,method))return WebResourceResponse("image/x-icon","UTF-8",204,"No Content",mapOf("Cache-Control" to "no-store"),ByteArrayInputStream(ByteArray(0)))
+        val path = policy.resource(url, method) ?: run {
+            resourceErrorCount.incrementAndGet()
+            synchronized(resources) {
+                if(resources.size>=32)resources.removeAt(0)
+                resources.add(JSONObject().put("path",Uri.parse(url).path.orEmpty().take(240)).put("status",403).put("reason","package_policy_denied").put("at_ms",System.currentTimeMillis()))
+            }
+            return denied()
+        }
         synchronized(resources) {
             if (resources.size >= 32) resources.removeAt(0)
             resources.add(JSONObject().put("path", path).put("status", if (path == "atlas/host.js" || files.has(path)) 200 else 403).put("at_ms", System.currentTimeMillis()))
         }
+        if(path!="atlas/host.js" && !files.has(path))resourceErrorCount.incrementAndGet()
         val content = if (path == "atlas/host.js") WorkspaceHostRegistry.sdk() else if (files.has(path)) files.getString(path) else return denied()
         val mime = when (path.substringAfterLast('.')) { "html" -> "text/html"; "js" -> "text/javascript"; "css" -> "text/css"; "svg" -> "image/svg+xml"; "json" -> "application/json"; else -> "text/plain" }
         return WebResourceResponse(mime, "UTF-8", 200, "OK", mapOf("Content-Security-Policy" to policy.csp, "Cache-Control" to "no-store", "X-Content-Type-Options" to "nosniff", "Referrer-Policy" to "no-referrer", "X-DNS-Prefetch-Control" to "off", "Access-Control-Allow-Origin" to "*"), ByteArrayInputStream(content.toByteArray(Charsets.UTF_8)))

@@ -1,6 +1,6 @@
 # Active fixes
 
-Canonical repository work queue. Evidence: [alpha.28 assessment](./alpha28-live-assessment.md). Updated October 21, 2026. Implementation work is tracked below; phone verification remains separate.
+Canonical repository work queue. Evidence: [alpha.28 assessment](./alpha28-live-assessment.md). Updated October 30, 2026. Implementation work is tracked below; phone verification remains separate.
 
 Stable IDs never change or get reused. Status: **proposed** needs design; **ready** is bounded enough to implement; **in progress** links a claim/draft PR; **blocked** names a dependency; **implemented** links merged code but has outstanding acceptance; **verified** links all required evidence. Merged code and shipped builds are separate milestones. Keep verified entries with their resolution for traceability.
 
@@ -165,3 +165,9 @@ See [the sanitized phone assessment](./alpha33-live-assessment.md). User-request
 Tracking [#72](https://github.com/SEsquieu/atlas/issues/72). Status: merged in [PR #73](https://github.com/SEsquieu/atlas/pull/73), delivered in alpha.35; unit/lint and 21 tests each on API35/36 passed. Phone acceptance pending.
 
 Alpha.34 completed delivery but exposed malformed exact-count handling, repeated impossible input attempts, weak determinism/preservation assertions and source rereads through compaction. Scope: bounded preflight count rejection, native constraint diagnostics, named DOM comparison evidence, and durable task read recovery with hash/identity/budget checks. Keep checks candidate-specific, retain original audit/protocol pairs, and do not promote status/count evidence to semantic proof. See [assessment](./alpha34-live-assessment.md) and [alpha.35 acceptance](./releases/v0.1.0-alpha.35.md).
+
+## AF-019: Autonomous workspace visual testing
+
+Tracking [#75](https://github.com/SEsquieu/atlas/issues/75), implementation [PR #76](https://github.com/SEsquieu/atlas/pull/76). Status: in progress; physical-device qualification pending.
+
+Atlas could author a Snake application but the visible-workspace capture required the user to open it. Scope: app-private compositor window in a separate host process; authoritative measured device profile and shared native chrome; production WebView containment with disposable SQLite/mock BLE; persistent task-owned handles; fixed native/DOM inputs, geometry, actual screenshots and optional bound receipts; cancellation/expiry/process-death cleanup; API35/36 regression evidence and a Galaxy S22 acceptance plan. The model chooses testing by need. Activation, permission and persistence gates are not weakened. See [the implementation contract](./workspace-visual-testing.md).

@@ -1,0 +1,283 @@
+package com.grinningfrog.atlas.workspace.visual
+
+import android.graphics.BitmapFactory
+import android.graphics.Color
+import android.os.ParcelFileDescriptor
+import androidx.activity.compose.setContent
+import androidx.compose.material3.Text
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.*
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.dp
+import com.grinningfrog.atlas.model.*
+import com.grinningfrog.atlas.runtime.*
+import com.grinningfrog.atlas.workspace.application.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.test.core.app.ActivityScenario
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.grinningfrog.atlas.AtlasApplication
+import com.grinningfrog.atlas.MainActivity
+import com.grinningfrog.atlas.workspace.application.WorkspaceApplicationContract
+import kotlinx.coroutines.*
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.File
+import java.util.UUID
+
+/** Runs the actual cross-process display/compositor path; no WebView.draw or screenshot mocks. */
+@RunWith(AndroidJUnit4::class)
+class WorkspaceVisualDeviceTest {
+    private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
+    private fun fixture()=WorkspaceApplicationContract.example().apply {
+        getJSONObject("files")
+            .put("ui/index.html","""<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="./style.css"></head><body><button id="change">Change</button><p id="status">Ready</p><canvas id="board" width="120" height="120"></canvas><div id="clip"><div id="wide">overflow</div></div><script type="module" src="./app.js"></script></body></html>""")
+            .put("ui/style.css","html,body{margin:0;background:#123456;color:white}button{position:absolute;left:20px;top:20px;width:120px;height:60px}#status{position:absolute;top:100px}#board{position:absolute;left:180px;top:20px;width:120px;height:120px}#clip{position:absolute;top:160px;width:100px;height:30px;overflow:hidden}#wide{width:400px;height:60px}")
+            .put("ui/app.js","""import {host} from '/atlas/host.js';const ctx=document.querySelector('#board').getContext('2d');ctx.fillStyle='#ffcc00';ctx.fillRect(0,0,60,120);ctx.fillStyle='#0033ff';ctx.fillRect(60,0,60,120);document.querySelector('#change').onclick=()=>{document.querySelector('#status').textContent='Changed';document.body.style.background='#b23456';document.documentElement.style.background='#b23456'};await host.ready();""")
+    }
+    private suspend fun open(client:WorkspaceVisualClient,owner:String,bundle:JSONObject):JSONObject {
+        val dm=context.resources.displayMetrics
+        val width=(360*dm.density).toInt();val height=(600*dm.density).toInt()
+        val profile=JSONObject().put("render_width_px",width).put("render_height_px",height).put("density_dpi",dm.densityDpi).put("viewport_kind","instrumentation_alternative")
+        val source=bundle.toString();val file=File.createTempFile("visual-device-",".json",context.cacheDir).also {it.writeText(source)}
+        return try { client.request(JSONObject().put("action","open").put("owner",owner).put("profile",profile).put("title","Test candidate").put("base_revision_id","fixture-revision").put("package_sha256",WorkspaceApplicationContract.hash(source)),packageFile=file).json } finally {file.delete()}
+    }
+    private fun request(action:String,owner:String,id:String)=JSONObject().put("action",action).put("owner",owner).put("instance_id",id)
+    private suspend fun pixel(client:WorkspaceVisualClient,owner:String,id:String,cssX:Double?=null,cssY:Double?=null,save:Boolean=false):Int {
+        val response=client.request(request("capture",owner,id))
+        val bitmap=ParcelFileDescriptor.AutoCloseInputStream(requireNotNull(response.image)).use {BitmapFactory.decodeStream(it)}!!
+        return try {
+            if(save && android.os.Build.VERSION.SDK_INT>=29) {
+                val values=android.content.ContentValues().apply {put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME,"workspace-isolated-device.png");put(android.provider.MediaStore.MediaColumns.MIME_TYPE,"image/png");put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,"Download/")}
+                val uri=requireNotNull(context.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,values))
+                context.contentResolver.openOutputStream(uri)!!.use {check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it))}
+            }
+            val scale=bitmap.width/360.0
+            bitmap.getPixel(cssX?.let {(it*scale).toInt()} ?: (bitmap.width-8),cssY?.let {(it*scale).toInt()} ?: (bitmap.height-8))
+        } finally {bitmap.recycle();response.image.close()}
+    }
+    @Test fun privateWindowCapturesAndInteractsWhileSessionRemainsVisible()=runBlocking {
+        val app=context.applicationContext as AtlasApplication
+        val client=app.workspaceVisuals
+        val owner="instrumentation:${UUID.randomUUID()}"
+        val scenario=ActivityScenario.launch(MainActivity::class.java)
+        var id:String?=null
+        try {
+            scenario.onActivity {it.setContent {Surface(modifier=Modifier.fillMaxSize(),color=ComposeColor(0xff241357)) {Text("Session stays visible")}}}
+            // Fence the physical activity's own startup frame too; its launch window may still be white.
+            withTimeout(8_000) {
+                while(true) {
+                    val screen=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                    val stable=try {screen.getPixel(screen.width/2,screen.height/2)==0xff241357.toInt()} finally {screen.recycle()}
+                    if(stable)break
+                    delay(50)
+                }
+            }
+            val before=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+            val opened=open(client,owner,fixture());id=opened.getString("instance_id")
+            assertNotEquals(android.os.Process.myPid(),opened.getInt("service_pid"))
+            assertNotEquals(android.view.Display.DEFAULT_DISPLAY,opened.getInt("display_id"))
+            assertEquals("passed_actual_window_pixelcopy",opened.getString("calibration"))
+            val layout=opened.getJSONObject("layout");val viewport=layout.getJSONObject("viewport")
+            assertEquals(360.0,viewport.getDouble("width"),1.0)
+            assertEquals(layout.getInt("native_viewport_width_px").toDouble(),viewport.getDouble("width")*viewport.getDouble("devicePixelRatio"),1.5)
+            assertTrue(viewport.getDouble("height") in 300.0..590.0)
+            val elements=layout.getJSONArray("elements")
+            assertTrue((0 until elements.length()).any {elements.getJSONObject(it).optString("id")=="wide" && elements.getJSONObject(it).getBoolean("clipped")})
+            assertEquals(Color.rgb(255,204,0),pixel(client,owner,id,200.0,40.0))
+            val first=pixel(client,owner,id)
+            assertEquals(0x12,Color.red(first));assertEquals(0x34,Color.green(first));assertEquals(0x56,Color.blue(first))
+            // Owner rejection cannot tear down another task's renderer.
+            assertTrue(runCatching {client.request(request("inspect","foreign-task",id))}.isFailure)
+            client.request(request("inspect",owner,id))
+            val steps=JSONArray().put(JSONObject("""{"action":"tap","value":{"x":60,"y":45}}"""))
+                .put(JSONObject("""{"action":"assert_text_exact","selector":"#status","value":"Changed","criterion":"button changes state"}"""))
+            val callId=UUID.randomUUID().toString()
+            val interacted=client.request(request("interact",owner,id).put("steps",steps),callId).json
+            assertTrue(interacted.toString(),interacted.getBoolean("passed"))
+            // Repeated delivery of a tool call must not inject another gesture.
+            assertEquals(interacted.getJSONObject("instance").getInt("operations"),client.request(request("interact",owner,id).put("steps",steps),callId).json.getJSONObject("instance").getInt("operations"))
+            assertEquals(0xb2,Color.red(pixel(client,owner,id,save=true)))
+            val finished=client.request(request("finish",owner,id)).json
+            assertTrue(finished.toString(),finished.getBoolean("passed"))
+            assertEquals("button changes state",finished.getJSONArray("verified_criteria").getString(0))
+            val after=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+            try {assertEquals(before.width,after.width);assertEquals(before.getPixel(before.width/2,before.height/2),after.getPixel(after.width/2,after.height/2))} finally {before.recycle();after.recycle()}
+            client.request(request("close",owner,id))
+            assertEquals(0,client.request(JSONObject().put("action","status").put("owner",owner)).json.getInt("active_instances"))
+            assertTrue(runCatching {client.request(request("inspect",owner,id))}.isFailure)
+            id=null
+        } finally {
+            id?.let {runCatching {client.request(request("close",owner,it))}}
+            scenario.close()
+        }
+    }
+    @Test fun agentToolsPreserveStateAcrossSlicesAndAttachEvidenceToActivation()=runBlocking {
+        val app=context.applicationContext as AtlasApplication;val db=app.database
+        val session=db.createSession("Visual tool flow","Build and inspect without opening workspace")
+        db.updateSessionStatus(session.id,SessionStatus.ACTIVE)
+        val workspace=db.createComposableWorkspace("Visual candidate","")
+        val tasks=ExecutionTaskStore(db)
+        val task=tasks.create(db.loadSession(session.id)!!,"Visual flow",db.createTurn(session.id,"user").id,ExecutionBudget())
+        var lease=tasks.claim(task.id,"device-test")!!
+        tasks.bindWorkspace(tasks.currentTurn(task.id),workspace.id,"activation",requirePixels=true)
+        val scenario=ActivityScenario.launch(MainActivity::class.java)
+        var handle:String?=null
+        val harness=ToolHarness(db,{_,_->error("Camera must not be used")},{DeviceHealth()},additionalTools=WorkspaceVisualTools.create(db,app.mediaRepository,app.workspaceVisuals,context.cacheDir),executionLease={lease})
+        suspend fun tool(action:String,extra:JSONObject=JSONObject()):ToolExecutionResult {
+            val args=JSONObject(extra.toString()).put("action",action)
+            if(action!="open")args.put("instance_id",handle)
+            val proposal=ToolCallProposal(UUID.randomUUID().toString(),"workspace_visual_test",args.toString())
+            assertTrue(harness.evaluate(db.loadSession(session.id)!!,proposal).allowed)
+            val call=AtlasToolCall(proposal.id,session.id,tasks.currentTurn(task.id),proposal.name,args.toString(),ToolCallStatus.PROPOSED,ToolRisk.SESSION_WRITE,false,proposal.id,createdAtMs=System.currentTimeMillis(),updatedAtMs=System.currentTimeMillis())
+            db.insertToolCall(call)
+            val result=harness.execute(call)
+            db.updateToolCall(call.id,ToolCallStatus.COMPLETED,resultJson=result.resultJson)
+            return result
+        }
+        try {
+            scenario.onActivity { activity -> activity.setContent {
+                val view=LocalView.current
+                Column(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxWidth().weight(1f).onGloballyPositioned {c -> val p=c.positionInWindow();WorkspaceViewport.measured(view,p.x.toInt(),p.y.toInt(),c.size.width,c.size.height)}) {Text("Session stays visible")}
+                    Surface(Modifier.fillMaxWidth().height(120.dp)) {Text("Atlas controls and navigation")}
+                }
+            }}
+            withTimeout(8_000) {while(withContext(Dispatchers.Main.immediate) {runCatching {WorkspaceViewport.snapshot()}.isFailure})delay(50)}
+            val bundle=fixture()
+            val staged=WorkspacePackageRepository(db).stage(workspace.id,session.workspaceId,workspace.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,tasks.currentTurn(task.id))
+            val candidate=staged.getString("candidate_id")
+            val opened=JSONObject(tool("open",JSONObject().put("workspace_id",workspace.id).put("candidate_id",candidate)).resultJson)
+            handle=opened.getString("instance_id")
+            val profile=opened.getJSONObject("profile");val layout=opened.getJSONObject("layout")
+            assertEquals(profile.getInt("body_width_px"),layout.getInt("native_viewport_width_px"))
+            assertTrue(layout.getInt("native_viewport_height_px")<profile.getInt("body_height_px"))
+            assertNull(db.loadSession(session.id)!!.activeComposableWorkspaceId)
+            assertNull(com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(workspace.id,workspace.liveRevisionId))
+            tool("interact",JSONObject().put("steps",JSONArray().put(JSONObject("""{"action":"click","selector":"#change"}"""))))
+            tasks.finish(lease,SliceOutcome.YIELDED,1);lease=tasks.claim(task.id,"device-test-next-slice")!!
+            val checked=JSONObject(tool("interact",JSONObject().put("steps",JSONArray().put(JSONObject("""{"action":"assert_text_exact","selector":"#status","value":"Changed","criterion":"state survives continuation"}""")))).resultJson)
+            assertTrue(checked.getBoolean("passed"))
+            val capture=tool("capture");assertNotNull(capture.observation);assertEquals(MediaPurpose.WORKSPACE_UI,capture.observation!!.media.purpose)
+            val finished=JSONObject(tool("finish").resultJson);assertTrue(finished.toString(),finished.getBoolean("passed"))
+            val pure=WorkspaceCandidateChecks(db,WorkspaceWorkerSupervisor(context)::run).test(workspace.id,session.workspaceId,candidate)
+            val activationCall=AtlasToolCall(UUID.randomUUID().toString(),session.id,tasks.currentTurn(task.id),"workspace_package_activate",JSONObject().put("workspace_id",workspace.id).put("candidate_id",candidate).toString(),ToolCallStatus.PROPOSED,ToolRisk.SESSION_WRITE,false,UUID.randomUUID().toString(),createdAtMs=System.currentTimeMillis(),updatedAtMs=System.currentTimeMillis())
+            db.insertToolCall(activationCall)
+            val activated=WorkspaceApplicationActivation(db).activate(context,workspace.id,session.workspaceId,candidate,pure.getString("check_id"),committed={receipt->tasks.localOperation(activationCall,lease) {ToolExecutionResult(receipt.toString())}})
+            assertEquals(finished.getString("check_id"),activated.getString("visual_check_id"));assertFalse(activated.getBoolean("visual_check_required"))
+            // A changed live base does not prevent closing the old isolated test.
+            tool("close");tool("close");handle=null
+            assertEquals(ExecutionState.COMPLETED,tasks.finish(lease,SliceOutcome.RESPONDED,1)!!.state)
+        } finally {
+            handle?.let {runCatching {tool("close")}}
+            runCatching {tasks.control(task.id,ExecutionState.CANCELLED,"test_cleanup")}
+            db.updateSessionStatus(session.id,SessionStatus.DONE)
+            scenario.close();db.setComposableWorkspaceArchived(workspace.id,true);db.deleteComposableWorkspace(workspace.id)
+        }
+    }
+    @Test fun storageIsDisposableAndBlockedBrowserCapabilitiesRemainBlocked()=runBlocking {
+        val app=context.applicationContext as AtlasApplication;val client=app.workspaceVisuals
+        val live=app.database.createComposableWorkspace("Unaffected live workspace","",fixture().toString())
+        val owner="instrumentation:${UUID.randomUUID()}"
+        val scanPermission=context.checkSelfPermission("android.permission.BLUETOOTH_SCAN")
+        val bundle=fixture().apply {
+            getJSONObject("manifest").put("capabilities",JSONArray().put(JSONObject("""{"name":"bluetooth.le","operations":["scan"],"resources":["user_selected_device"]}""")))
+            getJSONObject("files").put("ui/app.js","""
+            import {host,data,ble} from '/atlas/host.js';
+            const {devices}=await ble.scan();const unsafe=devices[0]?.name!=='Simulated bench device'||!!(navigator.bluetooth||navigator.mediaDevices||navigator.clipboard||globalThis.localStorage||globalThis.indexedDB);
+            async function count(){const page=await data.query({collection:'notes',limit:100});document.querySelector('#status').textContent='rows:'+page.records.length+':'+(unsafe?'UNSAFE':'guarded');return page.data_version}
+            await count();document.querySelector('#change').onclick=async()=>{const version=await count();const prepared=await data.prepare({expected_data_version:version,request_key:'one',mutations:[{kind:'create',collection:'notes',data:{text:'test only'}}]});await data.commit(prepared.operation_id);await count()};await host.ready();
+        """.trimIndent())}
+        var id:String?=null
+        try {
+            id=open(client,owner,bundle).getString("instance_id")
+            val result=client.request(request("interact",owner,id).put("steps",JSONArray()
+                .put(JSONObject("""{"action":"assert_text_exact","selector":"#status","value":"rows:0:guarded"}"""))
+                .put(JSONObject("""{"action":"click","selector":"#change"}"""))
+                .put(JSONObject("""{"action":"wait_text","selector":"#status","value":"rows:1:guarded"}""")))).json
+            assertTrue(result.toString(),result.getBoolean("passed"))
+            assertEquals(scanPermission,context.checkSelfPermission("android.permission.BLUETOOTH_SCAN"))
+            assertEquals(0,app.database.listWorkspaceRecords(live.id,"notes").size)
+            assertEquals(live.liveRevisionId,app.database.loadComposableWorkspace(live.id)!!.liveRevisionId)
+            client.request(request("close",owner,id))
+            id=open(client,owner,bundle).getString("instance_id")
+            assertTrue(client.request(request("interact",owner,id).put("steps",JSONArray().put(JSONObject("""{"action":"assert_text_exact","selector":"#status","value":"rows:0:guarded"}""")))).json.getBoolean("passed"))
+        } finally {id?.let {runCatching {client.request(request("close",owner,it))}};app.database.setComposableWorkspaceArchived(live.id,true);app.database.deleteComposableWorkspace(live.id)}
+    }
+    @Test fun hungCandidateCannotTerminateTheForegroundWorkspaceRenderer()=runBlocking {
+        val app=context.applicationContext as AtlasApplication;val db=app.database;val client=app.workspaceVisuals
+        val live=db.createComposableWorkspace("Live renderer survives","",fixture().toString())
+        val revision=db.loadLiveWorkspaceRevision(live.id)!!
+        WorkspaceApplicationData(db).setEnabled(live.id,revision.id,true)
+        val scenario=ActivityScenario.launch(MainActivity::class.java)
+        val owner="instrumentation:${UUID.randomUUID()}"
+        try {
+            scenario.onActivity {activity -> activity.setContent {com.grinningfrog.atlas.AtlasTheme {WorkspaceApplicationPanel(live,revision,db,Modifier.fillMaxSize())}}}
+            withTimeout(12_000) {while(com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(live.id,revision.id)?.optJSONObject("runtime")?.optBoolean("ready")!=true)delay(50)}
+            val hung=fixture().apply {getJSONObject("files").put("ui/app.js","while(true){}")}
+            assertTrue(withTimeout(20_000) {runCatching {open(client,owner,hung)}.isFailure})
+            val runtime=com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(live.id,revision.id)!!.getJSONObject("runtime")
+            assertTrue(runtime.getBoolean("ready"));assertFalse(runtime.getBoolean("disposed"))
+            val clicked=CompletableDeferred<Unit>()
+            scenario.onActivity {activity ->
+                fun find(view:android.view.View):android.webkit.WebView? {
+                    if(view is android.webkit.WebView)return view
+                    if(view is android.view.ViewGroup)for(i in 0 until view.childCount)find(view.getChildAt(i))?.let {return it}
+                    return null
+                }
+                requireNotNull(find(activity.findViewById(android.R.id.content))).evaluateJavascript("document.querySelector('#change').click()") {clicked.complete(Unit)}
+            }
+            withTimeout(5_000) {clicked.await()}
+            withTimeout(5_000) {while(true) {
+                val frame=com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.capture(live.id,revision.id).first
+                val changed=try {Color.red(frame.getPixel(frame.width-8,frame.height-8))==0xb2} finally {frame.recycle()}
+                if(changed)break
+                delay(50)
+            }}
+            assertEquals(revision.id,db.loadComposableWorkspace(live.id)!!.liveRevisionId)
+            assertEquals(0,client.request(JSONObject().put("action","status").put("owner",owner)).json.getInt("active_instances"))
+        } finally {scenario.close();db.setComposableWorkspaceArchived(live.id,true);db.deleteComposableWorkspace(live.id)}
+    }
+    @Test fun cancelledStartupReleasesTheDisplayAndAllowsFreshOpen()=runBlocking {
+        val client=(context.applicationContext as AtlasApplication).workspaceVisuals
+        val owner="instrumentation:${UUID.randomUUID()}"
+        val hung=fixture().apply {getJSONObject("files").put("ui/app.js","while(true){}")}
+        val pending=launch {open(client,owner,hung)}
+        delay(1_000);pending.cancelAndJoin()
+        withTimeout(12_000) {while(client.request(JSONObject().put("action","status").put("owner",owner)).json.getInt("active_instances")!=0)delay(100)}
+        var id:String?=null
+        try {id=open(client,owner,fixture()).getString("instance_id");assertEquals(0x12,Color.red(pixel(client,owner,id)))}
+        finally {id?.let {runCatching {client.request(request("close",owner,it))}}}
+    }
+    @Test fun remoteProcessDeathExpiresStateWithoutCrashingTheForegroundProcess()=runBlocking {
+        val client=(context.applicationContext as AtlasApplication).workspaceVisuals
+        val owner="instrumentation:${UUID.randomUUID()}"
+        val opened=open(client,owner,fixture());val id=opened.getString("instance_id")
+        val pid=opened.getInt("service_pid");assertNotEquals(android.os.Process.myPid(),pid)
+        android.os.Process.killProcess(pid)
+        delay(1_000)
+        assertTrue(runCatching {client.request(request("inspect",owner,id))}.isFailure)
+        var fresh:String?=null
+        try {
+            val result=open(client,owner,fixture());fresh=result.getString("instance_id")
+            assertNotEquals(id,fresh);assertNotEquals(opened.getString("process_nonce"),result.getString("process_nonce"))
+            assertEquals(0x12,Color.red(pixel(client,owner,fresh)))
+        } finally {fresh?.let {runCatching {client.request(request("close",owner,it))}}}
+    }
+    @Test fun failedAssertionsCannotProducePassingVisualReceipt()=runBlocking {
+        val client=(context.applicationContext as AtlasApplication).workspaceVisuals
+        val owner="instrumentation:${UUID.randomUUID()}";var id:String?=null
+        try {
+            id=open(client,owner,fixture()).getString("instance_id")
+            client.request(request("interact",owner,id).put("steps",JSONArray().put(JSONObject("""{"action":"assert_text_exact","selector":"#status","value":"Wrong"}"""))))
+            pixel(client,owner,id)
+            assertFalse(client.request(request("finish",owner,id)).json.getBoolean("passed"))
+        } finally {id?.let {runCatching {client.request(request("close",owner,it))}}}
+    }
+}

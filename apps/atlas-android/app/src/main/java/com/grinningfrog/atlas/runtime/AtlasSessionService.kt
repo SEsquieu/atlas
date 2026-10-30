@@ -103,7 +103,7 @@ class AtlasSessionService : LifecycleService() {
         runtime = AtlasMobileRuntime(
             app.database, app.mediaRepository, camera, speech, motion, health, router, serviceScope, idleRuntime,
             runtimeBundles = app.runtimeBundles, runtimeCore = coreEngine,
-            additionalTools = com.grinningfrog.atlas.runtime.core.RuntimeCoreTools.create(app.database, app.runtimeBundles, coreEngine) + AndroidContextTools.create(this, app.database, app.settings) + WorkspaceTools.create(app.database, app.mediaRepository, this),
+            additionalTools = com.grinningfrog.atlas.runtime.core.RuntimeCoreTools.create(app.database, app.runtimeBundles, coreEngine) + AndroidContextTools.create(this, app.database, app.settings) + WorkspaceTools.create(app.database, app.mediaRepository, this) + com.grinningfrog.atlas.workspace.visual.WorkspaceVisualTools.create(app.database, app.mediaRepository, app.workspaceVisuals, cacheDir),
         )
         serviceScope.launch {
             runCatching { runtime.initialize() }.onFailure { error ->
@@ -129,6 +129,7 @@ class AtlasSessionService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        (application as AtlasApplication).workspaceVisuals.shutdown()
         runtime.close()
         serviceScope.cancel()
         if (::coreEngine.isInitialized) CoroutineScope(Dispatchers.IO).launch { coreEngine.release() }

@@ -12,6 +12,9 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import com.grinningfrog.atlas.ui.SystemSectionTabs
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -208,6 +211,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        (application as AtlasApplication).workspaceVisuals.closeAll("activity_stopped")
         if (bound) {
             unbindService(connection)
             bound = false
@@ -261,6 +265,7 @@ private fun AtlasApp(
         return
     }
 
+    val viewportRoot = LocalView.current
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
@@ -277,13 +282,18 @@ private fun AtlasApp(
             }
         },
     ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding).onGloballyPositioned { coordinates ->
+            val position = coordinates.positionInWindow()
+            com.grinningfrog.atlas.workspace.visual.WorkspaceViewport.measured(viewportRoot, position.x.toInt(), position.y.toInt(), coordinates.size.width, coordinates.size.height, workspaceChromeAvailable = page != AppPage.SYSTEM && permissionsGranted && runtime != null)
+        }) {
         when {
-            !permissionsGranted -> PermissionGate(Modifier.padding(padding), onRequestPermissions, onOpenSystemSettings)
-            runtime == null -> LoadingRuntime(Modifier.padding(padding))
-            page == AppPage.SESSION -> AtlasHomePage(runtime, snapshot, providers.isNotEmpty(), mediaRepository, sessionActionScope, Modifier.padding(padding), onOpenSystem = { page = AppPage.SYSTEM })
-            page == AppPage.WORKSPACE -> WorkspacePage(runtime, snapshot, database, sessionActionScope, Modifier.padding(padding))
-            page == AppPage.SYSTEM -> SystemPage(runtime, snapshot, settings, providers, managedAccount, chatGptAuth, database, sessionArchive, Modifier.padding(padding)) { providerRevision++ }
+            !permissionsGranted -> PermissionGate(Modifier, onRequestPermissions, onOpenSystemSettings)
+            runtime == null -> LoadingRuntime(Modifier)
+            page == AppPage.SESSION -> AtlasHomePage(runtime, snapshot, providers.isNotEmpty(), mediaRepository, sessionActionScope, Modifier, onOpenSystem = { page = AppPage.SYSTEM })
+            page == AppPage.WORKSPACE -> WorkspacePage(runtime, snapshot, database, sessionActionScope, Modifier)
+            page == AppPage.SYSTEM -> SystemPage(runtime, snapshot, settings, providers, managedAccount, chatGptAuth, database, sessionArchive, Modifier) { providerRevision++ }
         }
+    }
     }
 }
 
@@ -1781,7 +1791,7 @@ private val AtlasTypography = Typography(
 )
 
 @Composable
-private fun AtlasTheme(content: @Composable () -> Unit) {
+internal fun AtlasTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = AtlasColors, typography = AtlasTypography, shapes = AtlasShapes, content = content)
 }
 

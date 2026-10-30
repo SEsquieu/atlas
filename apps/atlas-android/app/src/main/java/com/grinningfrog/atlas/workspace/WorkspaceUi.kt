@@ -162,12 +162,9 @@ fun WorkspacePage(
     }
 
     Column(modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { displayedId = null }) { Icon(Icons.Default.ArrowBack, "Workspace library") }
-            Column(Modifier.weight(1f)) {
-                Text(workspace.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("rev ${revision.id.take(8)}${if (snapshot.session?.activeComposableWorkspaceId == workspace.id) " · active for Atlas" else ""}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+        com.grinningfrog.atlas.workspace.application.WorkspaceToolbar(workspace.name,
+            "rev ${revision.id.take(8)}${if (snapshot.session?.activeComposableWorkspaceId == workspace.id) " · active for Atlas" else ""}",
+            back = { displayedId = null }) {
             IconButton(onClick = { pendingDelete = workspace }) { Icon(Icons.Default.Delete, "Delete workspace") }
             IconButton(onClick = { runAction {
                 if (snapshot.session?.activeComposableWorkspaceId == workspace.id) runtime.activateComposableWorkspace(null)

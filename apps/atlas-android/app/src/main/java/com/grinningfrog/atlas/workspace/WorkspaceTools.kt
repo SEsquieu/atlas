@@ -418,7 +418,7 @@ private open class RenderDiagnostics(database: AtlasDatabase) : WorkspaceAdapter
 
 private class CaptureWorkspace(database: AtlasDatabase, private val media: MediaRepository) : RenderDiagnostics(database) {
     override val definition = ToolDefinition(
-        "workspace_capture_view", "Capture the visible Atlas workspace viewport as UI pixels for visual diagnosis. The workspace panel must be open and drawn at the current revision. Does not capture the physical camera, other apps, system screen, or offscreen content. Image attaches to the next inference step and remains separate from physical observations. Available as scoped read-only local diagnostics during discovery.",
+        "workspace_capture_view", "Capture the visible Atlas workspace viewport as UI pixels for visual diagnosis. The workspace panel must be open and drawn at the current revision. Does not capture the physical camera, other apps, system screen, or offscreen content. Image attaches to the next inference step and remains separate from physical observations. Available as scoped read-only local diagnostics during discovery. For staged candidate pixels without opening the panel, discover workspace_visual_status.",
         """{"type":"object","properties":{"workspace_id":{"type":"string"}},"additionalProperties":false}""", ToolRisk.READ_ONLY, maxCallsPerTurn = 2,
     )
     override fun evaluate(session: AtlasSession, proposal: ToolCallProposal): ToolPolicyDecision {
@@ -429,7 +429,7 @@ private class CaptureWorkspace(database: AtlasDatabase, private val media: Media
         val (session, id) = target(call)
         val revision = database.loadLiveWorkspaceRevision(id) ?: error("Workspace is unavailable")
         val viewing = database.loadSession(session.id) ?: error("Session is unavailable")
-        require(viewing.activeComposableWorkspaceId == id && viewing.permissions.observe) { "WORKSPACE_NOT_OPEN: Target workspace is not open for pixel capture; use headless render diagnostics. This is unavailable inspection, not an activation failure." }
+        require(viewing.activeComposableWorkspaceId == id && viewing.permissions.observe) { "WORKSPACE_NOT_OPEN: Target workspace is not open for pixel capture; use workspace_visual_status for isolated staged-candidate pixels, or render diagnostics for nonpixel facts. This is unavailable inspection, not an activation failure." }
         val (bitmap, rendered) = WorkspaceRenderSurface.capture(id, revision.id)
         val ref = media.ingestWorkspaceBitmap(bitmap, session.id)
         val current = database.loadSession(session.id) ?: error("Session is unavailable")
