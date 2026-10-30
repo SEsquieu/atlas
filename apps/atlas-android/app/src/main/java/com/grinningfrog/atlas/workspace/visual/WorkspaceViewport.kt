@@ -12,11 +12,13 @@ import java.lang.ref.WeakReference
 internal object WorkspaceViewport {
     private var root = WeakReference<View>(null)
     private var bounds = intArrayOf(0, 0, 0, 0)
-    fun measured(view: View, x: Int, y: Int, width: Int, height: Int) {
-        root = WeakReference(view); bounds = intArrayOf(x, y, width, height)
+    private var workspaceChromeAvailable = false
+    fun measured(view: View, x: Int, y: Int, width: Int, height: Int, workspaceChromeAvailable: Boolean = true) {
+        root = WeakReference(view); bounds = intArrayOf(x, y, width, height); this.workspaceChromeAvailable = workspaceChromeAvailable
     }
     fun snapshot(): JSONObject {
         val view = root.get() ?: error("VIEWPORT_UNAVAILABLE: Atlas must be visible")
+        check(workspaceChromeAvailable) {"VIEWPORT_UNAVAILABLE: use Session or Workspace; System has different native controls"}
         check(view.isAttachedToWindow && view.isShown && view.hasWindowFocus()) { "VIEWPORT_UNAVAILABLE: Atlas must have a foreground window" }
         check(!(view.context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked) { "DEVICE_LOCKED" }
         val dm = view.resources.displayMetrics

@@ -132,7 +132,7 @@ internal class WorkspaceVisualWindow(private val context: Context, val profile: 
         if(!closed && !paused) { surface.view.onPause(); surface.view.pauseTimers(); display?.surface = null; paused = true }
     }
     suspend fun capture(): Bitmap { resumeRendering(); surface.awaitCompositedFrame(); return surface.captureVisiblePixels(window!!.window) }
-    suspend fun inspect(): JSONObject { resumeRendering(); return surface.inspectLayout().put("runtime", surface.diagnostics()).put("native_viewport_width_px", surface.view.width).put("native_viewport_height_px", surface.view.height).put("display_id", displayId) }
+    suspend fun inspect(): JSONObject { resumeRendering(); val location=IntArray(2);surface.view.getLocationInWindow(location); return surface.inspectLayout().put("native_viewport_x_px",location[0]).put("native_viewport_y_px",location[1]).put("runtime", surface.diagnostics()).put("native_viewport_width_px", surface.view.width).put("native_viewport_height_px", surface.view.height).put("display_id", displayId) }
     suspend fun terminate() { current?.terminateRenderer() }
     override fun close() {
         if(closed)return

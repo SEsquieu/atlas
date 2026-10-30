@@ -284,7 +284,7 @@ private fun AtlasApp(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding).onGloballyPositioned { coordinates ->
             val position = coordinates.positionInWindow()
-            com.grinningfrog.atlas.workspace.visual.WorkspaceViewport.measured(viewportRoot, position.x.toInt(), position.y.toInt(), coordinates.size.width, coordinates.size.height)
+            com.grinningfrog.atlas.workspace.visual.WorkspaceViewport.measured(viewportRoot, position.x.toInt(), position.y.toInt(), coordinates.size.width, coordinates.size.height, workspaceChromeAvailable = page != AppPage.SYSTEM && permissionsGranted && runtime != null)
         }) {
         when {
             !permissionsGranted -> PermissionGate(Modifier, onRequestPermissions, onOpenSystemSettings)

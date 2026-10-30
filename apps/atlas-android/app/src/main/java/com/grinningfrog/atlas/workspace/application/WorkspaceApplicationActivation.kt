@@ -107,7 +107,10 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
                 .put("epoch", epoch).put("data_version", version).put("activated", true).put("still_active", true)
                 .put("ui_check_id",uiCheckId ?: JSONObject.NULL)
                 .put("visual_check_required",false).put("visual_check_id",visualEvidence?.optString("check_id") ?: JSONObject.NULL)
-                .put("visual_evidence",visualEvidence ?: JSONObject.NULL)
+                .put("visual_evidence",visualEvidence?.let { evidence -> JSONObject().apply {
+                    for(key in listOf("check_id","candidate_id","content_hash","passed","observation_id","verified_criteria","evidence_scope","visual_design_verified_by_host","device_profile","profile"))if(evidence.has(key))put(key,evidence.get(key))
+                    evidence.optJSONObject("layout")?.optJSONObject("viewport")?.let {put("viewport",it)}
+                }} ?: JSONObject.NULL)
                 .put("ui_evidence_status", if (uiCheckId == null) "no_matching_passing_check" else "passing_matching_check")
                 .put("verified_criteria", uiEvidence?.optJSONArray("verified_criteria") ?: org.json.JSONArray())
                 .put("storage_verified", uiEvidence?.optBoolean("storage_verified") == true)

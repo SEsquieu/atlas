@@ -106,6 +106,9 @@ internal object WorkspaceVisualTools {
                         insertOrThrow("workspace_application_checks",null,ContentValues().apply {
                             put("check_id",result.getString("check_id"));put("workspace_id",record.getString("workspace_id"));put("candidate_id",record.getString("candidate_id"));put("content_hash",record.getString("content_hash"));put("kind","visual_render");put("passed",if(passed)1 else 0);put("base_revision_id",record.getString("base_revision_id"));put("data_version",record.getLong("data_version"));put("result_json",result.toString());put("created_at",System.currentTimeMillis())
                         })
+                        // Full geometry stays in the durable check; inspect is the opt-in detailed tool.
+                        result.optJSONObject("layout")?.optJSONObject("viewport")?.let {result.put("viewport",it)}
+                        result.remove("layout")
                         execution.localOperation(call,lease) {ToolExecutionResult(result.toString())}
                     }
                 }
@@ -153,7 +156,7 @@ internal object WorkspaceVisualTools {
             val candidate=WorkspacePackageRepository(database).inspect(workspace.id,session.workspaceId,record.getString("candidate_id"));WorkspaceCandidateState.requireTestable(candidate)
             require(candidate.getString("content_hash")==record.getString("content_hash") && workspace.liveRevisionId==record.getString("base_revision_id") && WorkspaceApplicationData(database).version(workspace.id)==record.getLong("data_version")) {"VISUAL_EVIDENCE_STALE: reopen the current candidate"}
         }
-        private fun event(call:AtlasToolCall,action:String,result:JSONObject,started:Long) {database.appendEvent(call.sessionId,"workspace.visual_$action",JSONObject().put("call_id",call.id).put("duration_ms",System.currentTimeMillis()-started).put("candidate_id",result.optString("candidate_id")).put("instance_id",result.optString("instance_id",result.optJSONObject("instance")?.optString("instance_id"))).put("passed",result.opt("passed")).put("observation_id",result.optString("observation_id")).put("service_pid",result.optInt("service_pid")))}
+        private fun event(call:AtlasToolCall,action:String,result:JSONObject,started:Long) {database.appendEvent(call.sessionId,"workspace.visual_$action",JSONObject().put("call_id",call.id).put("duration_ms",System.currentTimeMillis()-started).put("candidate_id",result.optString("candidate_id")).put("instance_id",result.optString("instance_id",result.optJSONObject("instance")?.optString("instance_id"))).put("passed",result.opt("passed")).put("observation_id",result.optString("observation_id")).put("service_pid",result.optInt("service_pid")).put("service_pss_kb",result.optInt("service_pss_kb")))}
     }
     private val STEP=JSONObject().put("anyOf",JSONArray().apply {
         val variants=WorkspaceUiStepSchema.parameters().getJSONObject("properties").getJSONObject("steps").getJSONObject("items").getJSONArray("anyOf")

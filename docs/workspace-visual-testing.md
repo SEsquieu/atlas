@@ -14,7 +14,7 @@ The production `WorkspaceWebPresentation` supplies packaged-only resource loadin
 
 ## Authoritative viewport
 
-The foreground Scaffold records its actual content bounds after Atlas controls, bottom navigation, system bars and IME layout. The profile includes current window and physical display-mode pixel dimensions (separately labeled), density/DPR input, font scale, orientation, system/cutout/IME insets and touch features. It is unavailable without an attached, focused, unlocked Atlas window.
+The foreground Scaffold records its actual content bounds after Atlas controls, bottom navigation, system bars and IME layout. The profile includes current window and physical display-mode pixel dimensions (separately labeled), density/DPR input, font scale, orientation, system/cutout/IME insets and touch features. It is unavailable without an attached, focused, unlocked Atlas Session/Workspace window. System has different native controls and cannot supply the default workspace profile.
 
 The private display uses the measured content dimensions and the same production toolbar, revision label and capability-bar composables. The WebView's actual native bounds and JS `innerWidth`, `innerHeight`, `devicePixelRatio` and visual viewport are returned. Native chrome is laid out with the user's font scaling; it is not estimated from physical resolution. BLE chrome has a simulated label; live consent dialogs and variable device names remain separate physical acceptance cases.
 
@@ -37,7 +37,7 @@ DOM actions reuse the existing batch executor's fixed scripts: click, input, sel
 
 A finish passes only after at least one assertion, no failed action/assertion, no sampled runtime/resource/bridge error, and a successfully ingested screenshot after the most recent interaction batch. It records observations and exercised criteria, not aesthetic judgments. Clipped/occluded geometry can be intentional; the model must interpret it. Bounded diagnostics are sampled evidence, not a proof that every possible JS error or control was exercised. After a failed test, open a fresh instance to establish a clean passing run.
 
-Visual criteria may satisfy the task's named behavioral acceptance criteria. Persistence still needs the existing commit/reload/assert_record batch check. Existing pure-fixture, startup, BLE simulation, revision, epoch, rollback and permission gates remain intact. Activation attaches the newest exactly matching passing visual receipt when present and succeeds without one when ordinary requirements are met. No native code decides which viewport/interaction sequence or design is appropriate.
+Full geometry remains in the durable check; finish and activation responses carry compact summaries so successful verification does not repeatedly spend context on the same DOM. Visual criteria may satisfy the task's named behavioral acceptance criteria. Persistence still needs the existing commit/reload/assert_record batch check. Existing pure-fixture, startup, BLE simulation, revision, epoch, rollback and permission gates remain intact. Activation attaches the newest exactly matching passing visual receipt when present and succeeds without one when ordinary requirements are met. No native code decides which viewport/interaction sequence or design is appropriate.
 
 ## Lifetime, concurrency and recovery
 
@@ -51,7 +51,7 @@ Candidate packages and PNGs cross Binder through host-created file descriptors, 
 
 ## Qualification and real-device acceptance
 
-`WorkspaceVisualDeviceTest` exercises the real service/private-display/PixelCopy path rather than a mock screenshot. The tests also verify canvas colors, state changes, failed assertions, owner isolation, cancellation during a hung startup, process death, disposable storage, mocked BLE without OS permission changes, and blocked browser APIs. CI saves an actual isolated PixelCopy PNG alongside existing device evidence. Existing workspace and replaceable-runtime instrumentation remains required. CI on API35 and36 is necessary but does not qualify Samsung's compositor.
+`WorkspaceVisualDeviceTest` exercises the real service/private-display/PixelCopy path rather than a mock screenshot. The tests also exercise the agent-facing tools, screenshot observations, cross-slice state, matching activation evidence, idempotent close, canvas colors, state changes, failed assertions, owner isolation, cancellation during a hung startup, process death, disposable storage, mocked BLE without OS permission changes, and blocked browser APIs. CI saves an actual isolated PixelCopy PNG alongside existing device evidence. Existing workspace and replaceable-runtime instrumentation remains required. CI on API35 and36 is necessary but does not qualify Samsung's compositor.
 
 On the target Galaxy S22, record APK source/signature/version, Android/OneUI, WebView package/version, physical resolution, density/font scale, orientation, returned profile, calibration and operation timings. Then:
 

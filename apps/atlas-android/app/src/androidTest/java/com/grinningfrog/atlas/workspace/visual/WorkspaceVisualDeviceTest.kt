@@ -6,7 +6,14 @@ import android.os.ParcelFileDescriptor
 import androidx.activity.compose.setContent
 import androidx.compose.material3.Text
 import androidx.compose.material3.Surface
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.*
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.dp
+import com.grinningfrog.atlas.model.*
+import com.grinningfrog.atlas.runtime.*
+import com.grinningfrog.atlas.workspace.application.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.test.core.app.ActivityScenario
@@ -109,6 +116,69 @@ class WorkspaceVisualDeviceTest {
         } finally {
             id?.let {runCatching {client.request(request("close",owner,it))}}
             scenario.close()
+        }
+    }
+    @Test fun agentToolsPreserveStateAcrossSlicesAndAttachEvidenceToActivation()=runBlocking {
+        val app=context.applicationContext as AtlasApplication;val db=app.database
+        val session=db.createSession("Visual tool flow","Build and inspect without opening workspace")
+        db.updateSessionStatus(session.id,SessionStatus.ACTIVE)
+        val workspace=db.createComposableWorkspace("Visual candidate","")
+        val tasks=ExecutionTaskStore(db)
+        val task=tasks.create(db.loadSession(session.id)!!,"Visual flow",db.createTurn(session.id,"user").id,ExecutionBudget())
+        var lease=tasks.claim(task.id,"device-test")!!
+        tasks.bindWorkspace(tasks.currentTurn(task.id),workspace.id,"activation",requirePixels=true)
+        val scenario=ActivityScenario.launch(MainActivity::class.java)
+        var handle:String?=null
+        val harness=ToolHarness(db,{_,_->error("Camera must not be used")},{DeviceHealth()},additionalTools=WorkspaceVisualTools.create(db,app.mediaRepository,app.workspaceVisuals,context.cacheDir),executionLease={lease})
+        suspend fun tool(action:String,extra:JSONObject=JSONObject()):ToolExecutionResult {
+            val args=JSONObject(extra.toString()).put("action",action)
+            if(action!="open")args.put("instance_id",handle)
+            val proposal=ToolCallProposal(UUID.randomUUID().toString(),"workspace_visual_test",args.toString())
+            assertTrue(harness.evaluate(db.loadSession(session.id)!!,proposal).allowed)
+            val call=AtlasToolCall(proposal.id,session.id,tasks.currentTurn(task.id),proposal.name,args.toString(),ToolCallStatus.PROPOSED,ToolRisk.SESSION_WRITE,false,proposal.id,createdAtMs=System.currentTimeMillis(),updatedAtMs=System.currentTimeMillis())
+            db.insertToolCall(call)
+            val result=harness.execute(call)
+            db.updateToolCall(call.id,ToolCallStatus.COMPLETED,resultJson=result.resultJson)
+            return result
+        }
+        try {
+            scenario.onActivity { activity -> activity.setContent {
+                val view=LocalView.current
+                Column(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxWidth().weight(1f).onGloballyPositioned {c -> val p=c.positionInWindow();WorkspaceViewport.measured(view,p.x.toInt(),p.y.toInt(),c.size.width,c.size.height)}) {Text("Session stays visible")}
+                    Surface(Modifier.fillMaxWidth().height(120.dp)) {Text("Atlas controls and navigation")}
+                }
+            }}
+            withTimeout(8_000) {while(withContext(Dispatchers.Main.immediate) {runCatching {WorkspaceViewport.snapshot()}.isFailure})delay(50)}
+            val bundle=fixture()
+            val staged=WorkspacePackageRepository(db).stage(workspace.id,session.workspaceId,workspace.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,tasks.currentTurn(task.id))
+            val candidate=staged.getString("candidate_id")
+            val opened=JSONObject(tool("open",JSONObject().put("workspace_id",workspace.id).put("candidate_id",candidate)).resultJson)
+            handle=opened.getString("instance_id")
+            val profile=opened.getJSONObject("profile");val layout=opened.getJSONObject("layout")
+            assertEquals(profile.getInt("body_width_px"),layout.getInt("native_viewport_width_px"))
+            assertTrue(layout.getInt("native_viewport_height_px")<profile.getInt("body_height_px"))
+            assertNull(db.loadSession(session.id)!!.activeComposableWorkspaceId)
+            assertNull(com.grinningfrog.atlas.workspace.WorkspaceRenderSurface.diagnostics(workspace.id,workspace.liveRevisionId))
+            tool("interact",JSONObject().put("steps",JSONArray().put(JSONObject("""{"action":"click","selector":"#change"}"""))))
+            tasks.finish(lease,SliceOutcome.YIELDED,1);lease=tasks.claim(task.id,"device-test-next-slice")!!
+            val checked=JSONObject(tool("interact",JSONObject().put("steps",JSONArray().put(JSONObject("""{"action":"assert_text_exact","selector":"#status","value":"Changed","criterion":"state survives continuation"}""")))).resultJson)
+            assertTrue(checked.getBoolean("passed"))
+            val capture=tool("capture");assertNotNull(capture.observation);assertEquals(MediaPurpose.WORKSPACE_UI,capture.observation!!.media.purpose)
+            val finished=JSONObject(tool("finish").resultJson);assertTrue(finished.toString(),finished.getBoolean("passed"))
+            val pure=WorkspaceCandidateChecks(db,WorkspaceWorkerSupervisor(context)::run).test(workspace.id,session.workspaceId,candidate)
+            val activationCall=AtlasToolCall(UUID.randomUUID().toString(),session.id,tasks.currentTurn(task.id),"workspace_package_activate",JSONObject().put("workspace_id",workspace.id).put("candidate_id",candidate).toString(),ToolCallStatus.PROPOSED,ToolRisk.SESSION_WRITE,false,UUID.randomUUID().toString(),createdAtMs=System.currentTimeMillis(),updatedAtMs=System.currentTimeMillis())
+            db.insertToolCall(activationCall)
+            val activated=WorkspaceApplicationActivation(db).activate(context,workspace.id,session.workspaceId,candidate,pure.getString("check_id"),committed={receipt->tasks.localOperation(activationCall,lease) {ToolExecutionResult(receipt.toString())}})
+            assertEquals(finished.getString("check_id"),activated.getString("visual_check_id"));assertFalse(activated.getBoolean("visual_check_required"))
+            // A changed live base does not prevent closing the old isolated test.
+            tool("close");tool("close");handle=null
+            assertEquals(ExecutionState.COMPLETED,tasks.finish(lease,SliceOutcome.RESPONDED,1)!!.state)
+        } finally {
+            handle?.let {runCatching {tool("close")}}
+            runCatching {tasks.control(task.id,ExecutionState.CANCELLED,"test_cleanup")}
+            db.updateSessionStatus(session.id,SessionStatus.DONE)
+            scenario.close();db.setComposableWorkspaceArchived(workspace.id,true);db.deleteComposableWorkspace(workspace.id)
         }
     }
     @Test fun storageIsDisposableAndBlockedBrowserCapabilitiesRemainBlocked()=runBlocking {

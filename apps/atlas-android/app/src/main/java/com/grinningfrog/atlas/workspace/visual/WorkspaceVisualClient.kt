@@ -105,7 +105,7 @@ internal class WorkspaceVisualClient(private val context:Context,private val dat
         val record=live[id] ?: (if(allowClosed)runCatching {JSONObject(File(directory,"$id.json").readText())}.getOrNull() else null)
             ?: error("VISUAL_INSTANCE_EXPIRED: reopen the candidate; previous state is unavailable")
         WorkspaceVisualLimits.owns(record.getString("owner"),owner)
-        record.put("touched_at_ms",System.currentTimeMillis());write(record)
+        record.put("touched_at_ms",System.currentTimeMillis())
         return record
     }
     fun records(owner:String)=JSONArray(directory.listFiles().orEmpty().filter {it.extension=="json"}.sortedByDescending {it.lastModified()}.take(128)
