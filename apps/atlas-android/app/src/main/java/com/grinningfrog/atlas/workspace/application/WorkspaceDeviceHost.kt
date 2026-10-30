@@ -61,9 +61,7 @@ internal fun WorkspaceDeviceHost(principal: WorkspacePrincipal, bundle: JSONObje
     val status = remember(version) { broker.status() }
     val label=status.optString("capability_label","Device")
     Column(modifier) {
-        Surface(tonalElevation = 2.dp) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(when {
+        WorkspaceCapabilityBar(when {
                     !status.optBoolean("requests_enabled") -> "$label access blocked"
                     status.optBoolean("connected") -> "$label · ${status.optString("device_label")}"
                     status.optBoolean("busy") -> "$label · request in progress"
@@ -71,10 +69,8 @@ internal fun WorkspaceDeviceHost(principal: WorkspacePrincipal, bundle: JSONObje
                     !status.optBoolean("os_permission_granted") -> "$label · permission needed"
                     !status.optBoolean("platform_enabled") -> "$label is off"
                     else -> "$label · ready"
-                }, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 2)
-                if (status.optBoolean("requests_enabled")) TextButton(onClick = { broker.revoke(blockRequests = true) }) { Text("Revoke") }
-                else TextButton(onClick = { broker.enableRequests() }) { Text("Enable requests") }
-            }
+                }, status.optBoolean("requests_enabled")) {
+            if (status.optBoolean("requests_enabled")) broker.revoke(blockRequests = true) else broker.enableRequests()
         }
         content(broker, Modifier.fillMaxWidth().weight(1f))
     }

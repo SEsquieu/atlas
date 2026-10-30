@@ -182,9 +182,9 @@ class WorkspaceWebPresentation(
         withContext(Dispatchers.Main.immediate) {
             check(!disposed)
             val script = """
-                (()=>{const style=e=>{if(!e)return null;const s=getComputedStyle(e),r=e.getBoundingClientRect();return {tag:e.tagName,id:e.id.slice(0,128),backgroundColor:s.backgroundColor.slice(0,100),backgroundImage:s.backgroundImage.slice(0,1000),color:s.color.slice(0,100),display:s.display.slice(0,32),width:r.width,height:r.height,x:r.x,y:r.y}};
-                return JSON.stringify({url:location.pathname,readyState:document.readyState,viewport:{width:innerWidth,height:innerHeight,devicePixelRatio},html:style(document.documentElement),body:style(document.body),
-                stylesheets:Array.from(document.querySelectorAll('link[rel=stylesheet]')).slice(0,16).map(e=>({path:new URL(e.href).pathname,loaded:!!e.sheet})),elements:Array.from(document.querySelectorAll('[id],main')).slice(0,32).map(style)});})()
+                (()=>{const style=e=>{if(!e)return null;const s=getComputedStyle(e),r=e.getBoundingClientRect();let clip={left:0,top:0,right:innerWidth,bottom:innerHeight};for(let p=e.parentElement;p;p=p.parentElement){const ps=getComputedStyle(p),pr=p.getBoundingClientRect();if(/hidden|clip|scroll|auto/.test(ps.overflowX)){clip.left=Math.max(clip.left,pr.left);clip.right=Math.min(clip.right,pr.right)}if(/hidden|clip|scroll|auto/.test(ps.overflowY)){clip.top=Math.max(clip.top,pr.top);clip.bottom=Math.min(clip.bottom,pr.bottom)}}const cx=Math.max(0,Math.min(innerWidth-1,r.x+r.width/2)),cy=Math.max(0,Math.min(innerHeight-1,r.y+r.height/2)),hit=document.elementFromPoint(cx,cy);return {tag:e.tagName,id:e.id.slice(0,128),text:(e.textContent||'').slice(0,120),backgroundColor:s.backgroundColor.slice(0,100),backgroundImage:s.backgroundImage.slice(0,1000),color:s.color.slice(0,100),display:s.display,width:r.width,height:r.height,x:r.x,y:r.y,disabled:!!e.disabled,visible:r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'&&Number(s.opacity)>0,clipped:r.left<clip.left-1||r.right>clip.right+1||r.top<clip.top-1||r.bottom>clip.bottom+1,occludedAtCenter:!!hit&&hit!==e&&!e.contains(hit),scrollWidth:e.scrollWidth,scrollHeight:e.scrollHeight,clientWidth:e.clientWidth,clientHeight:e.clientHeight}};
+                return JSON.stringify({url:location.pathname,readyState:document.readyState,viewport:{width:innerWidth,height:innerHeight,devicePixelRatio,scrollX,scrollY,visualViewport:visualViewport?{width:visualViewport.width,height:visualViewport.height,scale:visualViewport.scale}:null},html:style(document.documentElement),body:style(document.body),
+                stylesheets:Array.from(document.querySelectorAll('link[rel=stylesheet]')).slice(0,16).map(e=>({path:new URL(e.href).pathname,loaded:!!e.sheet})),elementLimit:64,elements:Array.from(document.querySelectorAll('[id],main,button,input,select,a,canvas,[role=button]')).slice(0,64).map(style),notice:'Clipping/occlusion are geometric observations, not design failures; scrollable content can be intentional.'});})()
             """.trimIndent()
             suspendCancellableCoroutine { continuation ->
                 view.evaluateJavascript(script) { raw ->
@@ -200,9 +200,32 @@ class WorkspaceWebPresentation(
         }
     }
 
+    /** Wait for Chromium visual state and a subsequent attached-window draw before PixelCopy. */
+    suspend fun awaitCompositedFrame() = withTimeout(5_000) {
+        withContext(Dispatchers.Main.immediate) {
+            check(!disposed && view.isAttachedToWindow && view.isShown)
+            suspendCancellableCoroutine<Unit> { continuation ->
+                var draw: android.view.ViewTreeObserver.OnDrawListener? = null
+                fun remove() { draw?.let { if(view.viewTreeObserver.isAlive)view.viewTreeObserver.removeOnDrawListener(it) }; draw=null }
+                continuation.invokeOnCancellation { view.post { remove() } }
+                view.postVisualStateCallback(android.os.SystemClock.uptimeMillis(), object : WebView.VisualStateCallback() {
+                    override fun onComplete(requestId: Long) {
+                        if(!continuation.isActive)return
+                        draw=android.view.ViewTreeObserver.OnDrawListener {
+                            view.post { remove(); if(continuation.isActive)continuation.resumeWith(Result.success(Unit)) }
+                        }
+                        view.viewTreeObserver.addOnDrawListener(draw)
+                        view.invalidate()
+                    }
+                })
+                view.invalidate()
+            }
+        }
+    }
+
     /** Copy only this viewport from its owning app window; software redraws can differ from compositor pixels. */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    suspend fun captureVisiblePixels(): android.graphics.Bitmap = withTimeout(3_000) {
+    suspend fun captureVisiblePixels(owningWindow: android.view.Window? = null): android.graphics.Bitmap = withTimeout(3_000) {
         withContext(Dispatchers.Main.immediate) {
             check(!disposed && view.isAttachedToWindow && view.isShown) { "Workspace viewport is not visible" }
             require(view.width > 0 && view.height > 0 && view.width.toLong()*view.height <= 8_000_000L)
@@ -212,7 +235,7 @@ class WorkspaceWebPresentation(
                 if (owner is android.app.Activity) activity=owner as android.app.Activity
                 else (owner as? android.content.ContextWrapper)?.baseContext?.let { owner=it }
             }
-            val window=requireNotNull(activity).window
+            val window=owningWindow ?: requireNotNull(activity).window
             val location=IntArray(2);view.getLocationInWindow(location)
             val rect=android.graphics.Rect(location[0],location[1],location[0]+view.width,location[1]+view.height)
             require(rect.left>=0 && rect.top>=0 && rect.right<=window.decorView.width && rect.bottom<=window.decorView.height) { "Workspace viewport is clipped" }

@@ -227,9 +227,9 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val task=forTurn(turnId) ?: return emptyList()
         val acceptance=task.document.optJSONObject("acceptance") ?: JSONObject().put("workspace_id",task.document.optJSONObject("workspace_target")?.optString("workspace_id"))
         if(acceptance.optString("workspace_id")!=task.document.optJSONObject("workspace_target")?.optString("workspace_id"))return emptyList()
-        val verified=calls(task.id).filter {it.name=="workspace_package_ui_test" && it.status==ToolCallStatus.COMPLETED}.flatMap {
+        val verified=calls(task.id).filter {it.name in setOf("workspace_package_ui_test","workspace_visual_test") && it.status==ToolCallStatus.COMPLETED}.flatMap {
             val receipt=runCatching {JSONObject(it.resultJson.orEmpty())}.getOrDefault(JSONObject())
-            if(receipt.optBoolean("passed") && receipt.optString("candidate_id")==candidateId) {
+            if((it.name=="workspace_package_ui_test" || receipt.optString("kind")=="visual_render") && receipt.optBoolean("passed") && receipt.optString("candidate_id")==candidateId) {
                 val names=receipt.optJSONArray("verified_criteria") ?: JSONArray();(0 until names.length()).map(names::getString)
             } else emptyList()
         }.toSet()

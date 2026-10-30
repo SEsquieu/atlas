@@ -42,6 +42,7 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
         val hash = candidate.getString("content_hash")
         var uiCheckId: String?=null
         var uiEvidence: JSONObject? = null
+        var visualEvidence: JSONObject? = null
         fun verify() {
             executionContext.ensureActive()
             authorize()
@@ -68,6 +69,10 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
                 }
             }
             require(capabilities.isEmpty() || uiCheckId != null) { if (obsoleteUiCheck) "UI_SIMULATION_REQUIRED: rerun workspace_package_ui_test; older checks did not verify successful operations and visible notification delivery" else "UI_SIMULATION_REQUIRED: run workspace_package_ui_test covering declared controls before activation" }
+            visualEvidence = null
+            database.readableDatabase.rawQuery("SELECT result_json FROM workspace_application_checks WHERE workspace_id=? AND candidate_id=? AND content_hash=? AND base_revision_id=? AND data_version=? AND kind='visual_render' AND passed=1 ORDER BY created_at DESC LIMIT 1", arrayOf(workspaceId,candidateId,hash,base,version.toString())).use { row ->
+                if(row.moveToFirst())visualEvidence=JSONObject(row.getString(0))
+            }
             val old = JSONObject(database.loadLiveWorkspaceRevision(workspaceId)!!.definitionJson)
             if (WorkspaceApplicationData.isApplication(old)) {
                 require(old.getJSONObject("manifest").getInt("data_schema_version") == bundle.getJSONObject("manifest").getInt("data_schema_version")) { "MIGRATION_REQUIRED" }
@@ -101,6 +106,8 @@ internal class WorkspaceApplicationActivation(private val database: AtlasDatabas
             val receipt = JSONObject().put("workspace_id", workspaceId).put("candidate_id", candidateId).put("revision_id", revision).put("previous_revision_id", base)
                 .put("epoch", epoch).put("data_version", version).put("activated", true).put("still_active", true)
                 .put("ui_check_id",uiCheckId ?: JSONObject.NULL)
+                .put("visual_check_required",false).put("visual_check_id",visualEvidence?.optString("check_id") ?: JSONObject.NULL)
+                .put("visual_evidence",visualEvidence ?: JSONObject.NULL)
                 .put("ui_evidence_status", if (uiCheckId == null) "no_matching_passing_check" else "passing_matching_check")
                 .put("verified_criteria", uiEvidence?.optJSONArray("verified_criteria") ?: org.json.JSONArray())
                 .put("storage_verified", uiEvidence?.optBoolean("storage_verified") == true)

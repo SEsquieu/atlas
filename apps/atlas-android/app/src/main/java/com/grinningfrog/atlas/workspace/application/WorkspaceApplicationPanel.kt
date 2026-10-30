@@ -33,7 +33,7 @@ internal fun WorkspaceApplicationPanel(workspace: ComposableWorkspace, revision:
         return
     }
     Column(modifier) {
-        Text("Live revision · ${revision.id.take(8)}", modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
+        WorkspaceRevisionLabel(revision.id)
     key(workspace.id, revision.id, epoch) {
         var ready by remember { mutableStateOf(false) }
         fun failed(message: String) {

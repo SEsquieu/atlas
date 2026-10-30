@@ -13,6 +13,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 class AtlasApplication : Application() {
+    internal val workspaceVisuals by lazy { com.grinningfrog.atlas.workspace.visual.WorkspaceVisualClient(this, database) }
     val runtimeCore by lazy { com.grinningfrog.atlas.runtime.core.RuntimeCoreEngine(this) }
     val runtimeBundles by lazy { com.grinningfrog.atlas.runtime.core.RuntimeBundleStore(this) }
     val database by lazy { AtlasDatabase(this) }
@@ -29,6 +30,10 @@ class AtlasApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        if (Application.getProcessName().endsWith(":workspace_visual")) {
+            android.webkit.WebView.setDataDirectorySuffix("workspace_visual")
+            return
+        }
         if (Application.getProcessName().contains(":workspace_js")) return
         com.grinningfrog.atlas.diagnostics.RuntimeDiagnostics.install(this)
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
