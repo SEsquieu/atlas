@@ -32,7 +32,7 @@ internal object WorkspaceVisualTools {
             WorkspaceApplicationContract.exactKeys(JSONObject(call.argumentsJson),emptySet())
             val (_,owner)=owner(database,call)
             val profile=withContext(Dispatchers.Main.immediate) {runCatching {WorkspaceViewport.snapshot()}}
-            return ToolExecutionResult(JSONObject().put("available",profile.isSuccess).put("device_profile",profile.getOrNull()).put("unavailable_reason",profile.exceptionOrNull()?.message)
+            return ToolExecutionResult(JSONObject().put("available",profile.isSuccess && android.os.Build.VERSION.SDK_INT>=29).put("renderer_verification","requires_private_display_calibration_on_open").put("device_profile",profile.getOrNull()).put("unavailable_reason",profile.exceptionOrNull()?.message)
                 .put("tool","workspace_visual_test").put("instances",client.records(owner)).put("optional",true).put("activation_requires_visual_testing",false)
                 .put("budgets",JSONObject().put("max_pixels",WorkspaceVisualLimits.MAX_PIXELS).put("max_instances",1).put("idle_ms",WorkspaceVisualLimits.IDLE_MS).put("lifetime_ms",WorkspaceVisualLimits.LIFETIME_MS).put("operations",WorkspaceVisualLimits.MAX_OPERATIONS))
                 .put("workflow","When useful: open an immutable staged candidate, inspect/capture, interact with assertions, capture the resulting state, finish for a bound receipt, close. Reuse the same handle across task slices. Static/pure/UI gates remain unchanged. Do not claim unrun visual or physical-device tests.")
@@ -139,12 +139,15 @@ internal object WorkspaceVisualTools {
                 .put("realm_id",session.workspaceId).put("workspace_id",id).put("candidate_id",candidate.getString("candidate_id")).put("content_hash",candidate.getString("content_hash")).put("base_revision_id",candidate.getString("base_revision_id"))
                 .put("data_version",version).put("device_profile",profile).put("profile",render).put("state","open").put("opened_at_ms",started).put("touched_at_ms",System.currentTimeMillis())
             client.register(record)
-            try {assertCurrent(record,session)} catch(error:Throwable) {withContext(NonCancellable) {client.close(record,"candidate_changed_during_open")};throw error}
+            try {WorkspaceViewport.snapshot();assertCurrent(record,session)} catch(error:Throwable) {withContext(NonCancellable) {client.close(record,"candidate_changed_during_open")};throw error}
             val result=response.json.put("candidate_id",record.getString("candidate_id")).put("workspace_id",id).put("base_revision_id",record.getString("base_revision_id")).put("content_hash",record.getString("content_hash")).put("render_startup_ms",System.currentTimeMillis()-started)
             event(call,"open",result,started)
             return ToolExecutionResult(result.toString())
         }
         private fun assertCurrent(record:JSONObject,session:AtlasSession) {
+            require(database.loadSession(session.id)?.status==SessionStatus.ACTIVE) {"SESSION_STOPPED"}
+            val task=ExecutionTaskStore(database).get(record.getString("task_id")) ?: error("TASK_UNAVAILABLE")
+            require(task.state !in setOf(ExecutionState.CANCELLED,ExecutionState.COMPLETED,ExecutionState.FAILED,ExecutionState.PAUSED)) {"TASK_STOPPED"}
             val workspace=database.loadComposableWorkspace(record.getString("workspace_id")) ?: error("WORKSPACE_UNAVAILABLE")
             require(workspace.realmId==session.workspaceId && workspace.status==WorkspaceStatus.ACTIVE)
             val candidate=WorkspacePackageRepository(database).inspect(workspace.id,session.workspaceId,record.getString("candidate_id"));WorkspaceCandidateState.requireTestable(candidate)

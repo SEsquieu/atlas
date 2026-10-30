@@ -291,7 +291,17 @@ class WorkspaceWebPresentation(
     private fun denied() = WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", mapOf("Content-Security-Policy" to policy.csp), ByteArrayInputStream(ByteArray(0)))
     private fun serve(url: String, method: String): WebResourceResponse {
         if (disposed || !current()) return denied()
-        val path = policy.resource(url, method) ?: run {resourceErrorCount.incrementAndGet();return denied()}
+        // Chromium asks for this optional root icon even when the package has no icon declaration.
+        // Supply an explicit empty host response rather than report a fictitious application failure.
+        if(policy.optionalBrowserIcon(url,method))return WebResourceResponse("image/x-icon","UTF-8",204,"No Content",mapOf("Cache-Control" to "no-store"),ByteArrayInputStream(ByteArray(0)))
+        val path = policy.resource(url, method) ?: run {
+            resourceErrorCount.incrementAndGet()
+            synchronized(resources) {
+                if(resources.size>=32)resources.removeAt(0)
+                resources.add(JSONObject().put("path",Uri.parse(url).path.orEmpty().take(240)).put("status",403).put("reason","package_policy_denied").put("at_ms",System.currentTimeMillis()))
+            }
+            return denied()
+        }
         synchronized(resources) {
             if (resources.size >= 32) resources.removeAt(0)
             resources.add(JSONObject().put("path", path).put("status", if (path == "atlas/host.js" || files.has(path)) 200 else 403).put("at_ms", System.currentTimeMillis()))

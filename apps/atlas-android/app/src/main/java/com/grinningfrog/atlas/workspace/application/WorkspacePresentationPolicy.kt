@@ -20,6 +20,7 @@ class WorkspacePresentationPolicy(val principal: WorkspacePrincipal, private val
         if (path == "atlas/host.js") return path
         path.takeIf { WorkspaceApplicationContract.validPath(it) }
     }.getOrNull()
+    fun optionalBrowserIcon(url: String, method: String): Boolean = method=="GET" && url=="$origin/favicon.ico"
     fun navigation(url: String): Boolean = resource(url, "GET") == entry
     fun acceptsMessage(source: String, mainFrame: Boolean, current: Boolean): Boolean = mainFrame && current && source == "null"
 }

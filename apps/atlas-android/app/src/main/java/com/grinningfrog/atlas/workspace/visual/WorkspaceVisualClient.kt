@@ -44,6 +44,7 @@ internal class WorkspaceVisualClient(private val context:Context,private val dat
         }
     })
     init {
+        context.cacheDir.listFiles()?.filter {it.name.startsWith("visual-candidate-") && it.extension=="json"}?.forEach {it.delete()}
         // A new host process never claims an old DOM is alive.
         directory.listFiles()?.filter {it.extension=="json"}?.forEach {file -> runCatching {
             val record=JSONObject(file.readText());if(record.optString("state")=="open")write(record.put("state","expired").put("reason","host_process_restarted"))

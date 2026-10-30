@@ -124,7 +124,7 @@ internal class WorkspaceVisualService : Service() {
                 for(i in 0 until steps.length()) {
                     val step=steps.getJSONObject(i)
                     val report=WorkspaceVisualInteractions.run(test.window.surface.view,step);reports.put(report)
-                    if(step.getString("action").startsWith("assert_"))test.assertions.put(report)
+                    if(step.getString("action").startsWith("assert_") || step.getString("action")=="wait_text")test.assertions.put(report)
                     if(!report.getBoolean("passed")) {test.failed=true;break}
                     delay(100)
                 }
@@ -133,7 +133,7 @@ internal class WorkspaceVisualService : Service() {
             "finish" -> {
                 val layout=test.window.inspect();val runtime=layout.getJSONObject("runtime")
                 val errors=runtime.optInt("runtime_error_count")+runtime.optInt("resource_error_count")+runtime.optInt("host_failure_count")
-                val passed=!test.failed && test.assertions.length()>0 && test.capturedGeneration==test.generation && errors==0
+                val passed=!test.failed && test.assertions.length()>0 && test.capturedGeneration==test.generation && errors==0 && layout.optJSONObject("viewport")?.let {it.optDouble("width")>0 && it.optDouble("height")>0}==true
                 val criteria=(0 until test.assertions.length()).mapNotNull {test.assertions.getJSONObject(it).optString("criterion").trim().takeIf(String::isNotEmpty)}.distinct()
                 JSONObject().put("passed",passed).put("assertions",test.assertions).put("verified_criteria",if(passed)JSONArray(criteria) else JSONArray())
                     .put("screenshot_after_latest_interaction",test.capturedGeneration==test.generation).put("runtime_error_count",errors).put("layout",layout)

@@ -10,12 +10,12 @@ import org.json.JSONObject
 
 /** Inputs are confined to this WebView. Never inject into Android or request an IME. */
 internal object WorkspaceVisualInteractions {
-    val actions = setOf("click", "input", "select", "set_checked", "assert_text", "assert_text_exact", "assert_value", "assert_visible", "assert_hidden", "assert_absent", "assert_count", "assert_attribute", "tap", "swipe", "key", "scroll")
+    val actions = setOf("click", "input", "select", "set_checked", "assert_text", "wait_text", "assert_text_exact", "assert_value", "assert_visible", "assert_hidden", "assert_absent", "assert_count", "assert_attribute", "tap", "swipe", "key", "scroll")
     fun validate(step: JSONObject) {
         WorkspaceApplicationContract.exactKeys(step, setOf("action", "selector", "value", "criterion"), setOf("action"))
         val action = step.getString("action"); require(action in actions) { "UNSUPPORTED_VISUAL_ACTION" }
         require(step.optString("selector").length <= 128 && step.optString("value").length <= 2000)
-        if(step.has("criterion")) require(action.startsWith("assert_") && step.getString("criterion").trim().length in 1..200)
+        if(step.has("criterion")) require((action.startsWith("assert_") || action=="wait_text") && step.getString("criterion").trim().length in 1..200)
         if(action in setOf("tap", "swipe", "scroll")) {
             val v = step.getJSONObject("value")
             val names = if(action=="tap") setOf("x", "y") else if(action=="scroll") setOf("dx", "dy") else setOf("x", "y", "to_x", "to_y", "duration_ms")
@@ -62,8 +62,16 @@ internal object WorkspaceVisualInteractions {
                 "\"ok\""
             }
             "scroll" -> { val v=step.getJSONObject("value");evaluate(view,"(()=>{scrollBy(${v.getDouble("dx")},${v.getDouble("dy")});return 'ok'})()") }
-            "key" -> { val key=JSONObject.quote(step.getString("value"));evaluate(view,"(()=>{const e=document.activeElement||document.body;for(const type of ['keydown','keyup'])e.dispatchEvent(new KeyboardEvent(type,{key:$key,bubbles:true,cancelable:true}));return 'ok'})()") }
-            else -> evaluate(view,WorkspaceUiActions.script(step))
+            "key" -> { val key=JSONObject.quote(step.getString("value"));evaluate(view,"(()=>{const e=document.activeElement||document.body,key=$key,code=key.length===1?(key===' '?'Space':'Key'+key.toUpperCase()):key;for(const type of ['keydown','keyup'])e.dispatchEvent(new KeyboardEvent(type,{key,code,bubbles:true,cancelable:true}));return 'ok'})()") }
+            else -> {
+                val script=WorkspaceUiActions.script(step)
+                var result=evaluate(view,script)
+                if(action=="wait_text") {
+                    val until=SystemClock.elapsedRealtime()+3_000
+                    while(result!="\"ok\"" && SystemClock.elapsedRealtime()<until) {delay(100);result=evaluate(view,script)}
+                }
+                result
+            }
         }
         val decoded=runCatching { JSONArray("[$raw]").get(0) }.getOrNull()
         val evidence=(decoded as? String)?.let {runCatching {JSONObject(it)}.getOrNull()}

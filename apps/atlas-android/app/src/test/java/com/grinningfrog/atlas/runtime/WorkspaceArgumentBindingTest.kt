@@ -8,6 +8,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class WorkspaceArgumentBindingTest {
+    @Test fun visualOpenUsesTaskIdsWithoutPollutingSubsequentHandleOperations() {
+        fun bind(args:String)=JSONObject(WorkspaceArgumentBinding.bind(com.grinningfrog.atlas.model.ToolCallProposal("v","workspace_visual_test",args),"workspace",4,"candidate",null,null).argumentsJson)
+        val opened=bind("{\"action\":\"open\"}")
+        assertEquals("workspace",opened.getString("workspace_id"));assertEquals("candidate",opened.getString("candidate_id"));assertFalse(opened.has("navigation_sequence"))
+        val captured=bind("{\"action\":\"capture\",\"instance_id\":\"handle\"}")
+        assertFalse(captured.has("workspace_id"));assertFalse(captured.has("candidate_id"))
+        val foreign=bind("{\"action\":\"open\",\"workspace_id\":\"foreign\"}")
+        assertEquals("foreign",foreign.getString("workspace_id"));assertFalse(foreign.has("candidate_id"))
+    }
     @Test fun advertisedSchemaMakesOnlyBoundFieldsOptional() {
         val definition = ToolDefinition("workspace_package_activate", "Activate", """{"type":"object","properties":{},"required":["workspace_id","candidate_id","navigation_sequence","check_id"]}""", ToolRisk.SESSION_WRITE)
         val schema = JSONObject(WorkspaceArgumentBinding.definition(definition).parametersJson)

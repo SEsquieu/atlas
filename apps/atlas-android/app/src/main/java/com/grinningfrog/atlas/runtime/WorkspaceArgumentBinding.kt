@@ -11,9 +11,10 @@ internal object WorkspaceArgumentBinding {
     private val navigationTools = setOf("workspace_package_stage", "workspace_package_activate", "workspace_accept_unverified")
     private val tools = candidateTools + navigationTools
 
-    fun supports(name: String) = name in tools
+    fun supports(name: String) = name in tools || name=="workspace_visual_test"
 
     fun definition(definition: ToolDefinition): ToolDefinition {
+        if(definition.name=="workspace_visual_test")return definition.copy(description=definition.description+" For open, omit workspace_id/candidate_id to use the task target and latest staged candidate. Later actions use only instance_id; explicit identifiers are never corrected.")
         if (definition.name !in tools) return definition
         val schema = JSONObject(definition.parametersJson)
         val optional = setOf("workspace_id", "navigation_sequence") +
@@ -27,6 +28,13 @@ internal object WorkspaceArgumentBinding {
     }
 
     fun bind(proposal: ToolCallProposal, workspaceId: String?, sequence: Long, candidateId: String?, userId: String?, userText: String?): ToolCallProposal {
+        if(proposal.name=="workspace_visual_test") {
+            val args=runCatching {JSONObject(proposal.argumentsJson)}.getOrNull() ?: return proposal
+            if(args.optString("action")!="open" || workspaceId.isNullOrBlank() || workspaceId=="null")return proposal
+            if(!args.has("workspace_id"))args.put("workspace_id",workspaceId)
+            if(args.optString("workspace_id")==workspaceId && !args.has("candidate_id") && !candidateId.isNullOrBlank())args.put("candidate_id",candidateId)
+            return proposal.copy(argumentsJson=args.toString())
+        }
         if (proposal.name !in tools || workspaceId.isNullOrBlank() || workspaceId == "null") return proposal
         val args = runCatching { JSONObject(proposal.argumentsJson) }.getOrNull() ?: return proposal
         if (!args.has("workspace_id")) args.put("workspace_id", workspaceId)

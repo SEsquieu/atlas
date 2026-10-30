@@ -30,9 +30,9 @@ class WorkspaceVisualDeviceTest {
     private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
     private fun fixture()=WorkspaceApplicationContract.example().apply {
         getJSONObject("files")
-            .put("ui/index.html","""<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="./style.css"></head><body><button id="change">Change</button><p id="status">Ready</p><div id="clip"><div id="wide">overflow</div></div><script type="module" src="./app.js"></script></body></html>""")
-            .put("ui/style.css","html,body{margin:0;background:#123456;color:white}button{position:absolute;left:20px;top:20px;width:120px;height:60px}#status{position:absolute;top:100px}#clip{position:absolute;top:160px;width:100px;height:30px;overflow:hidden}#wide{width:400px;height:60px}")
-            .put("ui/app.js","""import {host} from '/atlas/host.js';document.querySelector('#change').onclick=()=>{document.querySelector('#status').textContent='Changed';document.body.style.background='#b23456';document.documentElement.style.background='#b23456'};await host.ready();""")
+            .put("ui/index.html","""<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="./style.css"></head><body><button id="change">Change</button><p id="status">Ready</p><canvas id="board" width="120" height="120"></canvas><div id="clip"><div id="wide">overflow</div></div><script type="module" src="./app.js"></script></body></html>""")
+            .put("ui/style.css","html,body{margin:0;background:#123456;color:white}button{position:absolute;left:20px;top:20px;width:120px;height:60px}#status{position:absolute;top:100px}#board{position:absolute;left:180px;top:20px;width:120px;height:120px}#clip{position:absolute;top:160px;width:100px;height:30px;overflow:hidden}#wide{width:400px;height:60px}")
+            .put("ui/app.js","""import {host} from '/atlas/host.js';const ctx=document.querySelector('#board').getContext('2d');ctx.fillStyle='#ffcc00';ctx.fillRect(0,0,60,120);ctx.fillStyle='#0033ff';ctx.fillRect(60,0,60,120);document.querySelector('#change').onclick=()=>{document.querySelector('#status').textContent='Changed';document.body.style.background='#b23456';document.documentElement.style.background='#b23456'};await host.ready();""")
     }
     private suspend fun open(client:WorkspaceVisualClient,owner:String,bundle:JSONObject):JSONObject {
         val dm=context.resources.displayMetrics
@@ -42,10 +42,18 @@ class WorkspaceVisualDeviceTest {
         return try { client.request(JSONObject().put("action","open").put("owner",owner).put("profile",profile).put("title","Test candidate").put("base_revision_id","fixture-revision").put("package_sha256",WorkspaceApplicationContract.hash(source)),packageFile=file).json } finally {file.delete()}
     }
     private fun request(action:String,owner:String,id:String)=JSONObject().put("action",action).put("owner",owner).put("instance_id",id)
-    private suspend fun pixel(client:WorkspaceVisualClient,owner:String,id:String):Int {
+    private suspend fun pixel(client:WorkspaceVisualClient,owner:String,id:String,cssX:Double?=null,cssY:Double?=null,save:Boolean=false):Int {
         val response=client.request(request("capture",owner,id))
         val bitmap=ParcelFileDescriptor.AutoCloseInputStream(requireNotNull(response.image)).use {BitmapFactory.decodeStream(it)}!!
-        return try {bitmap.getPixel(bitmap.width-8,bitmap.height-8)} finally {bitmap.recycle();response.image.close()}
+        return try {
+            if(save && android.os.Build.VERSION.SDK_INT>=29) {
+                val values=android.content.ContentValues().apply {put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME,"workspace-isolated-device.png");put(android.provider.MediaStore.MediaColumns.MIME_TYPE,"image/png");put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,"Download/")}
+                val uri=requireNotNull(context.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,values))
+                context.contentResolver.openOutputStream(uri)!!.use {check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it))}
+            }
+            val scale=bitmap.width/360.0
+            bitmap.getPixel(cssX?.let {(it*scale).toInt()} ?: (bitmap.width-8),cssY?.let {(it*scale).toInt()} ?: (bitmap.height-8))
+        } finally {bitmap.recycle();response.image.close()}
     }
     @Test fun privateWindowCapturesAndInteractsWhileSessionRemainsVisible()=runBlocking {
         val app=context.applicationContext as AtlasApplication
@@ -75,6 +83,7 @@ class WorkspaceVisualDeviceTest {
             assertTrue(viewport.getDouble("height") in 300.0..590.0)
             val elements=layout.getJSONArray("elements")
             assertTrue((0 until elements.length()).any {elements.getJSONObject(it).optString("id")=="wide" && elements.getJSONObject(it).getBoolean("clipped")})
+            assertEquals(Color.rgb(255,204,0),pixel(client,owner,id,200.0,40.0))
             val first=pixel(client,owner,id)
             assertEquals(0x12,Color.red(first));assertEquals(0x34,Color.green(first));assertEquals(0x56,Color.blue(first))
             // Owner rejection cannot tear down another task's renderer.
@@ -87,7 +96,7 @@ class WorkspaceVisualDeviceTest {
             assertTrue(interacted.toString(),interacted.getBoolean("passed"))
             // Repeated delivery of a tool call must not inject another gesture.
             assertEquals(interacted.getJSONObject("instance").getInt("operations"),client.request(request("interact",owner,id).put("steps",steps),callId).json.getJSONObject("instance").getInt("operations"))
-            assertEquals(0xb2,Color.red(pixel(client,owner,id)))
+            assertEquals(0xb2,Color.red(pixel(client,owner,id,save=true)))
             val finished=client.request(request("finish",owner,id)).json
             assertTrue(finished.toString(),finished.getBoolean("passed"))
             assertEquals("button changes state",finished.getJSONArray("verified_criteria").getString(0))
@@ -101,6 +110,35 @@ class WorkspaceVisualDeviceTest {
             id?.let {runCatching {client.request(request("close",owner,it))}}
             scenario.close()
         }
+    }
+    @Test fun storageIsDisposableAndBlockedBrowserCapabilitiesRemainBlocked()=runBlocking {
+        val app=context.applicationContext as AtlasApplication;val client=app.workspaceVisuals
+        val live=app.database.createComposableWorkspace("Unaffected live workspace","",fixture().toString())
+        val owner="instrumentation:${UUID.randomUUID()}"
+        val scanPermission=context.checkSelfPermission("android.permission.BLUETOOTH_SCAN")
+        val bundle=fixture().apply {
+            getJSONObject("manifest").put("capabilities",JSONArray().put(JSONObject("""{"name":"bluetooth.le","operations":["scan"],"resources":["user_selected_device"]}""")))
+            getJSONObject("files").put("ui/app.js","""
+            import {host,data,ble} from '/atlas/host.js';
+            const {devices}=await ble.scan();const unsafe=devices[0]?.name!=='Simulated bench device'||!!(navigator.bluetooth||navigator.mediaDevices||navigator.clipboard||globalThis.localStorage||globalThis.indexedDB);
+            async function count(){const page=await data.query({collection:'notes',limit:100});document.querySelector('#status').textContent='rows:'+page.records.length+':'+(unsafe?'UNSAFE':'guarded');return page.data_version}
+            await count();document.querySelector('#change').onclick=async()=>{const version=await count();const prepared=await data.prepare({expected_data_version:version,request_key:'one',mutations:[{kind:'create',collection:'notes',data:{text:'test only'}}]});await data.commit(prepared.operation_id);await count()};await host.ready();
+        """.trimIndent())}
+        var id:String?=null
+        try {
+            id=open(client,owner,bundle).getString("instance_id")
+            val result=client.request(request("interact",owner,id).put("steps",JSONArray()
+                .put(JSONObject("""{"action":"assert_text_exact","selector":"#status","value":"rows:0:guarded"}"""))
+                .put(JSONObject("""{"action":"click","selector":"#change"}"""))
+                .put(JSONObject("""{"action":"wait_text","selector":"#status","value":"rows:1:guarded"}""")))).json
+            assertTrue(result.toString(),result.getBoolean("passed"))
+            assertEquals(scanPermission,context.checkSelfPermission("android.permission.BLUETOOTH_SCAN"))
+            assertEquals(0,app.database.listWorkspaceRecords(live.id,"notes").size)
+            assertEquals(live.liveRevisionId,app.database.loadComposableWorkspace(live.id)!!.liveRevisionId)
+            client.request(request("close",owner,id))
+            id=open(client,owner,bundle).getString("instance_id")
+            assertTrue(client.request(request("interact",owner,id).put("steps",JSONArray().put(JSONObject("""{"action":"assert_text_exact","selector":"#status","value":"rows:0:guarded"}""")))).json.getBoolean("passed"))
+        } finally {id?.let {runCatching {client.request(request("close",owner,it))}};app.database.setComposableWorkspaceArchived(live.id,true);app.database.deleteComposableWorkspace(live.id)}
     }
     @Test fun cancelledStartupReleasesTheDisplayAndAllowsFreshOpen()=runBlocking {
         val client=(context.applicationContext as AtlasApplication).workspaceVisuals

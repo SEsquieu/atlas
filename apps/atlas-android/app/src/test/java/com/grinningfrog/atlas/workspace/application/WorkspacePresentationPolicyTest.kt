@@ -7,6 +7,12 @@ import org.junit.Test
 class WorkspacePresentationPolicyTest {
     private val principal = WorkspacePrincipal("realm", "workspace", "revision", "instance", 1, WorkspaceInstanceMode.PREVIEW)
     private val policy = WorkspacePresentationPolicy(principal, "ui/index.html")
+    @Test fun onlyTheExactOptionalBrowserIconReceivesAnEmptyHostResponse() {
+        assertTrue(policy.optionalBrowserIcon("${policy.origin}/favicon.ico","GET"))
+        for(url in listOf("https://example.com/favicon.ico","${policy.origin}/favicon.ico?x=1","${policy.origin}/ui/favicon.ico","${policy.origin}/%66avicon.ico"))assertFalse(policy.optionalBrowserIcon(url,"GET"))
+        assertFalse(policy.optionalBrowserIcon("${policy.origin}/favicon.ico","POST"))
+        assertNull(policy.resource("${policy.origin}/favicon.ico","GET"))
+    }
     @Test fun onlyExactPackagedOriginsAndCanonicalGetPathsAreServed() {
         assertEquals("ui/index.html", policy.resource(policy.entryUrl, "GET"))
         assertEquals("atlas/host.js", policy.resource("${policy.origin}/atlas/host.js", "GET"))
