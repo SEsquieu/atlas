@@ -9,7 +9,7 @@ import org.json.JSONObject
 internal object ExecutionWorkState {
     private fun json(raw: String?) = runCatching { JSONObject(raw.orEmpty()) }.getOrDefault(JSONObject())
     fun build(calls: List<AtlasToolCall>, target: String?): JSONObject {
-        val scoped = calls.filter { json(it.argumentsJson).optString("workspace_id") == target }
+        val scoped = calls.filter { json(it.argumentsJson).optString("workspace_id") == target || it.name=="workspace_visual_test" && json(it.resultJson).optString("workspace_id")==target }
         val stages = scoped.filter { it.name == "workspace_package_stage" && it.status == ToolCallStatus.COMPLETED && json(it.resultJson).has("candidate_id") }
         // A task can resume a candidate staged in another session. Pin the exact candidate
         // most recently used by a candidate operation, then recover its inspected metadata.
@@ -33,8 +33,8 @@ internal object ExecutionWorkState {
                 for (key in listOf("base_revision_id", "parent_candidate_id", "navigation_sequence")) if (args.has(key)) put(key, args.get(key))
             }
         } }
-        val checks = scoped.filter { it.name in setOf("workspace_package_test", "workspace_package_ui_test") &&
-            json(it.argumentsJson).optString("candidate_id") == candidateId && it.status == ToolCallStatus.COMPLETED }
+        val checks = scoped.filter { (it.name in setOf("workspace_package_test", "workspace_package_ui_test") || it.name=="workspace_visual_test" && json(it.resultJson).optString("kind")=="visual_render") &&
+            (json(it.argumentsJson).optString("candidate_id") == candidateId || json(it.resultJson).optString("candidate_id")==candidateId) && it.status == ToolCallStatus.COMPLETED }
         val evidence = JSONArray()
         checks.groupBy { it.name }.values.forEach { group -> evidence.put(receipt(group.last())) }
         val activated = scoped.lastOrNull { it.name == "workspace_package_activate" && it.status == ToolCallStatus.COMPLETED && json(it.resultJson).optBoolean("activated") }
@@ -73,6 +73,8 @@ internal object ExecutionWorkState {
             .count { it.name == "workspace_package_stage" && it.status == ToolCallStatus.COMPLETED && json(it.resultJson).optBoolean("structurally_valid") }
         state.put("consecutive_untested_stages", untestedStages)
         if (untestedStages > 0) state.put("next_authoring_action", "Verify the retained candidate with pure/UI checks. executed=false is expected after staging, not a failure. Restage only for a specific identified source defect or new requested change; use exact-source edits for small changes. Broad user goals authorize choosing useful bounded improvements and concrete acceptance criteria; they do not require approval of every design decision. Report delivered changes from committed receipts, with remaining limitations.")
+        val visual=scoped.lastOrNull {it.name=="workspace_visual_test" && it.status==ToolCallStatus.COMPLETED}
+        visual?.let {call -> val r=json(call.resultJson);state.put("visual_testing",JSONObject().put("action",json(call.argumentsJson).optString("action")).put("instance_id",r.optString("instance_id",r.optJSONObject("instance")?.optString("instance_id"))).put("candidate_id",r.optString("candidate_id")).put("check_id",r.optString("check_id")).put("observation_id",r.optString("observation_id")).put("notice","Handle state may expire; workspace_visual_status reports current state. Visual testing is optional and chosen by need."))}
         state.put("source_reads",inventory).put("contract_already_read", calls.any { it.name == "workspace_package_contract" && it.status == ToolCallStatus.COMPLETED })
         state.put("inspection_guidance", "Reuse source ranges and contract already supplied in the transcript. Read only missing ranges or changed candidate content; re-read when evidence was omitted, stale or insufficient. Descriptions are user metadata; the installed contract and manifest define available capabilities.")
         // Meaningful frontier excludes reads and timestamps. Repeating a failed assertion or
@@ -100,7 +102,7 @@ internal object ExecutionWorkState {
     fun receipt(call: AtlasToolCall): JSONObject {
         val result = json(call.resultJson)
         val out = JSONObject().put("operation_id", call.id).put("tool", call.name).put("status", call.status.name)
-        for (key in listOf("workspace_id", "candidate_id", "base_revision_id", "revision_id", "check_id", "content_hash", "passed", "activated", "error", "missing_operations", "operation_counts", "successful_operation_counts", "notification_verified", "notification_delivered", "verified_criteria", "criterion_evidence", "semantic_correctness_verified", "user_accepted_unverified", "failure_kind", "retry_suppressed", "recovery_guidance", "cancelled", "missing_criteria", "storage_verified", "storage_scope", "storage_evidence", "host_failures", "host_failure_count", "detail", "evidence_scope")) {
+        for (key in listOf("workspace_id", "candidate_id", "base_revision_id", "revision_id", "check_id", "content_hash", "passed", "activated", "error", "missing_operations", "operation_counts", "successful_operation_counts", "notification_verified", "notification_delivered", "verified_criteria", "criterion_evidence", "semantic_correctness_verified", "user_accepted_unverified", "failure_kind", "retry_suppressed", "recovery_guidance", "cancelled", "missing_criteria", "storage_verified", "storage_scope", "storage_evidence", "host_failures", "host_failure_count", "detail", "evidence_scope", "kind", "instance_id", "observation_id", "visual_design_verified_by_host", "screenshot_after_latest_interaction", "runtime_error_count")) {
             if (result.has(key)) out.put(key, result.get(key))
         }
         call.error?.let { out.put("error", it.take(1000)) }

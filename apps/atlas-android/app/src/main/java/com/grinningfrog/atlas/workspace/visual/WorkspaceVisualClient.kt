@@ -71,15 +71,23 @@ internal class WorkspaceVisualClient(private val context:Context,private val dat
         }
         withTimeout(5_000) {connected.await()}
     }
-    suspend fun request(args:JSONObject,id:String=UUID.randomUUID().toString(),packageFile:File?=null):Response=withContext(Dispatchers.Main.immediate) {
+    suspend fun request(args:JSONObject,id:String=UUID.randomUUID().toString(),packageFile:File?=null):Response {
+        var delivered:Response?=null
+        try { return withContext(Dispatchers.Main.immediate) {
         val target=bind();val deferred=CompletableDeferred<Response>();check(!pending.containsKey(id));pending[id]=deferred
         var descriptor:ParcelFileDescriptor?=null
         try {
             descriptor=packageFile?.let {ParcelFileDescriptor.open(it,ParcelFileDescriptor.MODE_READ_ONLY)}
             target.send(Message.obtain(null,1).apply {replyTo=receiver;data=Bundle().apply {putString("request_id",id);putString("json",args.toString());descriptor?.let {putParcelable("package",it)}}})
-            withTimeout(35_000) {deferred.await()}
+            withTimeout(35_000) {deferred.await().also {delivered=it}}
         } catch(error:Throwable) {
-            runCatching {target.send(Message.obtain(null,2).apply {data=Bundle().apply {putString("request_id",id)}})}
+            runCatching {target.send(Message.obtain(null,2).apply {data=Bundle().apply {putString("request_id",id);putString("owner",args.getString("owner"));putString("action",args.optString("action"));putString("instance_id",args.optString("instance_id"))}})}
+            if(error is TimeoutCancellationException) {
+                // A wedged remote UI thread cannot process cancellation. Kill only our named service process.
+                val processes=(context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).runningAppProcesses.orEmpty()
+                processes.firstOrNull {it.uid==Process.myUid() && it.processName==context.packageName+":workspace_visual" && it.pid!=Process.myPid()}?.let {Process.killProcess(it.pid)}
+                lost("renderer_rpc_timeout")
+            }
             throw error
         } finally {
             pending.remove(id);descriptor?.close()
@@ -88,15 +96,19 @@ internal class WorkspaceVisualClient(private val context:Context,private val dat
             if(!currentCoroutineContext().isActive && deferred.isCompleted && !deferred.isCancelled)runCatching {deferred.await().image?.close()}
         }
     }
+        } catch(error:Throwable) {delivered?.image?.close();throw error}
+    }
     fun register(record:JSONObject) {live[record.getString("instance_id")]=record;write(record)}
-    fun owned(id:String,owner:String):JSONObject {
+    fun owned(id:String,owner:String,allowClosed:Boolean=false):JSONObject {
         require(id.matches(Regex("[a-f0-9-]{36}")))
-        val record=live[id] ?: error("VISUAL_INSTANCE_EXPIRED: reopen the candidate; previous state is unavailable")
+        val record=live[id] ?: (if(allowClosed)runCatching {JSONObject(File(directory,"$id.json").readText())}.getOrNull() else null)
+            ?: error("VISUAL_INSTANCE_EXPIRED: reopen the candidate; previous state is unavailable")
         WorkspaceVisualLimits.owns(record.getString("owner"),owner)
         record.put("touched_at_ms",System.currentTimeMillis());write(record)
         return record
     }
-    fun records(owner:String)=JSONArray(live.values.filter {it.optString("owner")==owner}.map {JSONObject(it.toString())})
+    fun records(owner:String)=JSONArray(directory.listFiles().orEmpty().filter {it.extension=="json"}.sortedByDescending {it.lastModified()}.take(128)
+        .mapNotNull {runCatching {JSONObject(it.readText())}.getOrNull()}.filter {it.optString("owner")==owner}.take(16))
     fun update(record:JSONObject) {write(record)}
     private fun write(record:JSONObject) {
         val file=AtomicFile(File(directory,"${record.getString("instance_id")}.json"));val out=file.startWrite()
@@ -105,6 +117,7 @@ internal class WorkspaceVisualClient(private val context:Context,private val dat
     }
     fun retire(record:JSONObject,reason:String) {live.remove(record.getString("instance_id"));write(record.put("state","closed").put("reason",reason).put("closed_at_ms",System.currentTimeMillis()))}
     suspend fun close(record:JSONObject,reason:String) {
+        if(record.optString("state")!="open")return
         try {request(JSONObject().put("action","close").put("owner",record.getString("owner")).put("instance_id",record.getString("instance_id"))).image?.close()}
         catch(_:Exception) { /* Remote process death already releases the OS display and renderer. */ }
         finally {retire(record,reason)}

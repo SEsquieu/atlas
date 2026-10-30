@@ -32,6 +32,8 @@ class WorkspaceWebPresentation(
     private var remainingMessages = 64
     private var messageWindow = android.os.SystemClock.elapsedRealtime()
     private val bridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val runtimeErrorCount = java.util.concurrent.atomic.AtomicInteger()
+    private val resourceErrorCount = java.util.concurrent.atomic.AtomicInteger()
     private val console = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
     @Volatile private var hostFailureCount=0
     private val hostFailures=mutableListOf<JSONObject>()
@@ -40,7 +42,7 @@ class WorkspaceWebPresentation(
     private val resources = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
     private val provider = WebViewCompat.getCurrentWebViewPackage(context)?.let { "${it.packageName}/${it.versionName}" } ?: "unknown"
     @Volatile private var ready = false
-    fun diagnostics(): JSONObject = JSONObject().put("instance_mode",principal.mode.name.lowercase()).put("simulation",devices?.isSimulation==true).put("webview_provider", provider).put("android_api", android.os.Build.VERSION.SDK_INT).put("native_canvas_fallback", "#010302").put("devices", devices?.status() ?: JSONObject.NULL).put("ready", ready).put("disposed", disposed).put("resources", org.json.JSONArray(synchronized(resources) { resources.map { JSONObject(it.toString()) } })).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } })).put("host_failure_count",hostFailureCount).put("host_failures",org.json.JSONArray(synchronized(hostCalls) {hostFailures.map {JSONObject(it.toString())}})).put("host_calls",org.json.JSONArray(synchronized(hostCalls) {hostCalls.map {JSONObject(it.toString())}}))
+    fun diagnostics(): JSONObject = JSONObject().put("instance_mode",principal.mode.name.lowercase()).put("simulation",devices?.isSimulation==true).put("webview_provider", provider).put("android_api", android.os.Build.VERSION.SDK_INT).put("runtime_error_count", runtimeErrorCount.get()).put("resource_error_count", resourceErrorCount.get()).put("native_canvas_fallback", "#010302").put("devices", devices?.status() ?: JSONObject.NULL).put("ready", ready).put("disposed", disposed).put("resources", org.json.JSONArray(synchronized(resources) { resources.map { JSONObject(it.toString()) } })).put("console", org.json.JSONArray(synchronized(console) { console.map { JSONObject(it.toString()) } })).put("host_failure_count",hostFailureCount).put("host_failures",org.json.JSONArray(synchronized(hostCalls) {hostFailures.map {JSONObject(it.toString())}})).put("host_calls",org.json.JSONArray(synchronized(hostCalls) {hostCalls.map {JSONObject(it.toString())}}))
     val view: WebView
 
     init {
@@ -105,6 +107,7 @@ class WorkspaceWebPresentation(
         view.setDownloadListener { _, _, _, _, _ -> onFailure("Direct downloads are unavailable") }
         view.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                if(message.messageLevel()==ConsoleMessage.MessageLevel.ERROR)runtimeErrorCount.incrementAndGet()
                 synchronized(console) {
                     if (console.size >= 24) console.removeAt(0)
                     console.add(JSONObject().put("level", message.messageLevel().name).put("message", message.message().orEmpty().take(1000)).put("source", message.sourceId().orEmpty().take(240)).put("line", message.lineNumber()))
@@ -288,11 +291,12 @@ class WorkspaceWebPresentation(
     private fun denied() = WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", mapOf("Content-Security-Policy" to policy.csp), ByteArrayInputStream(ByteArray(0)))
     private fun serve(url: String, method: String): WebResourceResponse {
         if (disposed || !current()) return denied()
-        val path = policy.resource(url, method) ?: return denied()
+        val path = policy.resource(url, method) ?: run {resourceErrorCount.incrementAndGet();return denied()}
         synchronized(resources) {
             if (resources.size >= 32) resources.removeAt(0)
             resources.add(JSONObject().put("path", path).put("status", if (path == "atlas/host.js" || files.has(path)) 200 else 403).put("at_ms", System.currentTimeMillis()))
         }
+        if(path!="atlas/host.js" && !files.has(path))resourceErrorCount.incrementAndGet()
         val content = if (path == "atlas/host.js") WorkspaceHostRegistry.sdk() else if (files.has(path)) files.getString(path) else return denied()
         val mime = when (path.substringAfterLast('.')) { "html" -> "text/html"; "js" -> "text/javascript"; "css" -> "text/css"; "svg" -> "image/svg+xml"; "json" -> "application/json"; else -> "text/plain" }
         return WebResourceResponse(mime, "UTF-8", 200, "OK", mapOf("Content-Security-Policy" to policy.csp, "Cache-Control" to "no-store", "X-Content-Type-Options" to "nosniff", "Referrer-Policy" to "no-referrer", "X-DNS-Prefetch-Control" to "off", "Access-Control-Allow-Origin" to "*"), ByteArrayInputStream(content.toByteArray(Charsets.UTF_8)))

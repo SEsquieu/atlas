@@ -20,11 +20,17 @@ internal class WorkspaceVisualService : Service() {
     private val replies=linkedMapOf<String,JSONObject>()
     private var instance: Instance?=null
     private val nonce=UUID.randomUUID().toString()
-    private data class Instance(val id:String,val owner:String,val window:WorkspaceVisualWindow,val opened:Long,var touched:Long,var operations:Int=0,var generation:Int=0,var capturedGeneration:Int = -1,val assertions:JSONArray=JSONArray(),var failed:Boolean=false)
+    private data class Instance(val id:String,val owner:String,val openRequestId:String,val window:WorkspaceVisualWindow,val opened:Long,var touched:Long,var operations:Int=0,var generation:Int=0,var capturedGeneration:Int = -1,val assertions:JSONArray=JSONArray(),var failed:Boolean=false)
     private val messenger=Messenger(object:Handler(Looper.getMainLooper()) {
         override fun handleMessage(message:Message) {
             val b=message.data
-            if(message.what==2) { jobs[b.getString("request_id")]?.cancel();return }
+            if(message.what==2) {
+                val running=jobs[b.getString("request_id")]
+                if(running!=null)running.cancel() else scope.launch {mutex.withLock {
+                    instance?.takeIf {it.owner==b.getString("owner") && (it.id==b.getString("instance_id") || b.getString("action")=="open" && it.openRequestId==b.getString("request_id"))}?.let {it.window.close();instance=null}
+                }}
+                return
+            }
             val reply=message.replyTo ?: return
             val id=b.getString("request_id") ?: return
             val fd=b.getParcelable<ParcelFileDescriptor>("package")
@@ -34,7 +40,7 @@ internal class WorkspaceVisualService : Service() {
                 try {
                     val result=mutex.withLock {
                         withTimeout(30_000) {
-                            val args=JSONObject(b.getString("json") ?: "{}")
+                            val args=JSONObject(b.getString("json") ?: "{}").put("host_request_id",id)
                             require(args.toString().length<=96*1024)
                             // Only mutations need replay suppression. Captures are safe to repeat.
                             val cacheKey=args.getString("owner")+":"+id
@@ -44,13 +50,14 @@ internal class WorkspaceVisualService : Service() {
                             result
                         }
                     }
-                    result.put("service_pid",Process.myPid()).put("process_nonce",nonce)
+                    val memory=android.os.Debug.MemoryInfo();android.os.Debug.getMemoryInfo(memory)
+                    result.put("service_pid",Process.myPid()).put("process_nonce",nonce).put("service_pss_kb",memory.totalPss)
                     check(result.toString().length<=128*1024)
                     reply.send(Message.obtain(null,1).apply { data=Bundle().apply {putString("request_id",id);putString("json",result.toString());capture?.let {putParcelable("capture",it)} } })
                 } catch(error:Throwable) {
                     // Callback/JS timeout is not evidence; retire this isolated renderer and handle.
-                    val suppliedOwner=runCatching {JSONObject(b.getString("json") ?: "{}").optString("owner")}.getOrNull()
-                    withContext(NonCancellable) { mutex.withLock { instance?.takeIf {it.owner==suppliedOwner}?.let { runCatching {it.window.terminate()};it.window.close();instance=null } } }
+                    val supplied=runCatching {JSONObject(b.getString("json") ?: "{}")}.getOrDefault(JSONObject())
+                    withContext(NonCancellable) { mutex.withLock { instance?.takeIf {it.owner==supplied.optString("owner") && (it.id==supplied.optString("instance_id") || supplied.optString("action")=="open" && it.openRequestId==id)}?.let { runCatching {it.window.terminate()};it.window.close();instance=null } } }
                     runCatching { reply.send(Message.obtain(null,1).apply {data=Bundle().apply {putString("request_id",id);putString("error",error.message?.take(500) ?: "Visual test interrupted; reopen the candidate")}}) }
                 } finally {capture?.close();fd?.close();jobs.remove(id)}
             }
@@ -87,7 +94,7 @@ internal class WorkspaceVisualService : Service() {
             require(WorkspaceApplicationContract.hash(source)==args.getString("package_sha256"))
             val bundle=JSONObject(source);require(WorkspaceApplicationContract.validate(bundle).isEmpty())
             val renderer=WorkspaceVisualWindow(this,args.getJSONObject("profile"),args.getString("title"),args.getString("base_revision_id"),bundle)
-            val test=Instance(UUID.randomUUID().toString(),owner,renderer,now,now)
+            val test=Instance(UUID.randomUUID().toString(),owner,args.getString("host_request_id"),renderer,now,now)
             instance=test
             renderer.start()
             return metadata(test).put("layout",renderer.inspect()).put("calibration","passed_actual_window_pixelcopy")
@@ -125,9 +132,7 @@ internal class WorkspaceVisualService : Service() {
             }
             "finish" -> {
                 val layout=test.window.inspect();val runtime=layout.getJSONObject("runtime")
-                val console=runtime.getJSONArray("console");val resources=runtime.getJSONArray("resources")
-                val errors=(0 until console.length()).count {console.getJSONObject(it).optString("level")=="ERROR"}+
-                    (0 until resources.length()).count {resources.getJSONObject(it).optInt("status")>=400}+runtime.optInt("host_failure_count")
+                val errors=runtime.optInt("runtime_error_count")+runtime.optInt("resource_error_count")+runtime.optInt("host_failure_count")
                 val passed=!test.failed && test.assertions.length()>0 && test.capturedGeneration==test.generation && errors==0
                 val criteria=(0 until test.assertions.length()).mapNotNull {test.assertions.getJSONObject(it).optString("criterion").trim().takeIf(String::isNotEmpty)}.distinct()
                 JSONObject().put("passed",passed).put("assertions",test.assertions).put("verified_criteria",if(passed)JSONArray(criteria) else JSONArray())

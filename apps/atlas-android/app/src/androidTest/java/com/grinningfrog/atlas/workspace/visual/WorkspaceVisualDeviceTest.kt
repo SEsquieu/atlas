@@ -5,6 +5,10 @@ import android.graphics.Color
 import android.os.ParcelFileDescriptor
 import androidx.activity.compose.setContent
 import androidx.compose.material3.Text
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -50,7 +54,16 @@ class WorkspaceVisualDeviceTest {
         val scenario=ActivityScenario.launch(MainActivity::class.java)
         var id:String?=null
         try {
-            scenario.onActivity {it.setContent {Text("Session stays visible")}}
+            scenario.onActivity {it.setContent {Surface(modifier=Modifier.fillMaxSize(),color=ComposeColor(0xff241357)) {Text("Session stays visible")}}}
+            // Fence the physical activity's own startup frame too; its launch window may still be white.
+            withTimeout(8_000) {
+                while(true) {
+                    val screen=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                    val stable=try {screen.getPixel(screen.width/2,screen.height/2)==0xff241357.toInt()} finally {screen.recycle()}
+                    if(stable)break
+                    delay(50)
+                }
+            }
             val before=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
             val opened=open(client,owner,fixture());id=opened.getString("instance_id")
             assertNotEquals(android.os.Process.myPid(),opened.getInt("service_pid"))
@@ -88,6 +101,32 @@ class WorkspaceVisualDeviceTest {
             id?.let {runCatching {client.request(request("close",owner,it))}}
             scenario.close()
         }
+    }
+    @Test fun cancelledStartupReleasesTheDisplayAndAllowsFreshOpen()=runBlocking {
+        val client=(context.applicationContext as AtlasApplication).workspaceVisuals
+        val owner="instrumentation:${UUID.randomUUID()}"
+        val hung=fixture().apply {getJSONObject("files").put("ui/app.js","while(true){}")}
+        val pending=launch {open(client,owner,hung)}
+        delay(1_000);pending.cancelAndJoin()
+        withTimeout(12_000) {while(client.request(JSONObject().put("action","status").put("owner",owner)).json.getInt("active_instances")!=0)delay(100)}
+        var id:String?=null
+        try {id=open(client,owner,fixture()).getString("instance_id");assertEquals(0x12,Color.red(pixel(client,owner,id)))}
+        finally {id?.let {runCatching {client.request(request("close",owner,it))}}}
+    }
+    @Test fun remoteProcessDeathExpiresStateWithoutCrashingTheForegroundProcess()=runBlocking {
+        val client=(context.applicationContext as AtlasApplication).workspaceVisuals
+        val owner="instrumentation:${UUID.randomUUID()}"
+        val opened=open(client,owner,fixture());val id=opened.getString("instance_id")
+        val pid=opened.getInt("service_pid");assertNotEquals(android.os.Process.myPid(),pid)
+        android.os.Process.killProcess(pid)
+        delay(1_000)
+        assertTrue(runCatching {client.request(request("inspect",owner,id))}.isFailure)
+        var fresh:String?=null
+        try {
+            val result=open(client,owner,fixture());fresh=result.getString("instance_id")
+            assertNotEquals(id,fresh);assertNotEquals(opened.getString("process_nonce"),result.getString("process_nonce"))
+            assertEquals(0x12,Color.red(pixel(client,owner,fresh)))
+        } finally {fresh?.let {runCatching {client.request(request("close",owner,it))}}}
     }
     @Test fun failedAssertionsCannotProducePassingVisualReceipt()=runBlocking {
         val client=(context.applicationContext as AtlasApplication).workspaceVisuals

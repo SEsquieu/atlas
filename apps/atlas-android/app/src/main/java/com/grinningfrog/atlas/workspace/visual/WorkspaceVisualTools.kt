@@ -48,15 +48,17 @@ internal object WorkspaceVisualTools {
             val allowed=session.status==SessionStatus.ACTIVE && (action!="capture" || session.permissions.observe)
             return ToolPolicyDecision(allowed,false,ToolRisk.SESSION_WRITE,"Isolated task-owned local testing; pixels require observation permission")
         }
-        override suspend fun execute(call:AtlasToolCall):ToolExecutionResult {
+        override suspend fun execute(call:AtlasToolCall):ToolExecutionResult = withContext(Dispatchers.Main.immediate) { executeMain(call) }
+        private suspend fun executeMain(call:AtlasToolCall):ToolExecutionResult {
             val args=JSONObject(call.argumentsJson)
             WorkspaceApplicationContract.exactKeys(args,setOf("action","workspace_id","candidate_id","instance_id","width_css","height_css","steps"),setOf("action"))
             val action=args.getString("action");require(action in setOf("open","inspect","capture","interact","finish","close"))
             val (session,owner)=owner(database,call)
+            if(action=="finish")ExecutionTaskStore(database).receipt(call)?.let {return ToolExecutionResult(it)}
             if(action=="open")return open(call,session,owner,args)
             require(!args.has("workspace_id") && !args.has("candidate_id") && !args.has("width_css") && !args.has("height_css")) {"Use only instance_id after open"}
             require(args.has("steps")== (action=="interact"))
-            val record=client.owned(args.getString("instance_id"),owner)
+            val record=client.owned(args.getString("instance_id"),owner,allowClosed=action=="close")
             if(action=="close") {client.close(record,"agent_closed");return ToolExecutionResult(JSONObject().put("closed",true).put("instance_id",args.getString("instance_id")).toString())}
             assertCurrent(record,session)
             require(action!="capture" || database.loadSession(session.id)?.permissions?.observe==true) {"OBSERVATION_DENIED"}
@@ -65,7 +67,11 @@ internal object WorkspaceVisualTools {
                 require(currentProfile.get(key).toString()==record.getJSONObject("device_profile").get(key).toString()) {"VISUAL_VIEWPORT_CHANGED: close and reopen against the current device layout"}
             }
             val request=JSONObject().put("action",action).put("owner",owner).put("instance_id",record.getString("instance_id"))
-            if(action=="interact")request.put("steps",args.getJSONArray("steps"))
+            if(action=="interact") {
+                val steps=args.getJSONArray("steps");require(steps.length() in 1..16)
+                for(i in 0 until steps.length())WorkspaceVisualInteractions.validate(steps.getJSONObject(i))
+                request.put("steps",steps)
+            }
             val started=System.currentTimeMillis()
             val response=try {client.request(request,call.id)} catch(error:Throwable) {client.retire(record,"operation_failed_or_cancelled");throw error}
             try {
@@ -91,12 +97,16 @@ internal object WorkspaceVisualTools {
                     result.put("passed",passed).put("check_id",UUID.randomUUID().toString()).put("kind","visual_render").put("observation_id",record.optString("observation_id"))
                         .put("device_profile",record.getJSONObject("device_profile")).put("profile",record.getJSONObject("profile")).put("visual_design_verified_by_host",false)
                     if(!passed)result.put("verified_criteria",JSONArray())
+                    val execution=ExecutionTaskStore(database)
+                    val task=execution.forTurn(call.turnId)!!
+                    val lease=ExecutionLease(task.id,requireNotNull(task.owner),task.generation)
                     WorkspaceApplicationData(database).atomic {
                         assertCurrent(record,session)
                         val count=rawQuery("SELECT COUNT(*) FROM workspace_application_checks WHERE workspace_id=?",arrayOf(record.getString("workspace_id"))).use {it.moveToFirst();it.getInt(0)};require(count<256)
                         insertOrThrow("workspace_application_checks",null,ContentValues().apply {
                             put("check_id",result.getString("check_id"));put("workspace_id",record.getString("workspace_id"));put("candidate_id",record.getString("candidate_id"));put("content_hash",record.getString("content_hash"));put("kind","visual_render");put("passed",if(passed)1 else 0);put("base_revision_id",record.getString("base_revision_id"));put("data_version",record.getLong("data_version"));put("result_json",result.toString());put("created_at",System.currentTimeMillis())
                         })
+                        execution.localOperation(call,lease) {ToolExecutionResult(result.toString())}
                     }
                 }
                 event(call,action,result,started)
@@ -130,7 +140,7 @@ internal object WorkspaceVisualTools {
                 .put("data_version",version).put("device_profile",profile).put("profile",render).put("state","open").put("opened_at_ms",started).put("touched_at_ms",System.currentTimeMillis())
             client.register(record)
             try {assertCurrent(record,session)} catch(error:Throwable) {withContext(NonCancellable) {client.close(record,"candidate_changed_during_open")};throw error}
-            val result=response.json.put("candidate_id",record.getString("candidate_id")).put("content_hash",record.getString("content_hash")).put("render_startup_ms",System.currentTimeMillis()-started)
+            val result=response.json.put("candidate_id",record.getString("candidate_id")).put("workspace_id",id).put("base_revision_id",record.getString("base_revision_id")).put("content_hash",record.getString("content_hash")).put("render_startup_ms",System.currentTimeMillis()-started)
             event(call,"open",result,started)
             return ToolExecutionResult(result.toString())
         }
@@ -142,6 +152,24 @@ internal object WorkspaceVisualTools {
         }
         private fun event(call:AtlasToolCall,action:String,result:JSONObject,started:Long) {database.appendEvent(call.sessionId,"workspace.visual_$action",JSONObject().put("call_id",call.id).put("duration_ms",System.currentTimeMillis()-started).put("candidate_id",result.optString("candidate_id")).put("instance_id",result.optString("instance_id",result.optJSONObject("instance")?.optString("instance_id"))).put("passed",result.opt("passed")).put("observation_id",result.optString("observation_id")).put("service_pid",result.optInt("service_pid")))}
     }
-    private val STEP=JSONObject("""{"type":"object","properties":{"action":{"type":"string","enum":["click","input","select","set_checked","assert_text","assert_text_exact","assert_value","assert_visible","assert_hidden","assert_absent","assert_count","assert_attribute","tap","swipe","scroll","key"]},"selector":{"type":"string","maxLength":128},"value":{},"criterion":{"type":"string","maxLength":200}},"required":["action"],"additionalProperties":false}""")
+    private val STEP=JSONObject().put("anyOf",JSONArray().apply {
+        val variants=WorkspaceUiStepSchema.parameters().getJSONObject("properties").getJSONObject("steps").getJSONObject("items").getJSONArray("anyOf")
+        for(i in 0 until variants.length()) {
+            val variant=variants.getJSONObject(i)
+            if(variant.getJSONObject("properties").getJSONObject("action").getJSONArray("enum").getString(0) in WorkspaceVisualInteractions.actions)put(variant)
+        }
+        for(action in listOf("tap","swipe","scroll","key")) {
+            val properties=JSONObject().put("action",JSONObject().put("type","string").put("enum",JSONArray(listOf(action))))
+            val value=if(action=="key")JSONObject().put("type","string").put("enum",JSONArray(listOf("ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Enter","Escape"," ","w","a","s","d")))
+            else {
+                val names=if(action=="tap")listOf("x","y") else if(action=="swipe")listOf("x","y","to_x","to_y") else listOf("dx","dy")
+                val fields=JSONObject();for(name in names)fields.put(name,JSONObject().put("type","number").put("minimum",if(action=="scroll")-8192 else 0).put("maximum",8192))
+                if(action=="swipe")fields.put("duration_ms",JSONObject().put("type","integer").put("minimum",50).put("maximum",1000))
+                JSONObject().put("type","object").put("properties",fields).put("required",JSONArray(names)).put("additionalProperties",false)
+            }
+            properties.put("value",value)
+            put(JSONObject().put("type","object").put("properties",properties).put("required",JSONArray(listOf("action","value"))).put("additionalProperties",false))
+        }
+    })
     private val SCHEMA=JSONObject("""{"type":"object","properties":{"action":{"type":"string","enum":["open","inspect","capture","interact","finish","close"]},"workspace_id":{"type":"string"},"candidate_id":{"type":"string"},"instance_id":{"type":"string"},"width_css":{"type":"integer","minimum":64,"maximum":2048},"height_css":{"type":"integer","minimum":64,"maximum":2048},"steps":{"type":"array","minItems":1,"maxItems":16}},"required":["action"],"additionalProperties":false}""").apply {getJSONObject("properties").getJSONObject("steps").put("items",STEP)}.toString()
 }

@@ -296,7 +296,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         save(task)
         task.document.put("consecutive_retries",0)
         val all=calls(task.id);val pending=pending(task.id).any { it.status==ToolCallStatus.UNKNOWN || it.status==ToolCallStatus.RUNNING }
-        val last=all.groupBy { it.name }.values.mapNotNull { it.lastOrNull() }
+        val last=all.groupBy(::operationGroup).values.mapNotNull { it.lastOrNull() }
         val superseded = all.filter(::failedOperation).mapNotNull { call -> (supersedingControl(call, all) ?: supersedingActivation(call, all))?.let { call to it } }.toMap()
         val diagnosticFailures=last.filter { nonBlockingAuditFailure(it, task, all) }
         val failures=last.filter { it !in diagnosticFailures && it !in superseded }.filter(::failedOperation)
@@ -342,7 +342,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
             .put("unresolved_operation_ids", JSONArray(failures.map { it.id }))
             .put("resolved_operations", JSONArray(superseded.map { (failed, success) -> JSONObject().put("operation_id", failed.id)
                 .put("tool", failed.name).put("occurred_at_ms", failed.updatedAtMs).put("resolved_at_ms", success.updatedAtMs)
-                .put("resolved_by", success.id).put("resolution", if (failed.name == ToolHarness.CLARIFICATION_TOOL) "corrected_control_accepted" else "superseded_by_committed_activation") }))
+                .put("resolved_by", success.id).put("resolution", if (failed.name == ToolHarness.CLARIFICATION_TOOL) "corrected_control_accepted" else if(failed.name=="workspace_visual_test") "superseded_by_passing_visual_run" else "superseded_by_committed_activation") }))
             .put("completed_operations",JSONArray(recent.filter {it.status==ToolCallStatus.COMPLETED}.map {it.id}))
             .put("latest_definition_operation_id",definitionId))
         val recover = outcome == SliceOutcome.RESPONDED && (deliveryPending || failures.isNotEmpty()) && failures.all(::recoverableVerification)
@@ -368,11 +368,13 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
     }
 
     private fun recoverableVerification(call: AtlasToolCall) =
-        (call.name in setOf("workspace_package_test", "workspace_package_ui_test", "workspace_package_validate") ||
+        (call.name in setOf("workspace_package_test", "workspace_package_ui_test", "workspace_package_validate", "workspace_visual_test") ||
             call.name=="workspace_package_read_file" && call.status==ToolCallStatus.FAILED && call.error.orEmpty().startsWith("EMPTY_PACKAGE_DRAFT") ||
             call.name=="workspace_package_stage" && (call.status==ToolCallStatus.COMPLETED && runCatching {JSONObject(call.resultJson.orEmpty()).optString("error")=="STAGING_ARGUMENTS_INVALID"}.getOrDefault(false) || call.status==ToolCallStatus.FAILED && (call.error.orEmpty().startsWith("VALIDATION_FAILED") || call.error.orEmpty().startsWith("Unknown fields:"))) ||
             call.name=="workspace_package_activate" && call.status==ToolCallStatus.COMPLETED && runCatching {JSONObject(call.resultJson.orEmpty()).optString("error") in setOf("ACCEPTANCE_REQUIRED","CHECK_REQUIRED")}.getOrDefault(false)) &&
         call.status in setOf(ToolCallStatus.COMPLETED, ToolCallStatus.REJECTED, ToolCallStatus.FAILED)
+
+    private fun operationGroup(call:AtlasToolCall):String = call.name + if(call.name=="workspace_visual_test") ":"+runCatching {JSONObject(call.argumentsJson).optString("action")}.getOrDefault("") else ""
 
     private fun failedOperation(call: AtlasToolCall): Boolean = call.status in setOf(ToolCallStatus.FAILED, ToolCallStatus.REJECTED) ||
         (call.status == ToolCallStatus.COMPLETED && runCatching { JSONObject(call.resultJson.orEmpty()).let { result ->
@@ -381,6 +383,19 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
 
     /** Only discarded, side-effect-free candidate attempts can be superseded. Unknown outcomes never are. */
     private fun supersedingActivation(call: AtlasToolCall, all: List<AtlasToolCall>): AtlasToolCall? {
+        if(call.name=="workspace_visual_test" && call.status in setOf(ToolCallStatus.FAILED,ToolCallStatus.REJECTED,ToolCallStatus.COMPLETED)) {
+            val args=runCatching {JSONObject(call.argumentsJson)}.getOrDefault(JSONObject())
+            val result=runCatching {JSONObject(call.resultJson.orEmpty())}.getOrDefault(JSONObject())
+            val opened=all.take(all.indexOf(call)+1).lastOrNull { prior -> prior.name=="workspace_visual_test" && prior.status==ToolCallStatus.COMPLETED &&
+                runCatching {JSONObject(prior.resultJson.orEmpty()).optString("instance_id")==args.optString("instance_id")}.getOrDefault(false) }
+            val context=opened?.let {runCatching {JSONObject(it.resultJson.orEmpty())}.getOrNull()} ?: JSONObject()
+            val workspace=result.optString("workspace_id").ifBlank {args.optString("workspace_id").ifBlank {context.optString("workspace_id")}}
+            if(workspace.isBlank())return null
+            return all.drop(all.indexOf(call)+1).lastOrNull { success -> success.name=="workspace_visual_test" && success.status==ToolCallStatus.COMPLETED &&
+                runCatching {val r=receipt(success)?.let(::JSONObject) ?: return@runCatching false
+                    r.optString("kind")=="visual_render" && r.optBoolean("passed") && r.optString("workspace_id")==workspace
+                }.getOrDefault(false) }
+        }
         if(call.name=="workspace_accept_unverified" && call.status in setOf(ToolCallStatus.FAILED,ToolCallStatus.REJECTED)) {
             val args=runCatching {JSONObject(call.argumentsJson)}.getOrNull() ?: return null
             val workspace=args.optString("workspace_id").takeIf(String::isNotBlank) ?: return null
@@ -432,7 +447,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         }
         if(call.name=="atlas_task_handoff_pixels" && call.status in setOf(ToolCallStatus.FAILED,ToolCallStatus.REJECTED)) {
             val requirement=task.document.optJSONObject("completion_requirement")
-            if(requirement?.optBoolean("require_pixels")==true)return false
+            if(requirement?.optBoolean("require_pixels")==true && !pixelsSatisfied(task,all))return false
             val workspace=task.document.optJSONObject("workspace_target")?.optString("workspace_id") ?: return false
             return all.any { success -> success.name=="workspace_package_activate" && success.status==ToolCallStatus.COMPLETED &&
                 runCatching { val r=receipt(success)?.let(::JSONObject) ?: return@runCatching false
@@ -446,7 +461,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         if(call.name=="workspace_capture_view" && call.status==ToolCallStatus.FAILED) {
             val args=runCatching {JSONObject(call.argumentsJson)}.getOrDefault(JSONObject())
             val requirement=task.document.optJSONObject("completion_requirement")
-            if(requirement?.optBoolean("require_pixels")==true)return false
+            if(requirement?.optBoolean("require_pixels")==true && !pixelsSatisfied(task,all))return false
             val error=call.error.orEmpty()+call.resultJson.orEmpty()
             if(!error.contains("WORKSPACE_NOT_OPEN") && !error.contains("Target workspace is not open for pixel capture") && !error.contains("Workspace panel is not visible or has not drawn this revision"))return false
             if(requirement?.optString("pixels_owner")=="user" && requirement.optString("workspace_id")==args.optString("workspace_id"))return true
@@ -471,13 +486,24 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         if(!requirement.optBoolean("require_pixels"))return true
         val workspace=requirement.optString("workspace_id")
         val revision=database.loadComposableWorkspace(workspace)?.liveRevisionId ?: return false
-        return all.any {it.name=="workspace_capture_view" && it.status==ToolCallStatus.COMPLETED && runCatching {
+        val visible=all.any {it.name=="workspace_capture_view" && it.status==ToolCallStatus.COMPLETED && runCatching {
             val r=JSONObject(it.resultJson.orEmpty());r.optBoolean("ok") && r.optString("workspace_id")==workspace && r.optString("revision_id")==revision
         }.getOrDefault(false)}
+        if(visible)return true
+        return all.any { call -> call.name=="workspace_visual_test" && call.status==ToolCallStatus.COMPLETED && runCatching {
+            val r=receipt(call)?.let(::JSONObject) ?: return@runCatching false
+            if(r.optString("kind")!="visual_render" || !r.optBoolean("passed") || r.optString("workspace_id")!=workspace || r.optString("observation_id").isBlank())return@runCatching false
+            database.readableDatabase.rawQuery("SELECT result_json FROM workspace_application_activations WHERE workspace_id=? AND candidate_id=?",arrayOf(workspace,r.getString("candidate_id"))).use { rows ->
+                if(!rows.moveToFirst())return@use false
+                val activation=JSONObject(rows.getString(0))
+                activation.optString("revision_id")==revision && activation.optString("visual_check_id")==r.getString("check_id")
+            }
+        }.getOrDefault(false) }
+
     }
     fun outstanding(taskId: String): JSONArray {
         val task=get(taskId) ?: return JSONArray();val all=calls(taskId)
-        return JSONArray(all.groupBy {it.name}.values.mapNotNull {it.lastOrNull()}.filter {
+        return JSONArray(all.groupBy(::operationGroup).values.mapNotNull {it.lastOrNull()}.filter {
             failedOperation(it) && !nonBlockingAuditFailure(it,task,all) && supersedingControl(it,all)==null && supersedingActivation(it,all)==null
         }.map {JSONObject().put("operation_id",it.id).put("tool",it.name).put("error",it.error).put("result",it.resultJson?.take(1200))})
     }

@@ -144,7 +144,7 @@ internal class WorkspaceVisualWindow(private val context: Context, val profile: 
         runCatching { reader?.setOnImageAvailableListener(null, null); reader?.close() }; reader = null
         scope.cancel()
     }
-    private class TestPresentation(context: Context, display: android.view.Display) : Presentation(context, display), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
+    private class TestPresentation(context: Context, display: android.view.Display) : Presentation(context, display, android.R.style.Theme_Material_NoActionBar), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
         private val registry = LifecycleRegistry(this)
         private val state = SavedStateRegistryController.create(this)
         override val lifecycle: Lifecycle get() = registry
