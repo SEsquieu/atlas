@@ -22,6 +22,7 @@ internal object WorkspaceVisualTools {
     private fun owner(database:AtlasDatabase,call:AtlasToolCall):Pair<AtlasSession,String> {
         val original=database.loadSession(call.sessionId) ?: error("SESSION_UNAVAILABLE")
         val tasks=ExecutionTaskStore(database);val task=tasks.forTurn(call.turnId) ?: error("VISUAL_TEST_REQUIRES_DURABLE_TASK")
+        require(tasks.currentTurn(task.id)==call.turnId) {"STALE_VISUAL_SLICE"}
         require(task.sessionId==original.id && task.state !in setOf(ExecutionState.CANCELLED,ExecutionState.COMPLETED,ExecutionState.FAILED,ExecutionState.PAUSED))
         return tasks.workspaceSession(original,call.turnId) to "${original.id}:${task.id}"
     }
@@ -54,8 +55,12 @@ internal object WorkspaceVisualTools {
             WorkspaceApplicationContract.exactKeys(args,setOf("action","workspace_id","candidate_id","instance_id","width_css","height_css","steps"),setOf("action"))
             val action=args.getString("action");require(action in setOf("open","inspect","capture","interact","finish","close"))
             val (session,owner)=owner(database,call)
-            if(action=="finish")ExecutionTaskStore(database).receipt(call)?.let {return ToolExecutionResult(it)}
-            if(action=="open")return open(call,session,owner,args)
+            val execution=ExecutionTaskStore(database)
+            if(action=="finish")execution.receipt(call)?.let {return ToolExecutionResult(it)}
+            val task=execution.forTurn(call.turnId)!!
+            val lease=ExecutionLease(task.id,requireNotNull(task.owner),task.generation)
+            execution.check(lease)
+            if(action=="open")return open(call,session,owner,args,lease)
             require(!args.has("workspace_id") && !args.has("candidate_id") && !args.has("width_css") && !args.has("height_css")) {"Use only instance_id after open"}
             require(args.has("steps")== (action=="interact"))
             val record=client.owned(args.getString("instance_id"),owner,allowClosed=action=="close")
@@ -75,7 +80,7 @@ internal object WorkspaceVisualTools {
             val started=System.currentTimeMillis()
             val response=try {client.request(request,call.id)} catch(error:Throwable) {client.retire(record,"operation_failed_or_cancelled");throw error}
             try {
-                assertCurrent(record,session)
+                execution.check(lease);assertCurrent(record,session)
                 val result=response.json.put("candidate_id",record.getString("candidate_id")).put("workspace_id",record.getString("workspace_id"))
                     .put("content_hash",record.getString("content_hash")).put("base_revision_id",record.getString("base_revision_id")).put("data_version",record.getLong("data_version"))
                 if(action=="interact") {record.remove("observation_id");client.update(record)}
@@ -83,7 +88,7 @@ internal object WorkspaceVisualTools {
                     val bitmap=withContext(Dispatchers.IO) {android.os.ParcelFileDescriptor.AutoCloseInputStream(requireNotNull(response.image)).use {BitmapFactory.decodeStream(it)}} ?: error("VISUAL_CAPTURE_DECODE_FAILED")
                     val ref=media.ingestWorkspaceBitmap(bitmap,session.id)
                     try {
-                        require(database.loadSession(session.id)?.permissions?.observe==true) {"OBSERVATION_DENIED"};assertCurrent(record,session)
+                        require(database.loadSession(session.id)?.permissions?.observe==true) {"OBSERVATION_DENIED"};execution.check(lease);assertCurrent(record,session)
                     } catch(error:Throwable) {media.deleteStorageKeys(listOf(ref.storageKey));throw error}
                     val observation=VisualObservation(sessionId=session.id,media=ref,observedAtMs=result.getLong("captured_at_ms"),availableAtMs=System.currentTimeMillis(),timing=ObservationTiming(ref.processingMs,0,ref.processingMs),summary="Isolated candidate workspace pixels; candidate=${record.getString("candidate_id")}; content=${record.getString("content_hash")}. Mock devices; not a physical camera observation or active workspace.")
                     database.saveObservation(observation)
@@ -97,9 +102,6 @@ internal object WorkspaceVisualTools {
                     result.put("passed",passed).put("check_id",UUID.randomUUID().toString()).put("kind","visual_render").put("observation_id",record.optString("observation_id"))
                         .put("device_profile",record.getJSONObject("device_profile")).put("profile",record.getJSONObject("profile")).put("visual_design_verified_by_host",false)
                     if(!passed)result.put("verified_criteria",JSONArray())
-                    val execution=ExecutionTaskStore(database)
-                    val task=execution.forTurn(call.turnId)!!
-                    val lease=ExecutionLease(task.id,requireNotNull(task.owner),task.generation)
                     WorkspaceApplicationData(database).atomic {
                         assertCurrent(record,session)
                         val count=rawQuery("SELECT COUNT(*) FROM workspace_application_checks WHERE workspace_id=?",arrayOf(record.getString("workspace_id"))).use {it.moveToFirst();it.getInt(0)};require(count<256)
@@ -116,7 +118,7 @@ internal object WorkspaceVisualTools {
                 return ToolExecutionResult(result.toString())
             } finally {response.image?.close()}
         }
-        private suspend fun open(call:AtlasToolCall,session:AtlasSession,owner:String,args:JSONObject):ToolExecutionResult {
+        private suspend fun open(call:AtlasToolCall,session:AtlasSession,owner:String,args:JSONObject,lease:ExecutionLease):ToolExecutionResult {
             require(!args.has("steps") && !args.has("instance_id"))
             val id=args.getString("workspace_id")
             val workspace=database.loadComposableWorkspace(id) ?: error("WORKSPACE_UNAVAILABLE")
@@ -142,7 +144,7 @@ internal object WorkspaceVisualTools {
                 .put("realm_id",session.workspaceId).put("workspace_id",id).put("candidate_id",candidate.getString("candidate_id")).put("content_hash",candidate.getString("content_hash")).put("base_revision_id",candidate.getString("base_revision_id"))
                 .put("data_version",version).put("device_profile",profile).put("profile",render).put("state","open").put("opened_at_ms",started).put("touched_at_ms",System.currentTimeMillis())
             client.register(record)
-            try {WorkspaceViewport.snapshot();assertCurrent(record,session)} catch(error:Throwable) {withContext(NonCancellable) {client.close(record,"candidate_changed_during_open")};throw error}
+            try {ExecutionTaskStore(database).check(lease);WorkspaceViewport.snapshot();assertCurrent(record,session)} catch(error:Throwable) {withContext(NonCancellable) {client.close(record,"candidate_changed_during_open")};throw error}
             val result=response.json.put("candidate_id",record.getString("candidate_id")).put("workspace_id",id).put("base_revision_id",record.getString("base_revision_id")).put("content_hash",record.getString("content_hash")).put("render_startup_ms",System.currentTimeMillis()-started)
             event(call,"open",result,started)
             return ToolExecutionResult(result.toString())
