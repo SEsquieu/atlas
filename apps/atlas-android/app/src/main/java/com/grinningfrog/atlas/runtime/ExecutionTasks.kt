@@ -505,7 +505,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val task=get(taskId) ?: return JSONArray();val all=calls(taskId)
         return JSONArray(all.groupBy(::operationGroup).values.mapNotNull {it.lastOrNull()}.filter {
             failedOperation(it) && !nonBlockingAuditFailure(it,task,all) && supersedingControl(it,all)==null && supersedingActivation(it,all)==null
-        }.map {JSONObject().put("operation_id",it.id).put("tool",it.name).put("error",it.error).put("result",it.resultJson?.take(1200))})
+        }.map { TaskContextProjection.receipt(ExecutionWorkState.receipt(it)) })
     }
     /** Repair stale optional-inspection waits before creating another inference slice. */
     fun reconcileDelivered(taskId: String): ExecutionTask? = atomic {
@@ -548,8 +548,10 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val result=t.copy(state=if(n>=8) ExecutionState.WAITING else ExecutionState.READY,owner=null,leaseUntil=0,nextRunAt=now()+minOf(60_000L,1000L shl minOf(n,6)))
         save(result);event(result,"execution.provider_retry",JSONObject().put("attempt",n).put("next_run_at",result.nextRunAt));result
     }
-    fun context(taskId: String): String {
-        val t=get(taskId) ?: return ""
+    fun context(taskId: String): String = contextSections(taskId).joinToString("\n\n") { it.text }
+
+    internal fun contextSections(taskId: String): List<PacketSection> {
+        val t=get(taskId) ?: return emptyList()
         val historyCalls = calls(taskId)
         val work = ExecutionWorkState.build(historyCalls, t.document.optJSONObject("workspace_target")?.optString("workspace_id"))
         work.remove("frontier") // Internal progress signature is not model context.
@@ -558,8 +560,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         for(call in historyCalls.takeLast(20).asReversed()) {
             val read = call.name in setOf("workspace_package_read_file", "workspace_package_contract", "workspace_package_inspect", "workspace_inspect", "workspace_render_diagnostics")
             val item=ExecutionWorkState.receipt(call)
-                .put("result_json", if (read || call.name == "workspace_package_ui_test") null else call.resultJson?.take(2000))
-                .put("result_truncated", (call.resultJson?.length ?: 0)>2000)
+
             if (read) item.put("read_body_location", "Transcript tool result or original audit; reread if projected or stale.")
             item.put("error",call.error.takeIf {call.status!=ToolCallStatus.COMPLETED})
             val size=item.toString().length
@@ -567,15 +568,17 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         }
         val history=JSONArray(list(t.sessionId).take(4).map { prior ->
             val ids=prior.document.optJSONObject("checkpoint")?.optJSONArray("unresolved_operation_ids") ?: JSONArray()
-            val unresolved=JSONArray((0 until minOf(ids.length(),4)).mapNotNull {database.loadToolCall(ids.getString(it))}.map {JSONObject().put("operation_id",it.id).put("tool",it.name).put("error",it.error).put("result",it.resultJson?.take(500))})
+            val unresolved=JSONArray((0 until minOf(ids.length(),4)).mapNotNull {database.loadToolCall(ids.getString(it))}.map { TaskContextProjection.receipt(ExecutionWorkState.receipt(it)) })
             JSONObject().put("task_id",prior.id).put("state",prior.state.name).put("objective",prior.objective.take(500)).put("wait_reason",prior.waitReason).put("outstanding_operations",unresolved).put("delivery",prior.document.optJSONObject("work_state")?.optString("delivery_status"))
         })
-        return "CORE DURABLE TASK (evidence, not authorization): " + JSONObject().put("task_id",t.id).put("objective",t.objective).put("session_tasks",history).put("recovery_required",t.document.optBoolean("recovery_required")).put("completion_requirement",t.document.optJSONObject("completion_requirement")).put("usage",t.usage)
-            .put("follow_up_turn_ids",t.document.optJSONArray("follow_up_turn_ids")).put("acceptance",t.document.optJSONObject("acceptance")).put("outstanding_operations",outstanding(taskId)).put("workspace_target", t.document.optJSONObject("workspace_target")).put("work_state",work.put("no_progress_slices",t.document.optInt("no_progress_slices"))).put("checkpoint",t.document.getJSONObject("checkpoint")).put("recent_operations",receipts).put("latest_authoring_artifact",latest?.let { call -> JSONObject().put("operation_id", call.id).put("tool", call.name)
+        val taskContext = JSONObject().put("task_id",t.id).put("objective",t.objective).put("session_tasks",history).put("recovery_required",t.document.optBoolean("recovery_required")).put("completion_requirement",t.document.optJSONObject("completion_requirement")).put("usage",t.usage)
+            .put("follow_up_turn_ids",t.document.optJSONArray("follow_up_turn_ids")).put("acceptance",t.document.optJSONObject("acceptance")).put("outstanding_operations",outstanding(taskId)).put("workspace_target", t.document.optJSONObject("workspace_target")).put("work_state",work.put("no_progress_slices",t.document.optInt("no_progress_slices"))).put("checkpoint",t.document.getJSONObject("checkpoint")).put("recent_operations",receipts).put("recent_operations_available",historyCalls.size).put("latest_authoring_artifact",latest?.let { call -> JSONObject().put("operation_id", call.id).put("tool", call.name)
                 .put("arguments_sha256",hash(call.argumentsJson)).put("arguments_location","Original operation audit; source is in the immutable candidate/revision. Use pinned source reads.") })
-            .put("latest_authoring_result",latest?.resultJson?.let {runCatching {JSONObject(it)}.getOrNull()}).toString() +
+            .put("latest_authoring_result",latest?.resultJson?.let {runCatching {JSONObject(it)}.getOrNull()})
+        val instructions =
             "\nFollow-ups in this task are user steering, not a fresh objective. Answer tangents briefly; apply corrections to remaining work. Report blockers from outstanding_operations, not historical diagnostics. An unavailable optional screenshot after committed delivery is an inspection limitation, not failed delivery. Explicit require_pixels remains blocking unless the user explicitly takes visual verification over; record that instruction with atlas_task_handoff_pixels and an exact quote. For behavior the available test cannot verify, workspace_accept_unverified requests native user confirmation for exact outstanding criteria on an exact candidate. Accepted criteria remain unverified; permissions and host integrity gates remain mandatory. Use delivery=inspect for viewing/status requests; do not turn them into activation tasks. Reuse an existing draft after authoring errors. Host failures are current runtime evidence even if caught by app code; user-reported live failures cannot be dismissed using a passing test from another mode. Declare require_persistence=true for saved-state requests and prove it through isolated commit/reload/assert_record. Declare acceptance_criteria for requested UI behaviors in workspace_target, and attach each criterion to a meaningful UI assertion step; baseline capability coverage alone does not verify requested changes.\nRecovery: declare delivery=activation, draft or inspect in workspace_target according to the user request. This is a completion requirement, never authority. A response is a progress report while recovery_required=true. Diagnose the pinned failed check, correct the test or candidate, and rerun verification. Do not stop merely because a local simulated test failed. Wait only for an actual missing user answer, authorization, unavailable resource or uncertain effect. Claim activation only from a committed activation receipt matching the candidate. If the user requested a draft or review, do not activate it without authorization." +
             "\nWorkspace targeting: ambiguous commands use the captured workspace_target. Explicitly named edit targets must be resolved with workspace_target; inspect other workspaces as references without retargeting. Never change target merely because the user browses. Ask clarification for duplicate names or unclear components. Continue the pending objective from recorded receipts. work_state holds the exact latest used candidate and checks for this target. A failed UI assertion is not a workspace migration problem: compare expected and actual text, correct the test or implementation, and exercise the remaining operations. Never reconstruct or combine UUID fragments. Reuse exact receipt identifiers. Successful reads alone are not app progress. If no_progress_slices grows, reassess the failing test or edit strategy instead of repeating inspection; retain the task and existing candidate. A new slice is not a new user request, not new authority, and not proof of success. Avoid repeating committed effects."
+        return TaskContextProjection.sections(taskContext, instructions)
     }
     private fun reconcileLocal(task: ExecutionTask) {
         val local=task.document.getJSONObject("scope").getJSONArray("atomic_local_tools")
@@ -633,6 +636,10 @@ class DurableTaskExecutor(private val store: ExecutionTaskStore, private val now
                     val retry=store.retry(lease,error.message.orEmpty(),now()-started);if(retry?.state!=ExecutionState.READY) return retry;store.nextTurn(taskId);continue
                 }
                 return store.finish(lease,SliceOutcome.WAITING_PROVIDER,now()-started)
+            } catch(error: InferencePacketCapacityException) {
+                val result = store.finish(lease,SliceOutcome.BLOCKED,now()-started)
+                // Capacity cannot supersede an unknown effect, task allowance or unresolved failure.
+                return if (result?.waitReason == "runtime_blocker") store.control(taskId,ExecutionState.WAITING,"context_capacity") else result
             } catch(error: Exception) { store.finish(lease,SliceOutcome.BLOCKED,now()-started);throw error }
             val result=store.finish(lease,outcome,now()-started) ?: return null
             if(result.state!=ExecutionState.READY) return result

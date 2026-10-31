@@ -72,4 +72,51 @@ class HarnessContinuationTest {
         assertTrue(runCatching {reader.execute(read.copy(sessionId=other.id))}.isFailure)
         assertTrue(runCatching {reader.execute(read.copy(argumentsJson=JSONObject().put("operation_id",original.id).put("max_chars",6001).toString()))}.isFailure)
     }
+
+    @Test fun capacityBlockerStopsWithoutRetryingOrLosingTaskProgress() = runTest {
+        val task=task(); var attempts=0
+        val result=DurableTaskExecutor(store, sleep={ error("No automatic capacity retry") }).run(task.id) { _,_ ->
+            attempts++
+            throw InferencePacketCapacityException(JSONObject().put("text_characters",123112).put("limit_characters",128000))
+        }!!
+        assertEquals(1,attempts); assertEquals(ExecutionState.WAITING,result.state)
+        assertEquals("context_capacity",result.waitReason)
+        assertEquals(task.objective,result.objective)
+        assertNull(result.owner)
+        assertEquals(1,store.turns(task.id).size)
+    }
+
+    @Test fun runtimeAndReadEvidenceCanBeRetrievedButOtherSessionsAndToolsCannot() = runTest {
+        val task=task();store.claim(task.id,"owner")
+        val original=call(store.currentTurn(task.id),"atlas_runtime_status")
+        val error="bad runtime " + "😀".repeat(1000)
+        db.updateToolCall(original.id,ToolCallStatus.FAILED,error=error)
+        val storedError=db.loadToolCall(original.id)!!.error!!
+        val reader=ToolResultRead(db)
+        val args=JSONObject().put("operation_id",original.id).put("field","error").put("max_chars",100).toString()
+        val read=call(store.currentTurn(task.id),"atlas_tool_result_read").copy(argumentsJson=args)
+        val result=JSONObject(reader.execute(read).resultJson)
+        assertEquals(error.substring(0,result.getInt("end_char")),result.getString("fragment"))
+        assertEquals("error",result.getString("field"))
+        val privateTool=call(store.currentTurn(task.id),"unrelated_tool")
+        db.updateToolCall(privateTool.id,ToolCallStatus.COMPLETED,resultJson="{}")
+        assertTrue(runCatching {reader.execute(read.copy(argumentsJson=JSONObject().put("operation_id",privateTool.id).toString()))}.isFailure)
+        val other=db.createSession("Other","Other")
+        assertTrue(runCatching {reader.execute(read.copy(sessionId=other.id))}.isFailure)
+        assertEquals(storedError,db.loadToolCall(original.id)!!.error)
+    }
+
+    @Test fun capacityCannotHideAnUnknownOperationOutcomeOrPermitItsReplay() = runTest {
+        val task=task()
+        lateinit var uncertain: AtlasToolCall
+        val result=DurableTaskExecutor(store).run(task.id) { _,turn ->
+            uncertain=call(turn)
+            db.updateToolCall(uncertain.id,ToolCallStatus.UNKNOWN,error="Effect outcome is unknown")
+            throw InferencePacketCapacityException(JSONObject().put("text_characters",123112).put("limit_characters",128000))
+        }!!
+        assertEquals("unknown_operation_outcome",result.waitReason)
+        assertEquals(ExecutionState.WAITING,result.state)
+        assertEquals(ToolCallStatus.UNKNOWN,db.loadToolCall(uncertain.id)!!.status)
+        assertEquals(ExecutionState.WAITING,store.control(task.id,ExecutionState.READY,"resume")!!.state)
+    }
 }

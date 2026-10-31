@@ -159,6 +159,18 @@ class WorkspaceVisualDeviceTest {
             provenance=InferenceProvenance(domain=InferenceDomain.INTERACTIVE,purpose=InferencePurpose.USER_RESPONSE,userInitiated=true)))
         assertTrue(packet.getInt("text_characters")>56000)
         android.util.Log.i("AtlasHarnessBenchmark",packet.toString())
+        val pressured=InferenceRequest(sessionId="fixture",capability=RouteCapability.REASONING,
+            systemPrompt=system,userText="Keep testing the existing candidate",messages=listOf(InferenceMessage(MessageRole.USER,"x".repeat(32000))),tools=definitions,
+            provenance=InferenceProvenance(domain=InferenceDomain.INTERACTIVE,purpose=InferencePurpose.USER_RESPONSE,userInitiated=true))
+        val recovered=InferencePacketCompiler.prepare(pressured,listOf(
+            PacketSection("task","Exact candidate binding; passed=false; outcome=unknown; do not replay effects",required=true),
+            PacketSection("source_carry","s".repeat(8000)),PacketSection("old_diagnostics","d".repeat(100000))))
+        assertTrue(recovered.diagnostics.getInt("text_characters")+8192<=128000)
+        assertTrue(recovered.request.systemPrompt.contains("passed=false; outcome=unknown"))
+        assertEquals(pressured.messages,recovered.request.messages)
+        assertEquals(pressured.tools,recovered.request.tools)
+        assertTrue(recovered.diagnostics.getJSONArray("omitted_optional_sections").toString().contains("old_diagnostics"))
+        android.util.Log.i("AtlasHarnessBudgetRecovery",recovered.diagnostics.toString())
     }
     @Test fun privateWindowCapturesAndInteractsWhileSessionRemainsVisible()=runBlocking {
         val app=context.applicationContext as AtlasApplication
