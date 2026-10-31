@@ -312,6 +312,38 @@ class ContextAssemblerTest {
         assertEquals(diagnostics, messages[2].content)
     }
 
+    @Test fun reportHeavyContinuationRecoversWithoutLosingFailureIdentityOrAudit() {
+        val messages=mutableListOf(message(1,"old-slice",MessageRole.USER,"Finish the retained candidate"))
+        val fixture=listOf("workspace_visual_test" to 13240,"workspace_package_ui_test" to 10504,"workspace_package_ui_test" to 8288)
+        fixture.forEachIndexed { i, (name, size) ->
+            messages += message(2+i*2L,"old-slice",MessageRole.ASSISTANT,"").copy(toolCallsJson="""[{"id":"report-$i","name":"$name","arguments":"{}"}]""")
+            messages += message(3+i*2L,"old-slice",MessageRole.TOOL,org.json.JSONObject().put("candidate_id","exact-candidate").put("base_revision_id","exact-base")
+                .put("check_id","check-$i").put("passed",false).put("host_failure_count",1).put("layout",org.json.JSONObject().put("elements","x".repeat(size))).toString(),MessageKind.TOOL_RESULT).copy(toolCallId="report-$i")
+        }
+        val raw=messages.sumOf { ToolEvidenceProjection.cost(it) };assertTrue(raw>32000)
+        val a=ContextAssembler().assemble(session(),messages,emptyList(),null,null,1)
+        val b=ContextAssembler().assemble(session(),messages,emptyList(),null,null,2)
+        assertEquals(a.messages,b.messages)
+        assertTrue(a.messages.sumOf { it.content.length }<12000)
+        assertTrue(a.messages.any {it.content.contains("exact-candidate") && it.content.contains("\"passed\":false") && it.content.contains("atlas_tool_result_read")})
+        assertEquals(raw,messages.sumOf {ToolEvidenceProjection.cost(it)})
+        println("HARNESS_PACKET_BASELINE raw_characters=$raw projected_characters=${a.messages.sumOf {it.content.length}} messages=${a.messages.size}")
+    }
+    @Test fun manyCompletedWorkspaceCallsRecoverMessagePressureButKeepUnrelatedProtocolPairs() {
+        val messages=mutableListOf(message(1,"turn",MessageRole.USER,"Continue"))
+        repeat(20) { i ->
+            messages += message(2+i*2L,"turn",MessageRole.ASSISTANT,"").copy(toolCallsJson="""[{"id":"c-$i","name":"workspace_package_test","arguments":"{}"}]""")
+            messages += message(3+i*2L,"turn",MessageRole.TOOL,"{\"passed\":false,\"check_id\":\"check-$i\"}",MessageKind.TOOL_RESULT).copy(toolCallId="c-$i")
+        }
+        val context=ContextAssembler().assemble(session(),messages,emptyList(),null,null,1)
+        assertTrue(context.messages.size<=32)
+        assertTrue(context.messages.joinToString {it.content}.contains("check-0"))
+        val declarations=context.messages.flatMap {it.toolCalls}.map {it.id}.toSet()
+        val results=context.messages.mapNotNull {it.toolCallId}.toSet()
+        assertEquals(declarations,results)
+        assertEquals(41,messages.size)
+    }
+
     private fun session() = AtlasSession("session", "test", "stay coherent", SessionStatus.ACTIVE, 0, 0)
     private fun message(sequence: Long, turn: String, role: MessageRole, content: String, kind: MessageKind = MessageKind.DIALOGUE) = AtlasMessage(
         sequence = sequence, id = "message-$sequence", sessionId = "session", turnId = turn, role = role, content = content, createdAtMs = sequence, kind = kind,

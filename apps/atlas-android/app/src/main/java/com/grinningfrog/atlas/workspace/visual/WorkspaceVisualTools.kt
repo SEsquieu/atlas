@@ -19,10 +19,12 @@ import kotlin.math.roundToInt
 internal object WorkspaceVisualTools {
     fun create(database:AtlasDatabase,media:MediaRepository,client:WorkspaceVisualClient,cache:File):List<AtlasToolAdapter> =
         listOf(Status(database,client), Test(database,media,client,cache))
-    private fun owner(database:AtlasDatabase,call:AtlasToolCall):Pair<AtlasSession,String> {
+    private suspend fun owner(database:AtlasDatabase,call:AtlasToolCall):Pair<AtlasSession,String> {
         val original=database.loadSession(call.sessionId) ?: error("SESSION_UNAVAILABLE")
         val tasks=ExecutionTaskStore(database);val task=tasks.forTurn(call.turnId) ?: error("VISUAL_TEST_REQUIRES_DURABLE_TASK")
-        require(tasks.currentTurn(task.id)==call.turnId) {"STALE_VISUAL_SLICE"}
+        val invocation = currentCoroutineContext()[ToolExecutionContext]
+        if (invocation == null) require(tasks.currentTurn(task.id)==call.turnId) {"STALE_VISUAL_SLICE"}
+        else invocation.check(database, call)
         require(task.sessionId==original.id && task.state !in setOf(ExecutionState.CANCELLED,ExecutionState.COMPLETED,ExecutionState.FAILED,ExecutionState.PAUSED))
         return tasks.workspaceSession(original,call.turnId) to "${original.id}:${task.id}"
     }
@@ -58,7 +60,7 @@ internal object WorkspaceVisualTools {
             val execution=ExecutionTaskStore(database)
             if(action=="finish")execution.receipt(call)?.let {return ToolExecutionResult(it)}
             val task=execution.forTurn(call.turnId)!!
-            val lease=ExecutionLease(task.id,requireNotNull(task.owner),task.generation)
+            val lease=currentCoroutineContext()[ToolExecutionContext]?.lease ?: ExecutionLease(task.id,requireNotNull(task.owner),task.generation)
             execution.check(lease)
             if(action=="open")return open(call,session,owner,args,lease)
             require(!args.has("workspace_id") && !args.has("candidate_id") && !args.has("width_css") && !args.has("height_css")) {"Use only instance_id after open"}

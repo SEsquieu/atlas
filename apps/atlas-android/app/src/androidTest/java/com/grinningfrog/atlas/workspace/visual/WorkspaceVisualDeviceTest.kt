@@ -105,6 +105,61 @@ class WorkspaceVisualDeviceTest {
             assertEquals(0x12,Color.red(pixel(client,owner,id)))
         } finally {id?.let {runCatching {client.request(request("close",owner,it))}}}
     }
+    @Test fun queuedVisualOpenCrossesSliceBoundaryUnderTheCurrentExecutionLease()=runBlocking {
+        val app=context.applicationContext as AtlasApplication; val db=app.database
+        val session=db.createSession("Queued visual", "Continue private testing")
+        db.updateSessionStatus(session.id,SessionStatus.ACTIVE)
+        val tasks=ExecutionTaskStore(db)
+        val task=tasks.create(db.loadSession(session.id)!!,"Queued visual",db.createTurn(session.id,"user").id,ExecutionBudget())
+        val workspace=db.createComposableWorkspace("Queued fixture","")
+        var lease=tasks.claim(task.id,"first")!!
+        tasks.bindWorkspace(tasks.currentTurn(task.id),workspace.id,"inspect")
+        val bundle=fixture()
+        val staged=WorkspacePackageRepository(db).stage(workspace.id,session.workspaceId,workspace.liveRevisionId,null,bundle.getJSONObject("manifest"),bundle.getJSONObject("files"),session.id,tasks.currentTurn(task.id))
+        val scenario=ActivityScenario.launch(MainActivity::class.java)
+        var handle:String?=null
+        val harness=ToolHarness(db,{_,_->error("No camera")},{DeviceHealth()},additionalTools=WorkspaceVisualTools.create(db,app.mediaRepository,app.workspaceVisuals,context.cacheDir),executionLease={lease})
+        try {
+            scenario.onActivity {activity -> activity.setContent {
+                val view=LocalView.current
+                Box(Modifier.fillMaxSize().onGloballyPositioned {c -> val pos=c.positionInWindow();WorkspaceViewport.measured(view,pos.x.toInt(),pos.y.toInt(),c.size.width,c.size.height)}) {Text("Session stays visible")}
+            }}
+            withTimeout(8_000) {while(withContext(Dispatchers.Main.immediate) {runCatching {WorkspaceViewport.snapshot()}.isFailure})delay(50)}
+            val original=tasks.currentTurn(task.id)
+            val args=JSONObject().put("action","open").put("workspace_id",workspace.id).put("candidate_id",staged.getString("candidate_id"))
+            val call=AtlasToolCall(UUID.randomUUID().toString(),session.id,original,"workspace_visual_test",args.toString(),ToolCallStatus.PROPOSED,ToolRisk.SESSION_WRITE,false,UUID.randomUUID().toString(),createdAtMs=System.currentTimeMillis(),updatedAtMs=System.currentTimeMillis())
+            db.insertToolCall(call)
+            tasks.finish(lease,SliceOutcome.YIELDED,1);val next=tasks.nextTurn(task.id);lease=tasks.claim(task.id,"continued")!!
+            tasks.reserveTool(lease,next,call.id);db.updateToolCall(call.id,ToolCallStatus.RUNNING)
+            val opened=withContext(ToolExecutionContext(lease,next,call.id,original)) {harness.execute(call)}
+            handle=JSONObject(opened.resultJson).getString("instance_id")
+            db.updateToolCall(call.id,ToolCallStatus.COMPLETED,resultJson=opened.resultJson)
+            assertEquals(original,db.loadToolCall(call.id)!!.turnId)
+            assertNotEquals(original,next)
+            val owner="${session.id}:${task.id}"
+            assertEquals(0x12,Color.red(pixel(app.workspaceVisuals,owner,handle)))
+            app.workspaceVisuals.request(request("close",owner,handle));handle=null
+        } finally {
+            handle?.let {runCatching {app.workspaceVisuals.request(request("close","${session.id}:${task.id}",it))}}
+            tasks.control(task.id,ExecutionState.CANCELLED,"cleanup");db.updateSessionStatus(session.id,SessionStatus.DONE)
+            scenario.close();db.setComposableWorkspaceArchived(workspace.id,true);db.deleteComposableWorkspace(workspace.id)
+        }
+    }
+    @Test fun installedCatalogAndConversationFitTheWholePacketBudget() {
+        val app=context.applicationContext as AtlasApplication
+        val catalog=com.grinningfrog.atlas.workspace.WorkspaceTools.create(app.database,app.mediaRepository,context)+
+            WorkspaceVisualTools.create(app.database,app.mediaRepository,app.workspaceVisuals,context.cacheDir)+
+            com.grinningfrog.atlas.runtime.core.RuntimeCoreTools.create(app.database,app.runtimeBundles,app.runtimeCore)+
+            AndroidContextTools.create(context,app.database,app.settings)
+        val definitions=ToolHarness(app.database,{_,_->error("No camera")},{DeviceHealth()},additionalTools=catalog).definitions
+        val session=com.grinningfrog.atlas.model.AtlasSession("fixture","Catalog","Verify the candidate",SessionStatus.ACTIVE,0,0)
+        val system=ContextAssembler().assemble(session,emptyList(),emptyList(),null,null,0).systemPrompt
+        val packet=InferencePacketCompiler.compile(InferenceRequest(sessionId="fixture",capability=RouteCapability.REASONING,
+            systemPrompt=system+"x".repeat(24000),userText="Verify",messages=listOf(InferenceMessage(MessageRole.USER,"x".repeat(32000))),tools=definitions,
+            provenance=InferenceProvenance(domain=InferenceDomain.INTERACTIVE,purpose=InferencePurpose.USER_RESPONSE,userInitiated=true)))
+        assertTrue(packet.getInt("text_characters")>56000)
+        android.util.Log.i("AtlasHarnessBenchmark",packet.toString())
+    }
     @Test fun privateWindowCapturesAndInteractsWhileSessionRemainsVisible()=runBlocking {
         val app=context.applicationContext as AtlasApplication
         val client=app.workspaceVisuals
