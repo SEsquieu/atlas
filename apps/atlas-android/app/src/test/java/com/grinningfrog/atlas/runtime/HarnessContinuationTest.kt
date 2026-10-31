@@ -105,4 +105,18 @@ class HarnessContinuationTest {
         assertTrue(runCatching {reader.execute(read.copy(sessionId=other.id))}.isFailure)
         assertEquals(storedError,db.loadToolCall(original.id)!!.error)
     }
+
+    @Test fun capacityCannotHideAnUnknownOperationOutcomeOrPermitItsReplay() = runTest {
+        val task=task()
+        lateinit var uncertain: AtlasToolCall
+        val result=DurableTaskExecutor(store).run(task.id) { _,turn ->
+            uncertain=call(turn)
+            db.updateToolCall(uncertain.id,ToolCallStatus.UNKNOWN,error="Effect outcome is unknown")
+            throw InferencePacketCapacityException(JSONObject().put("text_characters",123112).put("limit_characters",128000))
+        }!!
+        assertEquals("unknown_operation_outcome",result.waitReason)
+        assertEquals(ExecutionState.WAITING,result.state)
+        assertEquals(ToolCallStatus.UNKNOWN,db.loadToolCall(uncertain.id)!!.status)
+        assertEquals(ExecutionState.WAITING,store.control(task.id,ExecutionState.READY,"resume")!!.state)
+    }
 }

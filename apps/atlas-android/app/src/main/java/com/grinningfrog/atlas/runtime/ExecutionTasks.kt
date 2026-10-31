@@ -637,8 +637,9 @@ class DurableTaskExecutor(private val store: ExecutionTaskStore, private val now
                 }
                 return store.finish(lease,SliceOutcome.WAITING_PROVIDER,now()-started)
             } catch(error: InferencePacketCapacityException) {
-                store.finish(lease,SliceOutcome.BLOCKED,now()-started)
-                return store.control(taskId,ExecutionState.WAITING,"context_capacity")
+                val result = store.finish(lease,SliceOutcome.BLOCKED,now()-started)
+                // Capacity cannot supersede an unknown effect, task allowance or unresolved failure.
+                return if (result?.waitReason == "runtime_blocker") store.control(taskId,ExecutionState.WAITING,"context_capacity") else result
             } catch(error: Exception) { store.finish(lease,SliceOutcome.BLOCKED,now()-started);throw error }
             val result=store.finish(lease,outcome,now()-started) ?: return null
             if(result.state!=ExecutionState.READY) return result
