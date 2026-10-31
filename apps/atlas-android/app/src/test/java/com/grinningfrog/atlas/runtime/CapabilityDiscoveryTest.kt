@@ -62,19 +62,26 @@ class CapabilityDiscoveryTest {
     @Test fun researchProvenanceAndResumeSurviveCoreLinkedSlicesButNotAnotherTask() = runTest {
         val store=ExecutionTaskStore(db)
         val task=store.create(db.loadSession(session.id)!!,"Analyze an unsupported format",turn.id,ExecutionBudget())
-        val h=harness(adapter("research",ToolRisk.READ_ONLY,research=true))
-        h.execute(call(CapabilityDiscovery.TOOL,blocked))
-        h.execute(call("research"))
-        val lease=store.claim(task.id,"runner")!!
+        var lease=store.claim(task.id,"runner")!!
+        val h=ToolHarness(db,{_,_->error("Unexpected capture")},{DeviceHealth()},additionalTools=listOf(adapter("research",ToolRisk.READ_ONLY,research=true)),executionLease={lease})
+        suspend fun execute(name:String,args:String="{}",id:String=turn.id):ToolExecutionResult {
+            val c=call(name,args,id);db.insertToolCall(c)
+            val result=h.execute(c);db.updateToolCall(c.id,ToolCallStatus.COMPLETED,resultJson=result.resultJson)
+            return result
+        }
+        execute(CapabilityDiscovery.TOOL,blocked)
+        execute("research")
         store.finish(lease,SliceOutcome.YIELDED,1)
-        val continuation=store.nextTurn(task.id)
-        assertTrue(JSONObject(h.execute(call(CapabilityDiscovery.TOOL,candidate,continuation)).resultJson).getBoolean("ok"))
-        h.execute(call(CapabilityDiscovery.TOOL,"""{"stage":"resume_local","reason":"Use installed local tools"}""",continuation))
+        val continuation=store.nextTurn(task.id);lease=store.claim(task.id,"continued")!!
+        assertTrue(JSONObject(execute(CapabilityDiscovery.TOOL,candidate,continuation).resultJson).getBoolean("ok"))
+        execute(CapabilityDiscovery.TOOL,"""{"stage":"resume_local","reason":"Use installed local tools"}""",continuation)
         assertTrue(CapabilityDiscovery(db).localWorkResumed(continuation))
+        store.finish(lease,SliceOutcome.RESPONDED,1)
         val unrelated=db.createTurn(session.id,"text")
-        store.create(db.loadSession(session.id)!!,"Different objective",unrelated.id,ExecutionBudget())
-        h.execute(call(CapabilityDiscovery.TOOL,blocked,unrelated.id))
-        assertTrue(runCatching {h.execute(call(CapabilityDiscovery.TOOL,candidate,unrelated.id))}.isFailure)
+        val other=store.create(db.loadSession(session.id)!!,"Different objective",unrelated.id,ExecutionBudget())
+        lease=store.claim(other.id,"other")!!
+        execute(CapabilityDiscovery.TOOL,blocked,unrelated.id)
+        assertTrue(runCatching {execute(CapabilityDiscovery.TOOL,candidate,unrelated.id)}.isFailure)
     }
 
     @Test fun resumeRestoresOnlyInstalledLocalMutationsAndNewBlockerReentersDiscovery() = runTest {

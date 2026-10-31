@@ -67,6 +67,7 @@ class ToolHarness(
     private val executionLease: () -> ExecutionLease? = { null },
 ) {
     private val discovery = CapabilityDiscovery(database)
+    private val installedTools = additionalTools + ToolResultRead(database)
     private val builtInDefinitions: List<ToolDefinition> = listOf(
         ToolDefinition(
             name = "atlas_task_handoff_pixels",
@@ -103,9 +104,9 @@ class ToolHarness(
         risk = ToolRisk.SESSION_WRITE,
         maxCallsPerTurn = 2,
     )
-    val definitions: List<ToolDefinition> = builtInDefinitions + clarificationDefinition + CapabilityDiscovery.definition + additionalTools.map { it.definition }
+    val definitions: List<ToolDefinition> = builtInDefinitions + clarificationDefinition + CapabilityDiscovery.definition + installedTools.map { it.definition }
 
-    fun atomicLocalTools() = additionalTools.filter { it is AtlasLocalMutationAdapter || it is AtlasReceiptBackedAdapter }.map { it.definition.name } + listOf("atlas_remember","atlas_task_handoff_pixels")
+    fun atomicLocalTools() = installedTools.filter { it is AtlasLocalMutationAdapter || it is AtlasReceiptBackedAdapter }.map { it.definition.name } + listOf("atlas_remember","atlas_task_handoff_pixels")
 
     fun definition(name: String) = definitions.firstOrNull { it.name == name }
 
@@ -124,7 +125,7 @@ class ToolHarness(
             val error = runCatching { CapabilityDiscovery.validate(arguments) }.exceptionOrNull()
             return ToolPolicyDecision(error == null, false, ToolRisk.SESSION_WRITE, error?.message ?: "Audit-only capability discovery control; no external access granted")
         }
-        additionalTools.firstOrNull { it.definition.name == proposal.name }?.let {
+        installedTools.firstOrNull { it.definition.name == proposal.name }?.let {
             val decision = it.evaluate(if (it.definition.name.startsWith("workspace_")) ExecutionTaskStore(database).workspaceSession(session, turnId) else session, proposal)
             if (turnId != null && discovery.active(turnId) && !(discovery.localWorkResumed(turnId) && it.supportsLocalMutation && decision.risk == ToolRisk.SESSION_WRITE) && (decision.requiresConfirmation || decision.risk != ToolRisk.READ_ONLY))
                 return ToolPolicyDecision(false, false, decision.risk, "Discovery cannot authorize additional research permissions")
@@ -156,10 +157,21 @@ class ToolHarness(
     }
 
     private fun discoveryAllowed(name: String, turnId: String): Boolean = name in setOf(CapabilityDiscovery.TOOL, CLARIFICATION_TOOL) ||
-        additionalTools.any { it.definition.name == name && (it.supportsCapabilityDiscovery || it.supportsLocalDiagnostics) && it.definition.risk == ToolRisk.READ_ONLY } ||
-        (discovery.localWorkResumed(turnId) && additionalTools.any { it.definition.name == name && it.supportsLocalMutation && it.definition.risk == ToolRisk.SESSION_WRITE })
+        installedTools.any { it.definition.name == name && (it.supportsCapabilityDiscovery || it.supportsLocalDiagnostics) && it.definition.risk == ToolRisk.READ_ONLY } ||
+        (discovery.localWorkResumed(turnId) && installedTools.any { it.definition.name == name && it.supportsLocalMutation && it.definition.risk == ToolRisk.SESSION_WRITE })
 
     suspend fun execute(call: AtlasToolCall): ToolExecutionResult {
+        val task = ExecutionTaskStore(database).forTurn(call.turnId)
+        val invocation = kotlinx.coroutines.currentCoroutineContext()[ToolExecutionContext]
+            ?: executionLease()?.let { ToolExecutionContext(it, call.turnId, call.id, call.turnId) }
+        if (task != null) requireNotNull(invocation) { "Task tool requires an execution lease" }.check(database, call)
+        return if (invocation == null) executeAuthorized(call, null) else kotlinx.coroutines.withContext(invocation) {
+            invocation.check(database, call)
+            executeAuthorized(call, invocation).also { invocation.check(database, call) }
+        }
+    }
+
+    private suspend fun executeAuthorized(call: AtlasToolCall, invocation: ToolExecutionContext?): ToolExecutionResult {
         val executionStore=ExecutionTaskStore(database)
         val history=executionStore.forTurn(call.turnId)?.let {executionStore.calls(it.id)} ?: database.loadTurnToolCalls(call.turnId)
         require(!ToolRetryPolicy.identicalDeterministicFailure(call,history)) { "IDENTICAL_RETRY_SUPPRESSED: Correct the arguments or report the blocker; identical deterministic failures persist across slices." }
@@ -171,7 +183,7 @@ class ToolHarness(
             error("Capability discovery is read-only; record stage=resume_local before installed local work. External acquisition still requires separate authorization")
         }
         if (call.name == CapabilityDiscovery.TOOL) return discovery.record(call, arguments)
-        val adapter = additionalTools.firstOrNull { it.definition.name == call.name }
+        val adapter = installedTools.firstOrNull { it.definition.name == call.name }
         if (researching && adapter?.supportsLocalMutation == true && adapter.definition.risk == ToolRisk.SESSION_WRITE) {
             val session = requireNotNull(database.loadSession(call.sessionId)) { "Session is unavailable" }
             val policy = adapter.evaluate(if (call.name.startsWith("workspace_")) ExecutionTaskStore(database).workspaceSession(session, call.turnId) else session, ToolCallProposal(call.id, call.name, call.argumentsJson))
@@ -216,11 +228,11 @@ class ToolHarness(
             "atlas_task_handoff_pixels" -> {
                 require(arguments.keys().asSequence().toSet()==setOf("user_quote"))
                 val store=ExecutionTaskStore(database)
-                store.localOperation(call,executionLease()) {ToolExecutionResult(store.handOffPixels(call,arguments.getString("user_quote")).toString())}
+                store.localOperation(call,invocation?.lease ?: executionLease()) {ToolExecutionResult(store.handOffPixels(call,arguments.getString("user_quote")).toString())}
             }
-            "atlas_remember" -> ExecutionTaskStore(database).localOperation(call, executionLease()) { executeMemory(call, arguments) }
-            else -> additionalTools.firstOrNull { it.definition.name == call.name }?.let { adapter ->
-                if (adapter is AtlasLocalMutationAdapter) ExecutionTaskStore(database).localOperation(call, executionLease()) { adapter.executeLocal(call) } else adapter.execute(call)
+            "atlas_remember" -> ExecutionTaskStore(database).localOperation(call, invocation?.lease ?: executionLease()) { executeMemory(call, arguments) }
+            else -> installedTools.firstOrNull { it.definition.name == call.name }?.let { adapter ->
+                if (adapter is AtlasLocalMutationAdapter) ExecutionTaskStore(database).localOperation(call, invocation?.lease ?: executionLease()) { adapter.executeLocal(call) } else adapter.execute(call)
             }
                 ?: error("Tool ${call.name} is not registered")
         }

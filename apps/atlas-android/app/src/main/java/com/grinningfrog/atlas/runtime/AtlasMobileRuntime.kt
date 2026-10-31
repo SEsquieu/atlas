@@ -547,6 +547,7 @@ class AtlasMobileRuntime(
             val turnSession = database.loadSession(session.id) ?: session
             step += 1
             database.updateTurn(turnId, TurnStatus.ASSEMBLING_CONTEXT, stepCount = step)
+            val preparationStarted = System.nanoTime()
             val summary = database.loadSummary(session.id)
             val task = executionTasks.get(lease.taskId)!!
             val taskTurnIds = executionTasks.turns(task.id).toSet()
@@ -607,13 +608,15 @@ class AtlasMobileRuntime(
                     (runtimeDevelopment || it.name !in setOf("atlas_runtime_read", "atlas_runtime_stage", "atlas_runtime_activate")) && (visualDevelopment || it.name != "workspace_visual_test") }.map(WorkspaceArgumentBinding::definition) else emptyList(),
                 systemPrompt = baseRequest.systemPrompt + if (suppressed.isEmpty()) "" else "\nCORE RETRY LIMIT: ${suppressed.joinToString()} repeatedly rejected. Do not repeat these calls. Correct a different control or report the unresolved blocker honestly; discovery resume_local only restores installed local mutations under ordinary policy.",
             )
+            val packet = InferencePacketCompiler.compile(request)
             database.appendEvent(session.id, "context.assembled", JSONObject().apply {
                 put("turnId", turnId); put("step", step); put("messageIds", org.json.JSONArray(context.includedMessageIds)); put("projectedMessageIds", org.json.JSONArray(context.projectedMessageIds))
                 put("omittedMessages", context.omittedMessageCount); put("approximateCharacters", context.approximateCharacters)
                 put("retainedSourceCharacters", context.retainedSourceCharacters)
+                put("packet", packet); put("preparation_us", (System.nanoTime() - preparationStarted) / 1000)
                 put("memoryCount", memories.size); put("summaryThrough", summary?.throughMessageSequence); put("toolsAvailable", request.tools.size)
             })
-            val estimatedInput = (request.systemPrompt.length + request.messages.sumOf { it.content.length } + request.tools.sumOf { it.parametersJson.length } + 3L) / 4 + if (request.image != null) 4096L else 0L
+            val estimatedInput = (packet.getLong("text_characters") + 3L) / 4 + if (request.image != null) 4096L else 0L
             if (!executionTasks.reserveInference(lease, estimatedInput.coerceAtLeast(1), maxOf(2048L, request.responseContract?.maxOutputTokens?.toLong() ?: 2048L), request.requestId)) { executionTasks.control(lease.taskId, ExecutionState.WAITING, "task_allowance"); break }
             database.updateTurn(turnId, TurnStatus.WAITING_FOR_MODEL, stepCount = step)
             publish(phase = RuntimePhase.THINKING)
@@ -1040,7 +1043,10 @@ class AtlasMobileRuntime(
         database.updateToolCall(call.id, ToolCallStatus.RUNNING)
         publish()
         try {
-            val result = toolHarness.execute(call)
+            val dispatchLease = activeExecutionLease
+            val result = if (dispatchLease == null) toolHarness.execute(call) else withContext(
+                ToolExecutionContext(dispatchLease, requireNotNull(activeTurnId), call.id, call.turnId)
+            ) { toolHarness.execute(call) }
             activeExecutionLease?.let(executionTasks::check)
             database.updateToolCall(call.id, ToolCallStatus.COMPLETED, resultJson = result.resultJson)
             recordToolResult(call, result.resultJson)

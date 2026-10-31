@@ -49,7 +49,10 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
     ): AssembledContext {
         val eligible = compactPackageSource(messages.filter { it.kind != MessageKind.INTERNAL })
         val protocolSafe = recoverReadContext(compactDuplicateReads(sanitizeToolProtocol(eligible)))
-        val selected = selectRecentMessages(protocolSafe)
+        val proposals = protocolSafe.flatMap { ToolEvidenceProjection.calls(it.toolCallsJson) }.associateBy { it.id }
+        val reports = protocolSafe.map { message -> proposals[message.toolCallId]?.let { ToolEvidenceProjection.project(message, it) } ?: message }
+        val recovered = ToolEvidenceProjection.recoverBatches(reports, budget.maxConversationCharacters, budget.maxMessages)
+        val selected = selectRecentMessages(recovered)
         val memoryBlock = formatMemories(memories, nowMs)
         val sourceCarry=retainedSourceBlock(retainedSourceReads,selected)
         val system = buildString {
@@ -281,7 +284,7 @@ class ContextAssembler(private val budget: ContextBudget = ContextBudget()) {
      * Never project mutations here: their outcome receipts must remain explicit. */
     private fun recoverReadContext(messages: List<AtlasMessage>): List<AtlasMessage> {
         val readTools = setOf("workspace_inspect", "workspace_package_inspect", "workspace_package_contract",
-            "workspace_render_diagnostics", "workspace_package_read_file")
+            "workspace_render_diagnostics", "workspace_package_read_file", "atlas_tool_result_read")
         val calls = messages.flatMap { parseToolCalls(it.toolCallsJson) }.associateBy { it.id }
         val projected = messages.map { message ->
             val name = calls[message.toolCallId]?.name
