@@ -26,10 +26,10 @@ internal object ToolEvidenceProjection {
             .put("detail_tool", "atlas_tool_result_read")
             .put("notice", "Bounded report view; omitted details are unknown. Full audit and checks are unchanged. Read the original tool result by operation_id for missing details.")
         // Scalar verdict and exact artifact identities have priority over nested diagnostics.
-        val omitted = JSONArray()
-        for (key in keys) if (raw.has(key) && raw.get(key) !is JSONObject && raw.get(key) !is JSONArray && raw.get(key).toString().length <= 600) {
+        val omitted = linkedSetOf<String>()
+        for (key in (listOf("ok", "passed", "cancelled", "runtime_error_count", "host_failure_count") + keys).distinct()) if (raw.has(key) && raw.get(key) !is JSONObject && raw.get(key) !is JSONArray && raw.get(key).toString().length <= 600) {
             out.put(key, raw.get(key))
-            if (out.toString().length > MAX_CHARACTERS - 1400) { out.remove(key); omitted.put(key) }
+            if (out.toString().length > MAX_CHARACTERS - 1400) { out.remove(key); omitted.add(key) }
         }
         val failed = raw.optJSONArray("steps")?.let { steps -> JSONArray((0 until steps.length()).mapNotNull { steps.optJSONObject(it) }.filter { !it.optBoolean("passed") }.map { step ->
             JSONObject().apply { for (key in listOf("index", "action", "selector", "failure_kind", "actual_text", "evidence")) if (step.has(key)) {
@@ -43,9 +43,9 @@ internal object ToolEvidenceProjection {
         for (key in keys) if (raw.has(key) && !out.has(key)) candidates += key to raw.get(key)
         for ((key, value) in candidates) {
             out.put(key, value)
-            if (out.toString().length > MAX_CHARACTERS - 1400) { out.remove(key); omitted.put(key) }
+            if (out.toString().length > MAX_CHARACTERS - 1400) { out.remove(key); omitted.add(key) }
         }
-        out.put("omitted_fields", omitted)
+        out.put("omitted_fields", JSONArray(omitted.toList()))
         return message.copy(content = out.toString(), providerContextJson = null)
     }
 

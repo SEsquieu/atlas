@@ -344,6 +344,19 @@ class ContextAssemblerTest {
         assertEquals(41,messages.size)
     }
 
+    @Test fun boundedReportRetainsNegativeVerdictWhenOtherFieldsExhaustTheView() {
+        val raw=org.json.JSONObject().put("passed",false).put("host_failure_count",2)
+        for(key in listOf("workspace_id","candidate_id","revision_id","base_revision_id","content_hash","error","error_code","evidence_scope","criterion_evidence","profile","viewport","startup"))raw.put(key,"x".repeat(600))
+        raw.put("extra","x".repeat(10000))
+        val original=message(3,"turn",MessageRole.TOOL,raw.toString(),MessageKind.TOOL_RESULT).copy(toolCallId="report")
+        val projected=ToolEvidenceProjection.project(original,com.grinningfrog.atlas.model.ToolCallProposal("report","workspace_package_ui_test","{}"))
+        val result=org.json.JSONObject(projected.content)
+        assertFalse(result.getBoolean("passed"));assertEquals(2,result.getInt("host_failure_count"))
+        assertTrue(projected.content.length<=ToolEvidenceProjection.MAX_CHARACTERS)
+        assertTrue(result.getJSONArray("omitted_fields").length()>0)
+        assertEquals(raw.toString(),original.content)
+    }
+
     private fun session() = AtlasSession("session", "test", "stay coherent", SessionStatus.ACTIVE, 0, 0)
     private fun message(sequence: Long, turn: String, role: MessageRole, content: String, kind: MessageKind = MessageKind.DIALOGUE) = AtlasMessage(
         sequence = sequence, id = "message-$sequence", sessionId = "session", turnId = turn, role = role, content = content, createdAtMs = sequence, kind = kind,
