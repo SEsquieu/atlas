@@ -26,7 +26,9 @@ class InferencePacketCompilerTest {
 
     @Test fun sharesBudgetAcrossSourceDiagnosticsAndSchemasWithoutChangingProtocol() {
         val r = request().copy(systemPrompt="policy".repeat(3000),
-            messages=listOf(InferenceMessage(MessageRole.USER,"Continue candidate " + "u".repeat(22000))),
+            messages=listOf(InferenceMessage(MessageRole.USER,"Continue candidate " + "u".repeat(22000)),
+                InferenceMessage(MessageRole.ASSISTANT,"",toolCalls=listOf(ToolCallProposal("exact-operation","stage","{\"candidate_id\":\"exact\"}"))),
+                InferenceMessage(MessageRole.TOOL,"{\"passed\":false}",toolCallId="exact-operation")),
             tools=listOf(ToolDefinition("stage","schema".repeat(6000),"{}",ToolRisk.SESSION_WRITE)))
         val sections = listOf(PacketSection("task", "candidate=exact; passed=false; activated=false", true),
             PacketSection("source", "s".repeat(30000)), PacketSection("diagnostics", "d".repeat(30000)))

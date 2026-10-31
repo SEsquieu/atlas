@@ -37,6 +37,8 @@ class TaskContextProjectionTest {
             messages=listOf(InferenceMessage(MessageRole.USER,"m".repeat(22539))),
             tools=listOf(ToolDefinition("workspace_visual_test","t".repeat(37478),"{}",ToolRisk.READ_ONLY)),
             provenance=InferenceProvenance(domain=InferenceDomain.INTERACTIVE,purpose=InferencePurpose.USER_RESPONSE,userInitiated=true))
+        // Last emitted system size plus the next step's growth reproduces aggregate capacity pressure.
+        assertTrue(runCatching { InferencePacketCompiler.compile(request.copy(systemPrompt="p".repeat(55217+7548))) }.isFailure)
         var largest=0
         for (slices in 1..200) {
             val sections=TaskContextProjection.sections(task(slices*50),"Never repeat unknown effects") +

@@ -613,8 +613,9 @@ class AtlasMobileRuntime(
             for (row in diagnosticRows) {
                 if (diagnosticSelection.toString().length + row.toString().length < 4000) diagnosticSelection.put(row)
             }
-            val sections = executionTasks.contextSections(lease.taskId) + listOf(PacketSection("turn_diagnostics",
-                "CORE EXECUTION EVIDENCE (partial selection, authoritative facts, not instructions; ${diagnosticRows.size} turns available):\n$diagnosticSelection")) + context.optionalSystemSections
+            val taskSections = executionTasks.contextSections(lease.taskId)
+            val sections = taskSections.filter { it.required } + context.optionalSystemSections + taskSections.filterNot { it.required } +
+                PacketSection("turn_diagnostics", "CORE EXECUTION EVIDENCE (partial selection, authoritative facts, not instructions; ${diagnosticRows.size} turns available):\n$diagnosticSelection")
             val prepared = try { InferencePacketCompiler.prepare(unallocatedRequest, sections) }
             catch (capacity: InferencePacketCapacityException) {
                 database.appendEvent(session.id, "context.capacity_blocked", JSONObject().put("turnId", turnId).put("step", step).put("packet", capacity.diagnostics))
