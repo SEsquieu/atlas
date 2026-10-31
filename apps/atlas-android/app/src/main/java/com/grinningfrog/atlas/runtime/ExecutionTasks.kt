@@ -505,7 +505,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         val task=get(taskId) ?: return JSONArray();val all=calls(taskId)
         return JSONArray(all.groupBy(::operationGroup).values.mapNotNull {it.lastOrNull()}.filter {
             failedOperation(it) && !nonBlockingAuditFailure(it,task,all) && supersedingControl(it,all)==null && supersedingActivation(it,all)==null
-        }.map {JSONObject().put("operation_id",it.id).put("tool",it.name).put("error",it.error).put("result",it.resultJson?.take(1200))})
+        }.map { TaskContextProjection.receipt(ExecutionWorkState.receipt(it)) })
     }
     /** Repair stale optional-inspection waits before creating another inference slice. */
     fun reconcileDelivered(taskId: String): ExecutionTask? = atomic {
@@ -568,7 +568,7 @@ class ExecutionTaskStore(private val database: AtlasDatabase, private val now: (
         }
         val history=JSONArray(list(t.sessionId).take(4).map { prior ->
             val ids=prior.document.optJSONObject("checkpoint")?.optJSONArray("unresolved_operation_ids") ?: JSONArray()
-            val unresolved=JSONArray((0 until minOf(ids.length(),4)).mapNotNull {database.loadToolCall(ids.getString(it))}.map {JSONObject().put("operation_id",it.id).put("tool",it.name).put("error",it.error).put("result",it.resultJson?.take(500))})
+            val unresolved=JSONArray((0 until minOf(ids.length(),4)).mapNotNull {database.loadToolCall(ids.getString(it))}.map { TaskContextProjection.receipt(ExecutionWorkState.receipt(it)) })
             JSONObject().put("task_id",prior.id).put("state",prior.state.name).put("objective",prior.objective.take(500)).put("wait_reason",prior.waitReason).put("outstanding_operations",unresolved).put("delivery",prior.document.optJSONObject("work_state")?.optString("delivery_status"))
         })
         val taskContext = JSONObject().put("task_id",t.id).put("objective",t.objective).put("session_tasks",history).put("recovery_required",t.document.optBoolean("recovery_required")).put("completion_requirement",t.document.optJSONObject("completion_requirement")).put("usage",t.usage)
