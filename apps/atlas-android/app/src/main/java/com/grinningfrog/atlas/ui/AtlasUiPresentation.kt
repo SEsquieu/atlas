@@ -20,7 +20,7 @@ object AtlasUiPresentation {
 
     fun attentionTasks(snapshot: RuntimeSnapshot) = snapshot.executionTasks.filter {
         it.sessionId == snapshot.session?.id && it.state == com.grinningfrog.atlas.runtime.ExecutionState.WAITING &&
-            it.waitReason in setOf("clarification", "authorization", "unknown_operation_outcome", "task_allowance", "unresolved_tool_failure", "repeated_failure", "runtime_blocker", "context_cutoff")
+            it.waitReason in setOf("clarification", "authorization", "unknown_operation_outcome", "task_allowance", "unresolved_tool_failure", "repeated_failure", "runtime_blocker", "context_cutoff", "context_capacity")
     }
     fun needsUserAction(snapshot: RuntimeSnapshot): Boolean = snapshot.session?.status?.let { status -> status != SessionStatus.DONE } == true &&
         (snapshot.pendingClarification?.let { it.blocking && it.status == com.grinningfrog.atlas.model.ClarificationStatus.WAITING } == true ||

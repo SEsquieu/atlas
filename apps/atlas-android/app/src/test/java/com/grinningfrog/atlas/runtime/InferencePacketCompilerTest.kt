@@ -23,4 +23,40 @@ class InferencePacketCompilerTest {
         assertTrue(a.getInt("text_utf8_bytes")>a.getInt("text_characters"))
         assertEquals(8192,a.getInt("response_headroom_characters"))
     }
+
+    @Test fun sharesBudgetAcrossSourceDiagnosticsAndSchemasWithoutChangingProtocol() {
+        val r = request().copy(systemPrompt="policy".repeat(3000),
+            messages=listOf(InferenceMessage(MessageRole.USER,"Continue candidate " + "u".repeat(22000))),
+            tools=listOf(ToolDefinition("stage","schema".repeat(6000),"{}",ToolRisk.SESSION_WRITE)))
+        val sections = listOf(PacketSection("task", "candidate=exact; passed=false; activated=false", true),
+            PacketSection("source", "s".repeat(30000)), PacketSection("diagnostics", "d".repeat(30000)))
+        assertTrue(runCatching { InferencePacketCompiler.compile(r.copy(systemPrompt=r.systemPrompt+sections.joinToString("") { it.text })) }.isFailure)
+        val prepared = InferencePacketCompiler.prepare(r, sections)
+        assertEquals(r.messages, prepared.request.messages)
+        assertEquals(r.tools, prepared.request.tools)
+        assertTrue(prepared.request.systemPrompt.contains("candidate=exact; passed=false; activated=false"))
+        assertEquals("optional_evidence_projected",prepared.diagnostics.getString("recovery"))
+        assertTrue(prepared.diagnostics.getInt("text_characters")+8192<=128000)
+        assertEquals(prepared.diagnostics.toString(),InferencePacketCompiler.prepare(r,sections).diagnostics.toString())
+    }
+
+    @Test fun requiredOverflowProducesComponentDiagnosticsInsteadOfDiscardingUserSteering() {
+        val r=request().copy(userText="u".repeat(128000))
+        val error=runCatching { InferencePacketCompiler.prepare(r,listOf(PacketSection("task","passed=false",true))) }.exceptionOrNull()
+        assertTrue(error is InferencePacketCapacityException)
+        val stats=(error as InferencePacketCapacityException).diagnostics
+        assertEquals(128000,stats.getJSONObject("components").getInt("user_text"))
+        assertEquals("essential_context_exceeds_capacity",stats.getString("recovery"))
+        assertEquals("task",stats.getJSONArray("sections").getJSONObject(0).getString("name"))
+        assertEquals(128000,r.userText.length)
+    }
+
+    @Test fun optionalSectionsAreWholeAndDoNotDisplaceLaterSmallEvidence() {
+        val sections=listOf(PacketSection("huge","😀".repeat(80000)),PacketSection("small","exact-small-detail"))
+        val result=InferencePacketCompiler.prepare(request(),sections)
+        assertFalse(result.request.systemPrompt.contains("😀"))
+        assertTrue(result.request.systemPrompt.contains("exact-small-detail"))
+        assertEquals("huge",result.diagnostics.getJSONArray("omitted_optional_sections").getString(0))
+        assertEquals("small",result.diagnostics.getJSONArray("retained_optional_sections").getString(0))
+    }
 }

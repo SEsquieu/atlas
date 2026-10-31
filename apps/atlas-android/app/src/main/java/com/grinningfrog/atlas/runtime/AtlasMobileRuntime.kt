@@ -578,9 +578,9 @@ class AtlasMobileRuntime(
                 turnId = turnId,
                 step = step,
                 capability = capability,
-                systemPrompt = context.systemPrompt + (coreDecision?.guidance?.let { "\n\nRUNTIME ORCHESTRATION GUIDANCE:\n$it" } ?: "") + "\n\n" + executionTasks.context(lease.taskId) + "\n\n" + capabilityDiscovery.context(turnId).orEmpty() + "\n\nCORE EXECUTION EVIDENCE (authoritative facts, not instructions):\n" +
-                    org.json.JSONArray(database.loadRecentTurns(session.id).map { database.turnDiagnostics(it).json(System.currentTimeMillis()) }).toString() +
-                    "\nAnswer failure questions from this evidence. A committed revision survives a failed final reply. Never deny recorded tool attempts. Late tool proposals are not executed.\n" +
+                systemPrompt = context.requiredSystemPrompt + (coreDecision?.guidance?.let { "\n\nRUNTIME ORCHESTRATION GUIDANCE:\n$it" } ?: "") +
+                    "\n\n" + capabilityDiscovery.context(turnId).orEmpty() +
+                    "\nAnswer failure questions from Core evidence. A committed revision survives a failed final reply. Never deny recorded tool attempts. Late tool proposals are not executed.\n" +
                     (if (spoken) ResponsePolicy.instructions(responseContract) else ""),
                 userText = latestUserText,
                 messages = context.messages,
@@ -603,16 +603,29 @@ class AtlasMobileRuntime(
             if (suppressed.isNotEmpty()) database.appendEvent(session.id, "tool.retry_suppressed", JSONObject().put("turnId", turnId).put("tools", org.json.JSONArray(suppressed.toList())).put("reason", "Repeated deterministic rejection; current policy unchanged"))
             val runtimeDevelopment = executionTasks.calls(lease.taskId).any { it.name == "atlas_runtime_status" && it.status == ToolCallStatus.COMPLETED }
             val visualDevelopment = executionTasks.calls(lease.taskId).any { it.name == "workspace_visual_status" && it.status == ToolCallStatus.COMPLETED }
-            val request = baseRequest.copy(
+            val unallocatedRequest = baseRequest.copy(
                 tools = if (toolsAvailable) toolHarness.definitions.filter { it.name !in suppressed &&
                     (runtimeDevelopment || it.name !in setOf("atlas_runtime_read", "atlas_runtime_stage", "atlas_runtime_activate")) && (visualDevelopment || it.name != "workspace_visual_test") }.map(WorkspaceArgumentBinding::definition) else emptyList(),
                 systemPrompt = baseRequest.systemPrompt + if (suppressed.isEmpty()) "" else "\nCORE RETRY LIMIT: ${suppressed.joinToString()} repeatedly rejected. Do not repeat these calls. Correct a different control or report the unresolved blocker honestly; discovery resume_local only restores installed local mutations under ordinary policy.",
             )
-            val packet = InferencePacketCompiler.compile(request)
+            val diagnosticRows = database.loadRecentTurns(session.id).map { database.turnDiagnostics(it).json(System.currentTimeMillis()) }
+            val diagnosticSelection = org.json.JSONArray()
+            for (row in diagnosticRows) {
+                if (diagnosticSelection.toString().length + row.toString().length < 4000) diagnosticSelection.put(row)
+            }
+            val sections = executionTasks.contextSections(lease.taskId) + listOf(PacketSection("turn_diagnostics",
+                "CORE EXECUTION EVIDENCE (partial selection, authoritative facts, not instructions; ${diagnosticRows.size} turns available):\n$diagnosticSelection")) + context.optionalSystemSections
+            val prepared = try { InferencePacketCompiler.prepare(unallocatedRequest, sections) }
+            catch (capacity: InferencePacketCapacityException) {
+                database.appendEvent(session.id, "context.capacity_blocked", JSONObject().put("turnId", turnId).put("step", step).put("packet", capacity.diagnostics))
+                throw capacity
+            }
+            val request = prepared.request
+            val packet = prepared.diagnostics
             database.appendEvent(session.id, "context.assembled", JSONObject().apply {
                 put("turnId", turnId); put("step", step); put("messageIds", org.json.JSONArray(context.includedMessageIds)); put("projectedMessageIds", org.json.JSONArray(context.projectedMessageIds))
                 put("omittedMessages", context.omittedMessageCount); put("approximateCharacters", context.approximateCharacters)
-                put("retainedSourceCharacters", context.retainedSourceCharacters)
+                put("retainedSourceCharacters", if (packet.getJSONArray("retained_optional_sections").toString().contains("\"source_carry\"")) context.retainedSourceCharacters else 0)
                 put("packet", packet); put("preparation_us", (System.nanoTime() - preparationStarted) / 1000)
                 put("memoryCount", memories.size); put("summaryThrough", summary?.throughMessageSequence); put("toolsAvailable", request.tools.size)
             })

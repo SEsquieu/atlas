@@ -1,2 +1,2 @@
-0.1.0-alpha.37
-Harness continuation testing: explicit dispatch leases, bounded report views with audit drilldown, active-turn protocol recovery and whole-packet diagnostics. Physical acceptance required.
+0.1.0-alpha.38
+Shared inference packet allocation, compact durable task evidence, scoped audit drilldown and explicit capacity recovery. Physical acceptance required.
