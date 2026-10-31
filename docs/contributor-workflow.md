@@ -19,3 +19,7 @@ The old alpha.5-specific publishing workflow was removed because its version, no
 ## Maintainer review
 
 Check the requested outcome, test evidence, data/authority boundaries and scope. Merge independently from delivery. Keep outstanding phone checks visible. If a fix exposes another problem, create a linked issue with reproduction, expected behavior and acceptance criteria; assign the next unused AF ID during triage. Do not reuse IDs or mark a known failure verified merely because its PR merged.
+
+## Harness quality review
+
+When changing harness code, apply the [quality roadmap](./harness-quality-roadmap.md): check task/lease and cancellation boundaries, resource ownership, hot-path queries and payload size, typed outcomes and user-visible recovery. Record adjacent discoveries as scoped issues with evidence/confidence and acceptance instead of silently broadening the PR. Measure relevant preparation/response latency, packet/query costs and task quality; a shorter answer alone does not establish improvement. Keep original audit truth, permissions and uncertain-effect recovery intact. Sanitized workload fixtures belong in tests; raw private session exports do not.
