@@ -1,6 +1,6 @@
 # Active fixes
 
-Canonical repository work queue. Evidence: [alpha.28 assessment](./alpha28-live-assessment.md). Updated October 30, 2026. Implementation work is tracked below; phone verification remains separate.
+Canonical repository work queue. Evidence: [alpha.28 assessment](./alpha28-live-assessment.md). Updated October 31, 2026. Implementation work is tracked below; phone verification remains separate.
 
 Stable IDs never change or get reused. Status: **proposed** needs design; **ready** is bounded enough to implement; **in progress** links a claim/draft PR; **blocked** names a dependency; **implemented** links merged code but has outstanding acceptance; **verified** links all required evidence. Merged code and shipped builds are separate milestones. Keep verified entries with their resolution for traceability.
 
@@ -26,6 +26,12 @@ Each item has one tracking issue when created. Record that issue and draft PR he
 | AF-016 | Distinguish hosted research from missing local adapters | implemented; phone verification pending | [#62](https://github.com/SEsquieu/atlas/issues/62); [PR #63](https://github.com/SEsquieu/atlas/pull/63) |
 
 AF-017 tracks the alpha.33 revision/approval regressions below: implemented and delivered in alpha.34, with phone verification pending ([#68](https://github.com/SEsquieu/atlas/issues/68), [PR #69](https://github.com/SEsquieu/atlas/pull/69)).
+
+## Harness quality review — October 31, 2026
+
+The maintainer requested a broader review of speed, concise context/communication and stability, including code paths beyond surfaced session failures. [Tracker #90](https://github.com/SEsquieu/atlas/issues/90) and the [harness quality roadmap](./harness-quality-roadmap.md) define the proposed work, evidence levels, dependencies, measurement gates and acceptance workloads. Scoped issues #79–89 cover active context recovery, pending-call identity, provider retry/stream contracts, responsive controls, bounded projections, actual-profile visual acceptance, DOM capacity, typed outcomes, continuity UX and evaluation/provenance.
+
+These entries are **proposed**; none is implemented or physically verified by this documentation change. Existing AF IDs and outstanding acceptance stay unchanged. New AF IDs can be assigned during maintainer triage. No autonomous claim, schedule, merge or private-log publication is enabled.
 
 ## AF-001: Reduce malformed package staging
 
